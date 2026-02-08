@@ -1,0 +1,63 @@
+{
+  "name": "pet-marketplace-backend",
+  "version": "1.0.0",
+  "description": "PET Marketplace Backend API",
+  "main": "dist/server.js",
+  "scripts": {
+    "start": "node dist/server.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "test": "jest",
+    "seed:users": "ts-node-dev --transpile-only src/scripts/seedUsers.ts",
+    "seed:products": "ts-node-dev --transpile-only src/scripts/seedProducts.ts",
+    "seed:products-pricing": "ts-node-dev --transpile-only src/scripts/seedProductsWithVendorPricing.ts",
+    "seed:variant-products": "ts-node-dev --transpile-only src/scripts/seedVariantProducts.ts",
+    "convert:variants": "ts-node-dev --transpile-only src/scripts/convertVariantsToProducts.ts",
+    "revert:variants": "ts-node-dev --transpile-only src/scripts/revertToVariantSystem.ts",
+    "verify:products": "ts-node-dev --transpile-only src/scripts/verifyProducts.ts",
+    "debug:orders": "ts-node-dev --transpile-only src/scripts/debugPendingOrders.ts",
+    "test:pending": "ts-node-dev --transpile-only src/scripts/testPendingOrders.ts",
+    "seed:all": "npm run seed:users && npm run seed:products"
+  },
+  "keywords": [
+    "pet",
+    "marketplace",
+    "ecommerce"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/streamifier": "^0.1.2",
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^1.41.3",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^5.1.0",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.10.1",
+    "razorpay": "^2.9.2",
+    "socket.io": "^4.5.4",
+    "streamifier": "^0.1.1",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/multer": "^1.4.13",
+    "@types/node": "^20.10.0",
+    "@types/nodemailer": "^6.4.22",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.3"
+  }
+}

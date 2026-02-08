@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cleanup Variants</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        button { background: #4CAF50; color: white; padding: 15px 30px; font-size: 16px; border: none; cursor: pointer; border-radius: 5px; }
+        button:hover { background: #45a049; }
+        pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>🧹 Cleanup Variant Products</h1>
+    <p>This will:</p>
+    <ul>
+        <li>Delete 4 separate variant products (200g, 500g, 1kg, 5kg)</li>
+        <li>Delete duplicate "Purepet" product</li>
+        <li>Activate the original "Purepet" product with all 4 variants</li>
+    </ul>
+    <button onclick="cleanup()">🚀 Cleanup Now</button>
+    <div id="result"></div>
+
+    <script>
+        async function cleanup() {
+            const resultEl = document.getElementById('result');
+            resultEl.innerHTML = '<p>Working...</p>';
+            
+            try {
+                // Login as admin
+                const loginResp = await fetch('http://localhost:6969/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: 'admin@petmaza.com',
+                        password: 'admin123'
+                    })
+                });
+                
+                const loginData = await loginResp.json();
+                const token = loginData.token;
+                
+                // Call cleanup endpoint
+                const cleanupResp = await fetch('http://localhost:6969/api/admin/cleanup-variants', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const cleanupData = await cleanupResp.json();
+                
+                if (cleanupData.success) {
+                    resultEl.innerHTML = `
+                        <h2 class="success">✅ SUCCESS!</h2>
+                        <h3>Results:</h3>
+                        <ul>
+                            <li>Deleted ${cleanupData.data.deletedSeparateProducts} separate variant products</li>
+                            <li>Deleted ${cleanupData.data.deletedDuplicates} duplicate products</li>
+                            <li>Reactivated ${cleanupData.data.reactivated} products</li>
+                        </ul>
+                        <h3>Final Product:</h3>
+                        <pre>${JSON.stringify(cleanupData.data.finalProduct, null, 2)}</pre>
+                        <p class="success"><strong>✨ Now refresh your products page (localhost:3000/products)</strong></p>
+                        <p>You should see "Purepet Adult Dog Food" with 4 variant buttons: 200g, 500g, 1kg, 5kg</p>
+                    `;
+                } else {
+                    resultEl.innerHTML = `<p class="error">Error: ${cleanupData.message}</p>`;
+                }
+            } catch (error) {
+                resultEl.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>
