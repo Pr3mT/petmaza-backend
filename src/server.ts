@@ -158,8 +158,9 @@ const connectDB = async () => {
 const startServer = async () => {
   try {
     await connectDB();
-    httpServer.listen(PORT, () => {
-      logger.info(`Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
+    const HOST = '0.0.0.0'; // Bind to all network interfaces for cloud deployment
+    httpServer.listen(PORT, HOST, () => {
+      logger.info(`Server running on ${HOST}:${PORT} in ${process.env.NODE_ENV} mode`);
     });
   } catch (error) {
     logger.error('Failed to start server:', error);
