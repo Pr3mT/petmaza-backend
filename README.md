@@ -28,12 +28,13 @@ cp .env.example .env
 npm run dev
 ```
 
-Server will start on http://localhost:5000
+Server will start on http://localhost:6969
 
 ## API Endpoints
 
 - `GET /` - Welcome message
-- `GET /api/health` - Health check
+- `GET /health` - Health check
+- `GET /api/*` - API routes
 
 ## Build for Production
 
