@@ -19,8 +19,14 @@ const app: Express = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: [
+      process.env.FRONTEND_URL || 'http://localhost:3000',
+      'http://localhost:3000',
+      'https://petmaza.com',
+      'http://petmaza.com',
+    ],
     credentials: true,
+    methods: ['GET', 'POST'],
   },
 });
 
@@ -42,9 +48,16 @@ const corsOptions = {
       'http://localhost:3000',
       'http://127.0.0.1:3000',
       'http://localhost:3001',
+      'https://petmaza.com',
+      'http://petmaza.com',
+      'https://www.petmaza.com',
+      'http://www.petmaza.com',
     ];
     
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+    // In production, allow any HTTPS origin or configured origins
+    if (allowedOrigins.indexOf(origin) !== -1 || 
+        process.env.NODE_ENV === 'development' ||
+        origin.startsWith('https://')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
