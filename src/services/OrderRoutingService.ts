@@ -2,7 +2,6 @@ import Order from '../models/Order';
 import Product from '../models/Product';
 import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
-import VendorProductPricing from '../models/VendorProductPricing';
 import { AppError } from '../middlewares/errorHandler';
 import { IOrderItem } from '../types';
 
@@ -287,11 +286,11 @@ export class OrderRoutingService {
    * Check Warehouse availability
    */
   private static async checkWarehouseAvailability(
-    items: Array<{ product_id: string; quantity: number }>,
+    items: Array<{ product_id: string; quantity: number; selectedVariant?: any }>,
     warehouseVendorId: string
   ) {
     const availableItems: IOrderItem[] = [];
-    const remainingItems: Array<{ product_id: string; quantity: number }> = [];
+    const remainingItems: Array<{ product_id: string; quantity: number; selectedVariant?: any }> = [];
 
     for (const item of items) {
       const product = await Product.findById(item.product_id);
@@ -301,31 +300,47 @@ export class OrderRoutingService {
         continue;
       }
 
-      // For MY_SHOP, check product.isActive directly
+      // Check if product/variant is available
       let isAvailable = false;
+      let sellingPrice = 0;
+      let purchasePrice = 0;
       
-      if (product.hasVariants && product.variants) {
-        // For variant products, check if at least one variant is active
-        isAvailable = product.isActive && product.variants.some((v: any) => v.isActive);
+      if (item.selectedVariant && product.hasVariants && product.variants) {
+        // Check specific variant availability
+        const variant = product.variants.find((v: any) => 
+          v.weight === item.selectedVariant.weight && 
+          v.unit === item.selectedVariant.unit
+        );
+        
+        if (variant && variant.isActive && product.isActive) {
+          isAvailable = true;
+          sellingPrice = variant.sellingPrice || Math.round(variant.mrp * (variant.sellingPercentage / 100));
+          purchasePrice = Math.round(variant.mrp * (variant.purchasePercentage / 100));
+        }
+      } else if (product.hasVariants && product.variants && product.variants.length > 0) {
+        // No specific variant selected, check if any variant is active
+        const activeVariant = product.variants.find((v: any) => v.isActive);
+        if (activeVariant && product.isActive) {
+          isAvailable = true;
+          sellingPrice = activeVariant.sellingPrice || Math.round(activeVariant.mrp * (activeVariant.sellingPercentage / 100));
+          purchasePrice = Math.round(activeVariant.mrp * (activeVariant.purchasePercentage / 100));
+        }
       } else {
-        // For non-variant products, check product.isActive
-        isAvailable = product.isActive === true;
+        // Non-variant product
+        if (product.isActive) {
+          isAvailable = true;
+          sellingPrice = product.sellingPrice || 
+            (product.mrp && product.sellingPercentage 
+              ? Math.round(product.mrp * (product.sellingPercentage / 100))
+              : 0);
+          purchasePrice = product.purchasePrice ||
+            (product.mrp && product.purchasePercentage
+              ? Math.round(product.mrp * (product.purchasePercentage / 100))
+              : 0);
+        }
       }
 
-      if (isAvailable) {
-        // Get pricing info - use variant pricing if available, otherwise product pricing
-        let sellingPrice = product.sellingPrice || 0;
-        let purchasePrice = product.purchasePrice || 0;
-        
-        if (product.hasVariants && product.variants && product.variants.length > 0) {
-          // Use first active variant's pricing
-          const activeVariant = product.variants.find((v: any) => v.isActive);
-          if (activeVariant) {
-            sellingPrice = activeVariant.sellingPrice || (activeVariant.mrp * ((activeVariant.sellingPercentage || 80) / 100));
-            purchasePrice = activeVariant.purchasePrice || (activeVariant.mrp * ((activeVariant.purchasePercentage || 60) / 100));
-          }
-        }
-
+      if (isAvailable && sellingPrice > 0) {
         const orderItem = await this.buildOrderItem(
           item.product_id,
           item.quantity,
@@ -344,55 +359,34 @@ export class OrderRoutingService {
 
   /**
    * Check if vendor has all products
+   * In simplified flow, just checks if products exist and are active
    */
   private static async checkVendorHasAllProducts(
     items: Array<{ product_id: string; quantity: number }>,
     vendorId: string
   ): Promise<boolean> {
-    // Check if this is MY_SHOP vendor
-    const vendor = await User.findById(vendorId);
-    const isMyShop = vendor && ['WAREHOUSE', 'MY_SHOP'].includes(vendor.vendorType);
-
-    if (isMyShop) {
-      // For MY_SHOP, check product availability directly
-      for (const item of items) {
-        const product = await Product.findById(item.product_id);
-        if (!product || !product.isActive) {
-          return false;
-        }
-        
-        // For variant products, check if at least one variant is active
-        if (product.hasVariants && product.variants) {
-          const hasActiveVariant = product.variants.some((v: any) => v.isActive);
-          if (!hasActiveVariant) {
-            return false;
-          }
-        }
+    for (const item of items) {
+      const product = await Product.findById(item.product_id);
+      if (!product || !product.isActive) {
+        return false;
       }
-      return true;
-    } else {
-      // For other vendors, check VendorProductPricing
-      for (const item of items) {
-        const pricing = await VendorProductPricing.findOne({
-          vendor_id: vendorId,
-          product_id: item.product_id,
-          isActive: true,
-          availableStock: { $gte: item.quantity },
-        });
-
-        if (!pricing) {
+      
+      // For variant products, check if at least one variant is active
+      if (product.hasVariants && product.variants) {
+        const hasActiveVariant = product.variants.some((v: any) => v.isActive);
+        if (!hasActiveVariant) {
           return false;
         }
       }
-      return true;
     }
+    return true;
   }
 
   /**
    * Build order items with pricing
    */
   private static async buildOrderItems(
-    items: Array<{ product_id: string; quantity: number }>,
+    items: Array<{ product_id: string; quantity: number; selectedVariant?: any }>,
     vendorId: string
   ): Promise<IOrderItem[]> {
     const orderItems: IOrderItem[] = [];
@@ -403,26 +397,47 @@ export class OrderRoutingService {
         throw new AppError(`Product ${item.product_id} not found`, 404);
       }
 
-      const pricing = await VendorProductPricing.findOne({
-        vendor_id: vendorId,
-        product_id: item.product_id,
-        isActive: true,
-      });
-
-      if (!pricing) {
-        throw new AppError(`Product ${item.product_id} not available from vendor`, 404);
+      // Use product's own pricing (set by admin)
+      // Calculate sellingPrice from mrp and sellingPercentage if not directly set
+      let sellingPrice: number;
+      let purchasePrice: number;
+      
+      if (item.selectedVariant && product.hasVariants) {
+        // Use variant pricing
+        const variant = product.variants?.find(v => 
+          v.weight === item.selectedVariant.weight && 
+          v.unit === item.selectedVariant.unit
+        );
+        
+        if (!variant) {
+          throw new AppError(`Variant not found for product ${product.name}`, 404);
+        }
+        
+        sellingPrice = variant.sellingPrice || Math.round(variant.mrp * (variant.sellingPercentage / 100));
+        purchasePrice = Math.round(variant.mrp * (variant.purchasePercentage / 100));
+      } else {
+        // Use product-level pricing
+        sellingPrice = product.sellingPrice || 
+          (product.mrp && product.sellingPercentage 
+            ? Math.round(product.mrp * (product.sellingPercentage / 100))
+            : 0);
+        
+        purchasePrice = product.purchasePrice ||
+          (product.mrp && product.purchasePercentage
+            ? Math.round(product.mrp * (product.purchasePercentage / 100))
+            : 0);
       }
 
-      if (pricing.availableStock < item.quantity) {
-        throw new AppError(`Insufficient stock for product ${product.name}`, 400);
+      if (sellingPrice === 0) {
+        throw new AppError(`Product ${product.name} has invalid pricing`, 400);
       }
 
       const orderItem = await this.buildOrderItem(
         item.product_id,
         item.quantity,
         vendorId,
-        product.sellingPrice,
-        pricing.purchasePrice
+        sellingPrice,
+        purchasePrice
       );
 
       orderItems.push(orderItem);
@@ -444,7 +459,7 @@ export class OrderRoutingService {
     const subtotal = sellingPrice * quantity;
     const purchaseSubtotal = purchasePrice * quantity;
     const profit = subtotal - purchaseSubtotal;
-    const profitPercentage = (profit / subtotal) * 100;
+    const profitPercentage = subtotal > 0 ? (profit / subtotal) * 100 : 0;
 
     return {
       product_id: product_id.toString(),
