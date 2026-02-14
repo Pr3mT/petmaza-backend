@@ -4,16 +4,19 @@ import { AppError } from '../middlewares/errorHandler';
 import { SalesService } from './SalesService';
 
 export class OrderAcceptanceService {
-  // Get pending orders for vendor
-  // Show all pending orders that vendor can fulfill (serves pincode and has products)
+  /**
+   * Get pending orders for PRIME vendors only
+   * MY_SHOP vendors dont see pending orders - their orders are directly assigned
+   */
   static async getPendingOrders(vendor_id: string) {
     const mongoose = (await import('mongoose')).default;
     const VendorDetails = (await import('../models/VendorDetails')).default;
     const Order = (await import('../models/Order')).default;
+    const User = (await import('../models/User')).default;
     
-    console.log(`[getPendingOrders Service] Called with vendor_id: ${vendor_id} (type: ${typeof vendor_id})`);
+    console.log(`[getPendingOrders Service] Called with vendor_id: ${vendor_id}`);
     
-    // Convert vendor_id to ObjectId - Mongoose can handle string/ObjectId, but let's be explicit
+    // Convert vendor_id to ObjectId
     let vendorObjectId: any;
     if (mongoose.Types.ObjectId.isValid(vendor_id)) {
       vendorObjectId = new mongoose.Types.ObjectId(vendor_id);
@@ -22,31 +25,34 @@ export class OrderAcceptanceService {
       return [];
     }
     
-    console.log(`[getPendingOrders Service] Converted to ObjectId: ${vendorObjectId}`);
-    
+    // Get vendor details
     const vendorDetails = await VendorDetails.findOne({ 
       vendor_id: vendorObjectId, 
       isApproved: true 
     });
     
     if (!vendorDetails) {
-      console.log(`[getPendingOrders] Vendor not found or not approved: ${vendor_id} (ObjectId: ${vendorObjectId})`);
-      // Debug: Check if vendor exists at all
-      const allVendors = await VendorDetails.find({});
-      console.log(`[getPendingOrders] Total vendors in DB: ${allVendors.length}`);
-      allVendors.forEach(v => {
-        console.log(`[getPendingOrders]   Vendor ID: ${v.vendor_id}, Approved: ${v.isApproved}, Type: ${v.vendorType}`);
-      });
+      console.log(`[getPendingOrders] Vendor not found or not approved: ${vendor_id}`);
       return [];
     }
 
-    console.log(`[getPendingOrders] Vendor found: ${vendor_id}, Pincodes: ${vendorDetails.serviceablePincodes.join(', ')}`);
+    // MY_SHOP vendors don't see pending orders - all normal orders are directly assigned
+    if (vendorDetails.vendorType === 'MY_SHOP') {
+      console.log(`[getPendingOrders] MY_SHOP vendor - no pending orders shown (orders are directly assigned)`);
+      return [];
+    }
 
-    // Get all pending orders (including ASSIGNED orders that are paid but not yet accepted)
-    // ASSIGNED means payment is done but order is not yet accepted by a vendor
-    // Query for orders that are PENDING or ASSIGNED and don't have an assignedVendorId
+    // Only PRIME vendors see pending Prime orders
+    console.log(`[getPendingOrders] PRIME vendor - showing pending Prime orders`);
+
+    // Get all PENDING Prime orders that are not yet assigned
     const allPendingOrders = await Order.find({
-      status: { $in: ['PENDING', 'ASSIGNED'] },
+      status: 'PENDING',
+      isPrime: true,
+      $or: [
+        { assignedVendorId: { $exists: false } },
+        { assignedVendorId: null }
+      ]
     })
       .populate('customer_id', 'name email phone')
       .populate({
@@ -58,128 +64,56 @@ export class OrderAcceptanceService {
         }
       })
       .sort({ createdAt: -1 })
-      .lean(); // Use lean() for better performance and to avoid Mongoose document issues
+      .lean();
 
-    console.log(`[getPendingOrders] Found ${allPendingOrders.length} total pending/assigned orders`);
+    console.log(`[getPendingOrders] Found ${allPendingOrders.length} pending Prime orders`);
     
-    // Filter out orders that already have an assignedVendorId
-    const unassignedOrders = allPendingOrders.filter(order => {
-      // Check if assignedVendorId exists and is not null/undefined/empty
-      const assignedVendorId = order.assignedVendorId;
-      const hasVendor = assignedVendorId && 
-                       assignedVendorId !== null && 
-                       assignedVendorId !== undefined && 
-                       String(assignedVendorId).trim() !== '' &&
-                       String(assignedVendorId) !== 'null';
-      
-      if (hasVendor) {
-        console.log(`[getPendingOrders] Order ${order._id} already assigned to vendor ${assignedVendorId}`);
-      } else {
-        console.log(`[getPendingOrders] Order ${order._id} is unassigned (assignedVendorId: ${assignedVendorId})`);
-      }
-      return !hasVendor;
-    });
-
-    console.log(`[getPendingOrders] Found ${unassignedOrders.length} unassigned orders`);
-    if (unassignedOrders.length > 0) {
-      console.log(`[getPendingOrders] Sample order: ${unassignedOrders[0]._id}, status: ${unassignedOrders[0].status}, pincode: ${unassignedOrders[0].customerPincode}`);
-    }
-
-    // Filter orders that:
-    // 1. Vendor has all products in stock
-    // 2. Order is not already accepted by another vendor
-    // NOTE: Pincode filtering removed - vendors can now accept orders from any location
+    // Filter orders based on vendor's brand assignments
     const eligibleOrders = [];
     
-    for (const order of unassignedOrders) {
-      console.log(`[getPendingOrders] Checking order ${order._id}, pincode: ${order.customerPincode}, status: ${order.status}`);
+    for (const order of allPendingOrders) {
+      console.log(`[getPendingOrders] Checking order ${order._id}`);
       
-      // Removed pincode check - vendors can accept orders from any pincode
-      // if (!vendorDetails.serviceablePincodes.includes(order.customerPincode)) {
-      //   console.log(`[getPendingOrders] Order ${order._id} skipped - vendor doesn't serve pincode ${order.customerPincode}`);
-      //   continue;
-      // }
-
-      // For Prime vendors: 
-      // 1. Check if all products are Prime products (Prime products must be ordered separately)
-      // 2. Check if all products belong to brands they handle
-      if (vendorDetails.vendorType === 'PRIME') {
-        // First, check if all products are Prime products
-        let allProductsArePrime = true;
+      // For PRIME vendors: Check if all products belong to brands they handle
+      if (vendorDetails.brandsHandled && vendorDetails.brandsHandled.length > 0) {
+        const vendorBrandIds = vendorDetails.brandsHandled.map(b => 
+          b.toString ? b.toString() : String(b)
+        );
+        
+        let allProductsMatchBrand = true;
+        
         for (const item of order.items) {
-          const product = item.product_id as any; // Type assertion for populated product
-          if (!product || (typeof product === 'object' && !product.isPrime)) {
-            const productId = typeof product === 'object' && product?._id ? product._id.toString() : 'unknown';
-            const productName = typeof product === 'object' && product?.name ? product.name : 'unknown';
-            console.log(`[getPendingOrders] Order ${order._id} skipped - Prime vendor can only handle Prime products, but product ${productId || productName || 'unknown'} is not Prime`);
-            allProductsArePrime = false;
-            break;
-          }
-        }
-        
-        if (!allProductsArePrime) {
-          continue;
-        }
-        
-        // Second, check if all products belong to brands the Prime vendor handles
-        if (vendorDetails.brandsHandled && vendorDetails.brandsHandled.length > 0) {
-          const vendorBrandIds = vendorDetails.brandsHandled.map(b => {
-            // Handle both ObjectId and string formats
-            return b.toString ? b.toString() : String(b);
-          });
+          const product = item.product_id as any;
+          let productBrandId = null;
           
-          let allProductsMatchBrand = true;
-          
-          for (const item of order.items) {
-            const product = item.product_id as any; // Type assertion for populated product
-            // Handle populated brand_id (object) or unpopulated (ObjectId/string)
-            let productBrandId = null;
-            
-            if (product && typeof product === 'object') {
-              if (product.brand_id) {
-                if (typeof product.brand_id === 'object' && product.brand_id._id) {
-                  productBrandId = product.brand_id._id.toString();
-                } else if (typeof product.brand_id === 'object' && product.brand_id.toString) {
-                  productBrandId = product.brand_id.toString();
-                } else {
-                  productBrandId = String(product.brand_id);
-                }
+          if (product && typeof product === 'object') {
+            if (product.brand_id) {
+              if (typeof product.brand_id === 'object' && product.brand_id._id) {
+                productBrandId = product.brand_id._id.toString();
+              } else if (typeof product.brand_id === 'object' && product.brand_id.toString) {
+                productBrandId = product.brand_id.toString();
+              } else {
+                productBrandId = String(product.brand_id);
               }
             }
-            
-            if (!productBrandId || !vendorBrandIds.includes(productBrandId)) {
-              const productId = typeof product === 'object' && product?._id ? product._id.toString() : 'unknown';
-              const productName = typeof product === 'object' && product?.name ? product.name : 'unknown';
-              console.log(`[getPendingOrders] Order ${order._id} skipped - Prime vendor doesn't handle brand for product ${productId || productName || 'unknown'}`);
-              allProductsMatchBrand = false;
-              break;
-            }
           }
           
-          if (!allProductsMatchBrand) {
-            continue;
-          }
-          
-          console.log(`[getPendingOrders] Order ${order._id} passed Prime vendor checks (all Prime products, all match brands)`);
-        } else {
-          console.log(`[getPendingOrders] Order ${order._id} - Prime vendor has no brands configured, showing all Prime product orders`);
-        }
-      }
-      
-      // For Normal/MY_SHOP vendors: Ensure they don't see Prime product orders
-      if (vendorDetails.vendorType === 'NORMAL' || vendorDetails.vendorType === 'MY_SHOP') {
-        let hasPrimeProducts = false;
-        for (const item of order.items) {
-          const product = item.product_id as any; // Type assertion for populated product
-          if (product && typeof product === 'object' && product.isPrime) {
-            hasPrimeProducts = true;
+          if (!productBrandId || !vendorBrandIds.includes(productBrandId)) {
+            const productName = typeof product === 'object' && product?.name ? product.name : 'unknown';
+            console.log(`[getPendingOrders] Order ${order._id} skipped - Prime vendor doesn't handle brand for product ${productName}`);
+            allProductsMatchBrand = false;
             break;
           }
         }
-        if (hasPrimeProducts) {
-          console.log(`[getPendingOrders] Order ${order._id} skipped - Normal/MY_SHOP vendor cannot handle Prime products`);
+        
+        if (!allProductsMatchBrand) {
           continue;
         }
+        
+        console.log(`[getPendingOrders] Order ${order._id} passed Prime vendor brand check`);
+      } else {
+        // No brands configured - show all Prime orders to this vendor
+        console.log(`[getPendingOrders] Order ${order._id} - Prime vendor has no brands configured, showing order`);
       }
 
       // Check if vendor has all products available (active)
@@ -187,7 +121,6 @@ export class OrderAcceptanceService {
       let hasAllProducts = true;
       
       for (const item of order.items) {
-        // Use vendorObjectId for query - only check if product is active (available)
         const pricing = await VendorProductPricing.findOne({
           vendor_id: vendorObjectId,
           product_id: item.product_id,
@@ -207,12 +140,11 @@ export class OrderAcceptanceService {
       
       console.log(`[getPendingOrders] Order ${order._id} is eligible for vendor ${vendor_id}`);
 
-      // Calculate purchase price vendor will receive (earnings) and get product-wise details
+      // Calculate purchase price vendor will receive (earnings)
       let totalPurchasePrice = 0;
       const itemsWithPricing = [];
       
       for (const item of order.items) {
-        // Use vendorObjectId for query
         const pricing = await VendorProductPricing.findOne({
           vendor_id: vendorObjectId,
           product_id: item.product_id,

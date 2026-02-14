@@ -5,7 +5,7 @@ export interface IUser extends Document {
   email: string;
   password: string;
   role: 'admin' | 'vendor' | 'customer';
-  vendorType?: 'PRIME' | 'NORMAL' | 'MY_SHOP';
+  vendorType?: 'PRIME' | 'MY_SHOP';
   pincodesServed?: string[];
   phone: string;
   address?: {
@@ -19,44 +19,20 @@ export interface IUser extends Document {
   updatedAt: Date;
 }
 
-export interface IWeightVariant {
-  _id?: Types.ObjectId | string; // Unique ID for each variant
-  weight: number; // in grams (e.g., 200, 500, 1000, 5000)
-  unit: string; // e.g., 'g', 'kg'
-  displayWeight: string; // e.g., '200g', '1kg', '5kg'
+export interface IProduct extends Document {
+  name: string;
+  description?: string;
+  category_id: Types.ObjectId | string;
+  brand_id: Types.ObjectId | string;
+  weight?: number; // in grams
+  unit?: string; // 'g', 'kg', 'ml', 'l'
+  displayWeight?: string; // e.g., '200g', '1kg', '5kg'
   mrp: number;
   sellingPercentage: number; // e.g., 80 means 80% of MRP
   sellingPrice: number; // auto-calculated: MRP * (sellingPercentage / 100)
   discount: number; // auto-calculated: ((MRP - sellingPrice) / MRP) * 100
   purchasePercentage: number; // e.g., 60 means 60% of MRP (your cost)
   purchasePrice: number; // auto-calculated: MRP * (purchasePercentage / 100)
-  isActive: boolean;
-}
-
-export interface IProduct extends Document {
-  name: string;
-  description?: string;
-  category_id: Types.ObjectId | string;
-  brand_id: Types.ObjectId | string;
-  // Single weight product fields
-  weight?: number; // in grams
-  unit?: string; // 'g', 'kg', 'ml', 'l'
-  mrp?: number;
-  sellingPercentage?: number;
-  sellingPrice?: number;
-  discount?: number;
-  purchasePercentage?: number;
-  purchasePrice?: number;
-  // Variant system (DEPRECATED - keeping for backward compatibility)
-  hasVariants: boolean;
-  variants: IWeightVariant[];
-  // New separate product approach for variants
-  parentProduct?: Types.ObjectId | string; // Link to parent product if this is a variant
-  variantInfo?: {
-    weight: number;
-    unit: string;
-    displayWeight: string;
-  };
   isPrime: boolean; // Prime products: Buy Now only, no cart
   primeVendor_id?: Types.ObjectId | string; // Prime vendor who handles this product
   images: string[];
@@ -70,13 +46,6 @@ export interface IOrderItem {
   product_id: Types.ObjectId | string;
   vendor_id?: Types.ObjectId | string;
   quantity: number;
-  // Weight variant information
-  selectedWeight?: number; // weight in grams (e.g., 500, 1000)
-  selectedVariant?: {
-    weight: number;
-    unit: string;
-    displayWeight: string;
-  };
   sellingPrice: number; // Global selling price
   purchasePrice: number; // Vendor-specific purchase price
   subtotal: number; // quantity * sellingPrice
@@ -133,38 +102,23 @@ export interface IOrder extends Document {
   updatedAt: Date;
 }
 
-// Vendor variant stock tracking
-export interface IVendorVariantStock {
-  weight: number;
-  unit: string;
-  displayWeight: string;
+// Vendor-wise product pricing
+export interface IVendorProductPricing extends Document {
+  vendor_id: Types.ObjectId | string;
+  product_id: Types.ObjectId | string;
+  purchasePercentage: number; // e.g., 50 means 50% of MRP
+  purchasePrice: number; // auto-calculated: MRP * (purchasePercentage / 100)
   availableStock: number;
   totalSoldWebsite: number;
   totalSoldStore: number;
   isActive: boolean;
-}
-
-// Vendor-wise product pricing (CRITICAL: Different purchase rates per vendor)
-export interface IVendorProductPricing extends Document {
-  vendor_id: Types.ObjectId | string;
-  product_id: Types.ObjectId | string;
-  purchasePercentage: number; // e.g., 50 means 50% of MRP (legacy for single-weight products)
-  purchasePrice: number; // auto-calculated: MRP * (purchasePercentage / 100) (legacy)
-  availableStock: number; // legacy for single-weight products
-  totalSoldWebsite: number; // legacy
-  totalSoldStore: number; // legacy
-  isActive: boolean; // legacy for single-weight products
-  
-  // New: For variant products
-  variantStock?: IVendorVariantStock[]; // Stock tracking per weight variant
-  
   createdAt: Date;
   updatedAt: Date;
 }
 
 export interface IVendorDetails extends Document {
   vendor_id: Types.ObjectId | string;
-  vendorType: 'PRIME' | 'NORMAL' | 'MY_SHOP';
+  vendorType: 'PRIME' | 'MY_SHOP';
   shopName: string;
   brandsHandled: (Types.ObjectId | string)[]; // Brand IDs
   pickupAddress: {
@@ -332,22 +286,13 @@ export interface ISettlement extends Document {
 }
 
 // Vendor Product
-export interface IVendorProductVariantStock {
-  weight: number; // in grams
-  quantity: number;
-  status: 'active' | 'inactive';
-}
-
 export interface IVendorProduct extends Document {
   vendor_id: Types.ObjectId | string;
   product_id: Types.ObjectId | string;
   warehouse_cost: number;
   shop_cost: number;
-  // Legacy single quantity (for products without variants)
   quantity: number;
   status: 'active' | 'inactive';
-  // New variant stock management
-  variantStock: IVendorProductVariantStock[];
   createdAt: Date;
   updatedAt: Date;
 }

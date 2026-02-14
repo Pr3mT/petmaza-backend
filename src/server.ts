@@ -30,7 +30,7 @@ const io = new Server(httpServer, {
   },
 });
 
-const PORT = process.env.PORT || 6969;
+const PORT = Number(process.env.PORT) || 6969;
 
 // Middleware
 app.use(helmet({

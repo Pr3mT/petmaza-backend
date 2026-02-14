@@ -11,7 +11,7 @@ const vendorDetailsSchema = new Schema<IVendorDetails>(
     },
     vendorType: {
       type: String,
-      enum: ['PRIME', 'NORMAL', 'MY_SHOP', 'WAREHOUSE'],
+      enum: ['PRIME', 'MY_SHOP'],
       required: true,
     },
     shopName: {

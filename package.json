@@ -8,6 +8,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "echo 'Build skipped - using ts-node in production'",
     "test": "jest",
+    "fresh-start": "ts-node-dev --transpile-only src/scripts/freshStart.ts",
     "seed:users": "ts-node-dev --transpile-only src/scripts/seedUsers.ts",
     "seed:products": "ts-node-dev --transpile-only src/scripts/seedProducts.ts",
     "seed:products-pricing": "ts-node-dev --transpile-only src/scripts/seedProductsWithVendorPricing.ts",

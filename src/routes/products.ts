@@ -14,13 +14,10 @@ const router = express.Router();
 router.get('/', getProducts);
 router.get('/:id', getProduct);
 
-// Admin only routes
-router.use(verifyToken);
-router.use(checkRole('admin'));
-
-router.post('/', createProduct);
-router.put('/:id', updateProduct);
-router.patch('/:id', updateProduct);
-router.delete('/:id', deleteProduct);
+// Protected routes - Admin and MY_SHOP vendors can create/manage products
+router.post('/', verifyToken, createProduct); // MY_SHOP vendors can create products
+router.put('/:id', verifyToken, updateProduct); // MY_SHOP vendors can update their products
+router.patch('/:id', verifyToken, updateProduct);
+router.delete('/:id', verifyToken, checkRole('admin'), deleteProduct); // Only admin can delete
 
 export default router;

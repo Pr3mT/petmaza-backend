@@ -37,21 +37,15 @@ export const initializeWebSocket = (io: Server) => {
     // Join role-specific rooms
     if (user.role === 'customer') {
       socket.join(`customer:${user._id}`);
-    } else if (user.role === 'retail_vendor' || user.role === 'vendor') {
-      // Join pincode rooms for retail vendors
-      if (user.pincodesServed && user.pincodesServed.length > 0) {
-        user.pincodesServed.forEach((pincode: string) => {
-          socket.join(`vendor:pincode:${pincode}`);
-        });
-      }
+    } else if (user.role === 'vendor') {
       socket.join(`vendor:${user._id}`);
-    } else if (user.role === 'special_vendor') {
-      socket.join(`vendor:${user._id}`);
+      // Prime vendors don't need pincode rooms
+      // MY_SHOP vendors handle all normal orders directly
     }
 
-    // Handle vendor joining pincode room
+    // Handle vendor joining pincode room (keeping for potential future use)
     socket.on('vendor:join:pincode', (pincode: string) => {
-      if (user.role === 'retail_vendor' || user.role === 'vendor') {
+      if (user.role === 'vendor') {
         socket.join(`vendor:pincode:${pincode}`);
         logger.info(`Vendor ${user.email} joined pincode room: ${pincode}`);
       }

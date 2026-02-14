@@ -1,41 +1,6 @@
 import mongoose, { Schema } from 'mongoose';
 import { IVendorProductPricing } from '../types';
 
-// Schema for variant stock tracking
-const vendorVariantStockSchema = new Schema({
-  weight: {
-    type: Number,
-    required: true,
-  },
-  unit: {
-    type: String,
-    required: true,
-  },
-  displayWeight: {
-    type: String,
-    required: true,
-  },
-  availableStock: {
-    type: Number,
-    default: 0,
-    min: 0,
-  },
-  totalSoldWebsite: {
-    type: Number,
-    default: 0,
-    min: 0,
-  },
-  totalSoldStore: {
-    type: Number,
-    default: 0,
-    min: 0,
-  },
-  isActive: {
-    type: Boolean,
-    default: true,
-  },
-}, { _id: false });
-
 const vendorProductPricingSchema = new Schema<IVendorProductPricing>(
   {
     vendor_id: {
@@ -76,11 +41,6 @@ const vendorProductPricingSchema = new Schema<IVendorProductPricing>(
     isActive: {
       type: Boolean,
       default: true,
-    },
-    // Variant stock tracking
-    variantStock: {
-      type: [vendorVariantStockSchema],
-      default: undefined,
     },
   },
   {

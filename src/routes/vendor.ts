@@ -13,7 +13,7 @@ const router = express.Router();
 
 // All routes require vendor authentication
 router.use(verifyToken);
-router.use(checkRole('vendor', 'retail_vendor', 'special_vendor'));
+router.use(checkRole('vendor'));
 
 router.get('/products/available', getAvailableProducts);
 router.get('/products/my', getVendorProducts);

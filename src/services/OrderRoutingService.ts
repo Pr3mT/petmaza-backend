@@ -7,10 +7,9 @@ import { IOrderItem } from '../types';
 
 export class OrderRoutingService {
   /**
-   * Route order based on business rules:
-   * 1. Prime products → Prime Vendor only
-   * 2. Normal products → Check My Shop first, then Normal Vendors
-   * 3. Split shipments if My Shop has partial availability
+   * SIMPLIFIED Route order logic:
+   * 1. Prime products → Prime Vendor (first-come-first-serve)
+   * 2. Normal products → MY_SHOP Vendor (direct assignment, no acceptance flow)
    */
   static async routeOrder(data: {
     customer_id: string;
@@ -41,13 +40,13 @@ export class OrderRoutingService {
       throw new AppError('Prime products cannot be mixed with normal products', 400);
     }
 
-    // Prime products: route to Prime Vendor
+    // Prime products: route to Prime Vendor (existing flow)
     if (hasPrimeProducts) {
       return await this.routePrimeOrder(customer_id, items, customerPincode, customerAddress);
     }
 
-    // Normal products: route with My Shop priority
-    return await this.routeNormalOrder(customer_id, items, customerPincode, customerAddress);
+    // Normal products: route directly to MY_SHOP vendor
+    return await this.routeNormalOrderToMyShop(customer_id, items, customerPincode, customerAddress);
   }
 
   /**
@@ -97,127 +96,51 @@ export class OrderRoutingService {
   }
 
   /**
-   * Route normal order with Warehouse priority and split shipment support
+   * Route normal order directly to MY_SHOP vendor
+   * Simplified: No warehouse priority, no split shipments, no normal vendors
+   * All normal products go directly to MY_SHOP vendor who manages fulfillment
    */
-  private static async routeNormalOrder(
+  private static async routeNormalOrderToMyShop(
     customer_id: string,
     items: Array<{ product_id: string; quantity: number }>,
     customerPincode: string,
     customerAddress: any
   ) {
-    // Find Warehouse (try WAREHOUSE first, fallback to MY_SHOP for backward compatibility)
-    const warehouse = await User.findOne({
+    // Find MY_SHOP vendor (your shop manager)
+    const myShopVendor = await User.findOne({
       role: 'vendor',
-      vendorType: { $in: ['WAREHOUSE', 'MY_SHOP'] },
+      vendorType: 'MY_SHOP',
       isApproved: true,
     });
 
-    const warehouseVendorId = warehouse?._id.toString();
-
-    // Check Warehouse availability
-    let warehouseItems: IOrderItem[] = [];
-    let remainingItems: Array<{ product_id: string; quantity: number }> = [];
-
-    if (warehouseVendorId) {
-      const availability = await this.checkWarehouseAvailability(items, warehouseVendorId);
-      warehouseItems = availability.availableItems;
-      remainingItems = availability.remainingItems;
-    } else {
-      remainingItems = items;
+    if (!myShopVendor) {
+      throw new AppError('MY_SHOP vendor not available. Please contact admin.', 404);
     }
 
-    // If Warehouse has all items, create single order
-    if (remainingItems.length === 0 && warehouseItems.length > 0) {
-      const total = warehouseItems.reduce((sum, item) => sum + item.subtotal, 0);
-      const totalPurchasePrice = warehouseItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
-      const totalProfit = total - totalPurchasePrice;
+    // Build order items with pricing (using product's own pricing)
+    const orderItems = await this.buildOrderItems(items, myShopVendor._id.toString());
 
-      const order = await Order.create({
-        customer_id,
-        items: warehouseItems,
-        total,
-        totalPurchasePrice,
-        totalProfit,
-        status: 'PENDING',
-        isPrime: false,
-        isSplitShipment: false,
-        // Don't assign to specific vendor - let first vendor accept
-        customerPincode,
-        customerAddress,
-      });
+    // Calculate totals
+    const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
+    const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
+    const totalProfit = total - totalPurchasePrice;
 
-      return order;
-    }
+    // Create order - directly assigned to MY_SHOP, status ACCEPTED (no pending)
+    const order = await Order.create({
+      customer_id,
+      items: orderItems,
+      total,
+      totalPurchasePrice,
+      totalProfit,
+      status: 'ACCEPTED', // Directly accepted by MY_SHOP, no waiting
+      isPrime: false,
+      isSplitShipment: false,
+      assignedVendorId: myShopVendor._id, // Direct assignment
+      customerPincode,
+      customerAddress,
+    });
 
-    // Split shipment: Warehouse + Normal Vendors
-    const orders: any[] = [];
-
-    // Create Warehouse order if items available
-    if (warehouseItems.length > 0 && warehouseVendorId) {
-      const total = warehouseItems.reduce((sum, item) => sum + item.subtotal, 0);
-      const totalPurchasePrice = warehouseItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
-      const totalProfit = total - totalPurchasePrice;
-
-      const warehouseOrder = await Order.create({
-        customer_id,
-        items: warehouseItems,
-        total,
-        totalPurchasePrice,
-        totalProfit,
-        status: 'PENDING',
-        isPrime: false,
-        isSplitShipment: true,
-        assignedVendorId: warehouseVendorId,
-        customerPincode,
-        customerAddress,
-      });
-
-      orders.push(warehouseOrder);
-    }
-
-    // Route remaining items to Normal Vendors
-    if (remainingItems.length > 0) {
-      const normalVendorOrder = await this.routeToNormalVendors(
-        customer_id,
-        remainingItems,
-        customerPincode,
-        customerAddress
-      );
-
-      if (normalVendorOrder) {
-        normalVendorOrder.isSplitShipment = true;
-        await normalVendorOrder.save();
-        orders.push(normalVendorOrder);
-      }
-    }
-
-    // If split shipment, create parent order record
-    if (orders.length > 1) {
-      const parentOrder = await Order.create({
-        customer_id,
-        items: [], // Parent order has no items
-        total: orders.reduce((sum, o) => sum + o.total, 0),
-        totalPurchasePrice: orders.reduce((sum, o) => sum + o.totalPurchasePrice, 0),
-        totalProfit: orders.reduce((sum, o) => sum + o.totalProfit, 0),
-        status: 'PENDING',
-        isPrime: false,
-        isSplitShipment: true,
-        childOrderIds: orders.map((o) => o._id),
-        customerPincode,
-        customerAddress,
-        deliveryCost: 50, // Extra delivery cost for split shipment
-      });
-
-      // Update child orders with parent reference
-      await Order.updateMany(
-        { _id: { $in: orders.map((o) => o._id) } },
-        { parentOrderId: parentOrder._id }
-      );
-
-      return parentOrder;
-    }
-
-    return orders[0];
+    return order;
   }
 
   /**

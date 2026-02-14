@@ -40,29 +40,7 @@ export class ProductService {
       }
     }
 
-    // Prepare product data
-    const productData: any = { ...data };
-    
-    // Handle variant products
-    if (data.hasVariants && data.variants && data.variants.length > 0) {
-      // For variant products, don't send legacy price fields or set them to 0
-      productData.sellingPrice = 0;
-      productData.purchasePrice = 0;
-      productData.mrp = 0;
-      productData.weight = 0;
-      productData.sellingPercentage = 0;
-      productData.purchasePercentage = 60;
-    } else {
-      // For legacy single-weight products, calculate prices
-      const sellingPrice = data.mrp * (data.sellingPercentage / 100);
-      const purchasePrice = data.mrp * ((data.purchasePercentage || 60) / 100);
-      
-      productData.sellingPrice = sellingPrice;
-      productData.purchasePrice = purchasePrice;
-      productData.purchasePercentage = data.purchasePercentage || 60;
-    }
-
-    const product = await Product.create(productData);
+    const product = await Product.create(data);
 
     return product;
   }
@@ -116,24 +94,11 @@ export class ProductService {
       .populate('brand_id', 'name')
       .sort({ createdAt: -1 });
 
-    // Add stock availability information from MY SHOP vendor
-    // Get all product IDs
-    const productIds = products.map((p) => p._id);
-    
-    // Add inStock field to each product based on product.isActive and variants
-    if (productIds.length > 0) {
+    // Add inStock field to each product based on product.isActive
+    if (products.length > 0) {
       products = products.map((p) => {
         const productObj = p.toObject();
-        
-        // For variant products, check if product is active and has active variants
-        if (productObj.hasVariants && productObj.variants && productObj.variants.length > 0) {
-          const hasActiveVariants = productObj.variants.some((v: any) => v.isActive);
-          productObj.inStock = productObj.isActive && hasActiveVariants;
-        } else {
-          // For non-variant products, use product.isActive
-          productObj.inStock = productObj.isActive === true;
-        }
-        
+        productObj.inStock = productObj.isActive === true;
         return productObj;
       });
     }

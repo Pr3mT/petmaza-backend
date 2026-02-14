@@ -17,12 +17,12 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
 
     // Determine role and vendorType
     const userRole = role || 'customer';
-    let vendorType: 'PRIME' | 'NORMAL' | 'MY_SHOP' | undefined;
+    let vendorType: 'PRIME' | 'MY_SHOP' | undefined;
 
     if (userRole === 'vendor') {
-      vendorType = vendor_type; // PRIME, NORMAL, or MY_SHOP
-      if (!vendorType || !['PRIME', 'NORMAL', 'MY_SHOP'].includes(vendorType)) {
-        return next(new AppError('Invalid vendor type. Must be PRIME, NORMAL, or MY_SHOP', 400));
+      vendorType = vendor_type; // PRIME or MY_SHOP
+      if (!vendorType || !['PRIME', 'MY_SHOP'].includes(vendorType)) {
+        return next(new AppError('Invalid vendor type. Must be PRIME or MY_SHOP', 400));
       }
     }
 

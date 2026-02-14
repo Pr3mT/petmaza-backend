@@ -1,23 +1,5 @@
 import mongoose, { Schema } from 'mongoose';
-import { IVendorProduct, IVendorProductVariantStock } from '../types';
-
-const variantStockSchema = new Schema<IVendorProductVariantStock>({
-  weight: {
-    type: Number,
-    required: true,
-    min: 0,
-  },
-  quantity: {
-    type: Number,
-    default: 0,
-    min: 0,
-  },
-  status: {
-    type: String,
-    enum: ['active', 'inactive'],
-    default: 'active',
-  },
-}, { _id: false });
+import { IVendorProduct } from '../types';
 
 const vendorProductSchema = new Schema<IVendorProduct>(
   {
@@ -51,10 +33,6 @@ const vendorProductSchema = new Schema<IVendorProduct>(
       enum: ['active', 'inactive'],
       default: 'active',
     },
-    variantStock: {
-      type: [variantStockSchema],
-      default: [],
-    },
   },
   {
     timestamps: true,
@@ -68,6 +46,8 @@ vendorProductSchema.index({ product_id: 1 });
 vendorProductSchema.index({ status: 1 });
 
 const VendorProduct = mongoose.model<IVendorProduct>('VendorProduct', vendorProductSchema);
+
+export default VendorProduct;
 
 export default VendorProduct;
 
