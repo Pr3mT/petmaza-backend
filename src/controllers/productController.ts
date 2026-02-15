@@ -22,16 +22,65 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     if (user.vendorType === 'MY_SHOP') {
       const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
       
-      await VendorProductPricing.create({
-        vendor_id: user._id,
-        product_id: product._id,
-        purchasePrice: req.body.purchasePrice || (product.mrp * (req.body.purchasePercentage || 60) / 100),
-        purchasePercentage: req.body.purchasePercentage || 60,
-        availableStock: req.body.availableStock || 0,
-        totalSoldWebsite: 0,
-        totalSoldStore: 0,
-        isActive: req.body.isActive !== undefined ? req.body.isActive : true,
-      });
+      // For variant products, use the first variant's pricing or average
+      let purchasePrice = req.body.purchasePrice;
+      let purchasePercentage = req.body.purchasePercentage || 60;
+      let initialStock = req.body.initialStock || 0;
+      
+      if (product.hasVariants && product.variants && product.variants.length > 0) {
+        // Use first variant's pricing as default
+        const firstVariant = product.variants[0];
+        purchasePrice = firstVariant.purchasePrice;
+        purchasePercentage = firstVariant.purchasePercentage || 60;
+        
+        // Create variantStock array with initial stock from variants
+        const variantStock = product.variants.map((variant: any, index: number) => {
+          const variantData = req.body.variants[index];
+          console.log(`Variant ${index} - Weight: ${variant.weight}${variant.unit}, initialStock from request:`, variantData?.initialStock);
+          return {
+            weight: variant.weight,
+            unit: variant.unit,
+            displayWeight: variant.displayWeight,
+            availableStock: variantData?.initialStock || 0,
+            totalSoldWebsite: 0,
+            totalSoldStore: 0,
+            isActive: variant.isActive || true,
+          };
+        });
+        
+        console.log('Creating VendorProductPricing with variantStock:', JSON.stringify(variantStock, null, 2));
+        
+        const vendorPricing = await VendorProductPricing.create({
+          vendor_id: user._id,
+          product_id: product._id,
+          purchasePrice: purchasePrice,
+          purchasePercentage: purchasePercentage,
+          availableStock: 0, // Not used for variant products
+          totalSoldWebsite: 0,
+          totalSoldStore: 0,
+          isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+          variantStock: variantStock,
+        });
+        
+        console.log('✅ VendorProductPricing created successfully. ID:', vendorPricing._id);
+        console.log('✅ Saved variantStock:', JSON.stringify(vendorPricing.variantStock, null, 2));
+      } else {
+        // Single product (non-variant)
+        if (!purchasePrice && product.mrp) {
+          purchasePrice = product.mrp * (purchasePercentage / 100);
+        }
+        
+        await VendorProductPricing.create({
+          vendor_id: user._id,
+          product_id: product._id,
+          purchasePrice: purchasePrice,
+          purchasePercentage: purchasePercentage,
+          availableStock: initialStock,
+          totalSoldWebsite: 0,
+          totalSoldStore: 0,
+          isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+        });
+      }
     }
     
     res.status(201).json({

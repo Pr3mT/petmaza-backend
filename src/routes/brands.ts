@@ -6,7 +6,7 @@ import {
   updateBrand,
   deleteBrand,
 } from '../controllers/brandController';
-import { verifyToken, checkRole } from '../middlewares/auth';
+import { verifyToken, checkRole, checkMyShopVendor } from '../middlewares/auth';
 
 const router = express.Router();
 
@@ -14,13 +14,12 @@ const router = express.Router();
 router.get('/', getAllBrands);
 router.get('/:id', getBrandById);
 
-// Admin only routes
-router.use(verifyToken);
-router.use(checkRole('admin'));
+// Admin and MY_SHOP vendor can create
+router.post('/', verifyToken, checkMyShopVendor, createBrand);
 
-router.post('/', createBrand);
-router.put('/:id', updateBrand);
-router.delete('/:id', deleteBrand);
+// Admin only routes for update/delete
+router.put('/:id', verifyToken, checkRole('admin'), updateBrand);
+router.delete('/:id', verifyToken, checkRole('admin'), deleteBrand);
 
 export default router;
 

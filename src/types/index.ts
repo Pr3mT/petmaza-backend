@@ -19,20 +19,35 @@ export interface IUser extends Document {
   updatedAt: Date;
 }
 
+export interface IProductVariant {
+  weight?: number;
+  unit?: string;
+  displayWeight?: string;
+  mrp: number;
+  sellingPercentage: number;
+  sellingPrice: number;
+  discount: number;
+  purchasePercentage: number;
+  purchasePrice: number;
+  isActive: boolean;
+}
+
 export interface IProduct extends Document {
   name: string;
   description?: string;
   category_id: Types.ObjectId | string;
   brand_id: Types.ObjectId | string;
+  hasVariants?: boolean;
+  variants?: IProductVariant[];
   weight?: number; // in grams
   unit?: string; // 'g', 'kg', 'ml', 'l'
   displayWeight?: string; // e.g., '200g', '1kg', '5kg'
-  mrp: number;
-  sellingPercentage: number; // e.g., 80 means 80% of MRP
-  sellingPrice: number; // auto-calculated: MRP * (sellingPercentage / 100)
-  discount: number; // auto-calculated: ((MRP - sellingPrice) / MRP) * 100
-  purchasePercentage: number; // e.g., 60 means 60% of MRP (your cost)
-  purchasePrice: number; // auto-calculated: MRP * (purchasePercentage / 100)
+  mrp?: number; // Optional if hasVariants is true
+  sellingPercentage?: number; // Optional if hasVariants is true
+  sellingPrice?: number; // auto-calculated: MRP * (sellingPercentage / 100)
+  discount?: number; // auto-calculated: ((MRP - sellingPrice) / MRP) * 100
+  purchasePercentage?: number; // e.g., 60 means 60% of MRP (your cost)
+  purchasePrice?: number; // auto-calculated: MRP * (purchasePercentage / 100)
   isPrime: boolean; // Prime products: Buy Now only, no cart
   primeVendor_id?: Types.ObjectId | string; // Prime vendor who handles this product
   images: string[];
@@ -112,6 +127,15 @@ export interface IVendorProductPricing extends Document {
   totalSoldWebsite: number;
   totalSoldStore: number;
   isActive: boolean;
+  variantStock?: Array<{
+    weight: number;
+    unit: string;
+    displayWeight: string;
+    availableStock: number;
+    totalSoldWebsite: number;
+    totalSoldStore: number;
+    isActive: boolean;
+  }>;
   createdAt: Date;
   updatedAt: Date;
 }

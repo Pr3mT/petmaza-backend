@@ -42,6 +42,20 @@ const vendorProductPricingSchema = new Schema<IVendorProductPricing>(
       type: Boolean,
       default: true,
     },
+    variantStock: {
+      type: [
+        {
+          weight: { type: Number, required: true },
+          unit: { type: String, required: true },
+          displayWeight: { type: String, required: true },
+          availableStock: { type: Number, default: 0, min: 0 },
+          totalSoldWebsite: { type: Number, default: 0, min: 0 },
+          totalSoldStore: { type: Number, default: 0, min: 0 },
+          isActive: { type: Boolean, default: true },
+        },
+      ],
+      default: undefined,
+    },
   },
   {
     timestamps: true,

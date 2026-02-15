@@ -60,6 +60,19 @@ export const checkRole = (...roles: string[]) => {
   };
 };
 
+// Check for MY_SHOP vendor type
+export const checkMyShopVendor = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return next(new AppError('Not authorized', 401));
+  }
+
+  if (req.user.role === 'admin' || (req.user.role === 'vendor' && req.user.vendorType === 'MY_SHOP')) {
+    return next();
+  }
+
+  return next(new AppError('Access denied. Insufficient permissions', 403));
+};
+
 // Alias for verifyToken
 export const authenticate = verifyToken;
 

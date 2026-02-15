@@ -13,23 +13,49 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
 
     // PRIME vendors only see assigned products
     if (vendor.vendorType === 'PRIME') {
-      products = await VendorProductPricing.find({ vendor_id: vendor._id })
-        .populate({
-          path: 'product_id',
-          populate: {
-            path: 'brand_id',
-            select: 'name _id',
-          },
-        })
+      // Get products assigned to this PRIME vendor
+      const assignedProducts = await Product.find({ 
+        isPrime: true,
+        primeVendor_id: vendor._id
+        // Removed isActive filter to show all products (available and marked out)
+      })
+        .populate('brand_id', 'name _id')
+        .populate('category_id', 'name _id')
         .sort({ createdAt: -1 });
 
-      // For products with variants, initialize variantStock if not exists
-      const productsWithVariants = await Promise.all(
-        products.map(async (vendorProduct) => {
-          const product = vendorProduct.product_id as any;
-          
-          // If product has variants but vendor doesn't have variantStock, initialize it
-          if (product?.hasVariants && product?.variants?.length > 0 && !vendorProduct.variantStock) {
+      // Get or create VendorProductPricing entries
+      const productsWithPricing = await Promise.all(
+        assignedProducts.map(async (product) => {
+          let vendorProduct = await VendorProductPricing.findOne({
+            vendor_id: vendor._id,
+            product_id: product._id,
+          });
+
+          // If no pricing entry exists, create one
+          if (!vendorProduct) {
+            vendorProduct = await VendorProductPricing.create({
+              vendor_id: vendor._id,
+              product_id: product._id,
+              purchasePercentage: product.purchasePercentage || 60,
+              purchasePrice: product.hasVariants && product.variants?.length > 0 
+                ? 0 
+                : (product.mrp || 0) * ((product.purchasePercentage || 60) / 100),
+              availableStock: 0,
+              isActive: false,
+              variantStock: product.hasVariants && product.variants?.length > 0
+                ? product.variants.map((variant: any) => ({
+                    weight: variant.weight,
+                    unit: variant.unit,
+                    displayWeight: variant.displayWeight,
+                    availableStock: 0,
+                    totalSoldWebsite: 0,
+                    totalSoldStore: 0,
+                    isActive: false,
+                  }))
+                : undefined,
+            });
+          } else if (!vendorProduct.variantStock && product.hasVariants && product.variants?.length > 0) {
+            // Initialize variantStock if product has variants but vendor doesn't
             vendorProduct.variantStock = product.variants.map((variant: any) => ({
               weight: variant.weight,
               unit: variant.unit,
@@ -41,7 +67,16 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
             }));
             await vendorProduct.save();
           }
-          
+
+          // Populate product_id with full product data
+          await vendorProduct.populate({
+            path: 'product_id',
+            populate: {
+              path: 'brand_id',
+              select: 'name _id',
+            },
+          });
+
           return vendorProduct;
         })
       );
@@ -49,13 +84,16 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
       return res.status(200).json({
         success: true,
         data: {
-          products: productsWithVariants,
+          products: productsWithPricing,
         },
       });
     }
 
-    // NORMAL and MY_SHOP vendors see ALL active products
-    const allProducts = await Product.find({ isActive: true })
+    // MY_SHOP vendors only see non-PRIME products (regular products)
+    const allProducts = await Product.find({ 
+      isPrime: false // Only regular products, not PRIME products
+      // Removed isActive filter to show all products (available and marked out)
+    })
       .populate('brand_id', 'name _id')
       .populate('category_id', 'name _id')
       .sort({ createdAt: -1 });
@@ -70,16 +108,23 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
           vendor_id: vendor._id,
           product_id: product._id,
         });
+        
+        console.log(`\n🔍 Checking product: ${product.name}`);
+        console.log('Found existing VendorProductPricing:', !!vendorProduct);
+        if (vendorProduct && vendorProduct.variantStock) {
+          console.log('Existing variantStock:', JSON.stringify(vendorProduct.variantStock.map((v: any) => ({ weight: v.weight, unit: v.unit, stock: v.availableStock })), null, 2));
+        }
 
         // If no pricing entry exists, create one
         if (!vendorProduct) {
+          console.log('⚠️ No VendorProductPricing found. Creating new one with 0 stock.');
           vendorProduct = await VendorProductPricing.create({
             vendor_id: vendor._id,
             product_id: product._id,
-            purchasePercentage: 60, // Default purchase percentage
+            purchasePercentage: product.purchasePercentage || 60,
             purchasePrice: product.hasVariants && product.variants?.length > 0 
               ? 0 
-              : (product.mrp || 0) * 0.6,
+              : (product.mrp || 0) * ((product.purchasePercentage || 60) / 100),
             availableStock: 0,
             isActive: false, // Vendor needs to mark as available
             variantStock: product.hasVariants && product.variants?.length > 0
@@ -95,27 +140,8 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
               : undefined,
           });
         } else {
-          // For MY_SHOP vendor, sync variantStock status from actual product variants
-          if (isMyShop && product.hasVariants && product.variants?.length > 0) {
-            vendorProduct.variantStock = product.variants.map((variant: any) => {
-              // Find existing variantStock entry to preserve stock quantities
-              const existingVariant = vendorProduct?.variantStock?.find(
-                (v: any) => v.weight === variant.weight && v.unit === variant.unit
-              );
-              
-              return {
-                weight: variant.weight,
-                unit: variant.unit,
-                displayWeight: variant.displayWeight,
-                availableStock: existingVariant?.availableStock || 0,
-                totalSoldWebsite: existingVariant?.totalSoldWebsite || 0,
-                totalSoldStore: existingVariant?.totalSoldStore || 0,
-                isActive: variant.isActive, // Sync from product variant
-              };
-            });
-            vendorProduct.markModified('variantStock');
-            await vendorProduct.save();
-          } else if (!vendorProduct.variantStock && product.hasVariants && product.variants?.length > 0) {
+          // Only initialize variantStock if product has variants but vendor pricing doesn't
+          if (!vendorProduct.variantStock && product.hasVariants && product.variants?.length > 0) {
             // Initialize variantStock if product has variants but vendor doesn't
             vendorProduct.variantStock = product.variants.map((variant: any) => ({
               weight: variant.weight,
@@ -235,40 +261,188 @@ export const getAvailableProducts = async (req: AuthRequest, res: Response, next
 export const updateVendorProductStock = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params; // product_id
-    const { availableStock } = req.body;
+    const { availableStock, weight, unit, action, reason } = req.body; // action: 'set', 'add', 'remove'; reason: 'sold_offline', 'adjustment'
 
     if (availableStock === undefined || availableStock < 0) {
       return next(new AppError('Please provide a valid stock quantity', 400));
     }
 
-    const vendorProductPricing = await VendorProductPricing.findOne({
-      vendor_id: req.user._id,
-      product_id: id,
-      isActive: true,
-    });
+    // Check if this vendor is MY SHOP (main warehouse)
+    const vendor = await User.findById(req.user._id);
+    const isMyShop = vendor && ['WAREHOUSE', 'MY_SHOP'].includes(vendor.vendorType);
 
-    if (!vendorProductPricing) {
-      return next(new AppError('Product not assigned to you', 404));
+    if (isMyShop) {
+      // For MY_SHOP, find or create VendorProductPricing to store stock
+      let vendorProductPricing = await VendorProductPricing.findOne({
+        vendor_id: req.user._id,
+        product_id: id,
+      });
+
+      // If no VendorProductPricing exists, create one
+      if (!vendorProductPricing) {
+        const product = await Product.findById(id);
+        if (!product) {
+          return next(new AppError('Product not found', 404));
+        }
+
+        vendorProductPricing = await VendorProductPricing.create({
+          vendor_id: req.user._id,
+          product_id: id,
+          purchasePercentage: product.sellingPercentage || 0,
+          isActive: true,
+          availableStock: 0,
+        });
+      }
+
+      // Check if this is a variant stock update
+      if (weight !== undefined && unit !== undefined) {
+        // Initialize variantStock if needed
+        if (!vendorProductPricing.variantStock) {
+          const product = await Product.findById(id);
+          if (product?.hasVariants && product.variants) {
+            vendorProductPricing.variantStock = product.variants.map((variant: any) => ({
+              weight: variant.weight,
+              unit: variant.unit,
+              displayWeight: variant.displayWeight,
+              isActive: variant.isActive || true,
+              availableStock: 0,
+            }));
+          }
+        }
+
+        if (vendorProductPricing.variantStock) {
+          // Update specific variant stock
+          const variantIndex = vendorProductPricing.variantStock.findIndex(
+            (v: any) => v.weight === Number(weight) && v.unit === unit
+          );
+          
+          if (variantIndex === -1) {
+            return next(new AppError('Variant not found', 404));
+          }
+          
+          const currentStock = vendorProductPricing.variantStock[variantIndex].availableStock || 0;
+          let newStock = Number(availableStock);
+          
+          // Handle different actions
+          if (action === 'add') {
+            newStock = currentStock + Number(availableStock);
+          } else if (action === 'remove') {
+            newStock = Math.max(0, currentStock - Number(availableStock));
+            
+            // If sold offline, increment totalSoldStore
+            if (reason === 'sold_offline') {
+              const currentSoldStore = vendorProductPricing.variantStock[variantIndex].totalSoldStore || 0;
+              vendorProductPricing.variantStock[variantIndex].totalSoldStore = currentSoldStore + Number(availableStock);
+            }
+          }
+          
+          vendorProductPricing.variantStock[variantIndex].availableStock = newStock;
+          vendorProductPricing.markModified('variantStock');
+        }
+      } else {
+        // Update single product stock
+        const currentStock = vendorProductPricing.availableStock || 0;
+        let newStock = Number(availableStock);
+        
+        // Handle different actions
+        if (action === 'add') {
+          newStock = currentStock + Number(availableStock);
+        } else if (action === 'remove') {
+          newStock = Math.max(0, currentStock - Number(availableStock));
+          
+          // If sold offline, increment totalSoldStore
+          if (reason === 'sold_offline') {
+            vendorProductPricing.totalSoldStore = (vendorProductPricing.totalSoldStore || 0) + Number(availableStock);
+          }
+        }
+        
+        vendorProductPricing.availableStock = newStock;
+      }
+
+      await vendorProductPricing.save();
+
+      await vendorProductPricing.populate({
+        path: 'product_id',
+        populate: {
+          path: 'brand_id',
+          select: 'name _id',
+        },
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Stock updated successfully',
+        data: {
+          product: vendorProductPricing,
+        },
+      });
+    } else {
+      // For PRIME vendors, use existing VendorProductPricing
+      const vendorProductPricing = await VendorProductPricing.findOne({
+        vendor_id: req.user._id,
+        product_id: id,
+      });
+
+      if (!vendorProductPricing) {
+        return next(new AppError('Product not assigned to you', 404));
+      }
+
+      // Check if this is a variant stock update
+      if (weight !== undefined && unit !== undefined && vendorProductPricing.variantStock) {
+        // Update specific variant stock
+        const variantIndex = vendorProductPricing.variantStock.findIndex(
+          (v: any) => v.weight === Number(weight) && v.unit === unit
+        );
+        
+        if (variantIndex === -1) {
+          return next(new AppError('Variant not found', 404));
+        }
+        
+        const currentStock = vendorProductPricing.variantStock[variantIndex].availableStock || 0;
+        let newStock = Number(availableStock);
+        
+        // Handle different actions
+        if (action === 'add') {
+          newStock = currentStock + Number(availableStock);
+        } else if (action === 'remove') {
+          newStock = Math.max(0, currentStock - Number(availableStock));
+        }
+        
+        vendorProductPricing.variantStock[variantIndex].availableStock = newStock;
+        vendorProductPricing.markModified('variantStock');
+      } else {
+        // Update single product stock
+        const currentStock = vendorProductPricing.availableStock || 0;
+        let newStock = Number(availableStock);
+        
+        // Handle different actions
+        if (action === 'add') {
+          newStock = currentStock + Number(availableStock);
+        } else if (action === 'remove') {
+          newStock = Math.max(0, currentStock - Number(availableStock));
+        }
+        
+        vendorProductPricing.availableStock = newStock;
+      }
+
+      await vendorProductPricing.save();
+
+      await vendorProductPricing.populate({
+        path: 'product_id',
+        populate: {
+          path: 'brand_id',
+          select: 'name _id',
+        },
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Stock updated successfully',
+        data: {
+          product: vendorProductPricing,
+        },
+      });
     }
-
-    vendorProductPricing.availableStock = Number(availableStock);
-    await vendorProductPricing.save();
-
-    await vendorProductPricing.populate({
-      path: 'product_id',
-      populate: {
-        path: 'brand_id',
-        select: 'name _id',
-      },
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Stock updated successfully',
-      data: {
-        product: vendorProductPricing,
-      },
-    });
   } catch (error: any) {
     next(error);
   }
@@ -312,12 +486,16 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
         await product.save();
       } else {
         // Update product-level isActive status
+        console.log(`📝 Updating product ${product._id} isActive from ${product.isActive} to ${isActive}`);
         product.isActive = isActive;
         await product.save();
+        console.log(`✅ Product saved. New isActive: ${product.isActive}`);
       }
 
       await product.populate('brand_id', 'name _id');
       await product.populate('category_id', 'name _id');
+
+      console.log(`📤 Returning updated product. isActive: ${product.isActive}`);
 
       res.status(200).json({
         success: true,
