@@ -306,6 +306,7 @@ export class OrderAcceptanceService {
           soldBy: vendor_id, // The vendor who accepted the order
           order_id: updatedOrder._id.toString(),
           sellingPrice: item.sellingPrice,
+          selectedVariant: (item as any).selectedVariant,
         });
       } catch (error) {
         console.error(`Failed to record sale for product ${item.product_id}:`, error);

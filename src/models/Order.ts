@@ -45,6 +45,11 @@ const orderItemSchema = new Schema(
       type: Number,
       required: true,
     },
+    selectedVariant: {
+      weight: { type: Number },
+      unit: { type: String },
+      displayWeight: { type: String },
+    },
   },
   { _id: false }
 );

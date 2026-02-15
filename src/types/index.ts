@@ -64,9 +64,14 @@ export interface IOrderItem {
   sellingPrice: number; // Global selling price
   purchasePrice: number; // Vendor-specific purchase price
   subtotal: number; // quantity * sellingPrice
-  purchaseSubtotal: number; // quantity * purchasePrice
+  purchaseSubtotal: number; // quantity * purchaseSubtotal
   profit: number; // subtotal - purchaseSubtotal
   profitPercentage: number; // (profit / subtotal) * 100
+  selectedVariant?: {
+    weight: number;
+    unit: string;
+    displayWeight?: string;
+  };
 }
 
 export type OrderStatus = 

@@ -16,6 +16,7 @@ export class SalesService {
     order_id?: string; // For website sales
     sellingPrice?: number; // For website sales
     notes?: string; // For store sales
+    selectedVariant?: { weight: number; unit: string; displayWeight?: string }; // For variant products
   }) {
     const {
       vendor_id,
@@ -26,6 +27,7 @@ export class SalesService {
       order_id,
       sellingPrice,
       notes,
+      selectedVariant,
     } = params;
 
     // Get vendor product pricing
@@ -77,19 +79,51 @@ export class SalesService {
     });
 
     // Update inventory and sales counters
-    const updateFields: any = {
-      $inc: {
-        availableStock: -quantity,
-      },
-    };
+    if (selectedVariant && selectedVariant.weight && selectedVariant.unit) {
+      // Update variant-specific stock
+      const variantIndex = pricing.variantStock?.findIndex(
+        (v: any) => v.weight === selectedVariant.weight && v.unit === selectedVariant.unit
+      );
 
-    if (saleType === 'WEBSITE') {
-      updateFields.$inc.totalSoldWebsite = quantity;
+      if (variantIndex !== undefined && variantIndex >= 0 && pricing.variantStock) {
+        // Check if variant has sufficient stock
+        const variantStock = pricing.variantStock[variantIndex];
+        if (variantStock.availableStock < quantity) {
+          throw new AppError(
+            `Insufficient variant stock. Available: ${variantStock.availableStock}, Required: ${quantity}`,
+            400
+          );
+        }
+
+        // Update variant stock
+        pricing.variantStock[variantIndex].availableStock -= quantity;
+        if (saleType === 'WEBSITE') {
+          pricing.variantStock[variantIndex].totalSoldWebsite += quantity;
+        } else {
+          pricing.variantStock[variantIndex].totalSoldStore += quantity;
+        }
+        pricing.markModified('variantStock');
+        await pricing.save();
+      } else {
+        console.error(`Variant ${selectedVariant.weight}${selectedVariant.unit} not found in pricing`);
+        throw new AppError('Variant not found in inventory', 404);
+      }
     } else {
-      updateFields.$inc.totalSoldStore = quantity;
-    }
+      // Update general product stock (non-variant or legacy)
+      const updateFields: any = {
+        $inc: {
+          availableStock: -quantity,
+        },
+      };
 
-    await VendorProductPricing.findByIdAndUpdate(pricing._id, updateFields);
+      if (saleType === 'WEBSITE') {
+        updateFields.$inc.totalSoldWebsite = quantity;
+      } else {
+        updateFields.$inc.totalSoldStore = quantity;
+      }
+
+      await VendorProductPricing.findByIdAndUpdate(pricing._id, updateFields);
+    }
 
     return sale;
   }

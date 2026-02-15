@@ -16,6 +16,7 @@ export class OrderRoutingService {
     items: Array<{
       product_id: string;
       quantity: number;
+      selectedVariant?: any;
     }>;
     customerPincode: string;
     customerAddress: {
@@ -54,7 +55,7 @@ export class OrderRoutingService {
    */
   private static async routePrimeOrder(
     customer_id: string,
-    items: Array<{ product_id: string; quantity: number }>,
+    items: Array<{ product_id: string; quantity: number; selectedVariant?: any }>,
     customerPincode: string,
     customerAddress: any
   ) {
@@ -102,7 +103,7 @@ export class OrderRoutingService {
    */
   private static async routeNormalOrderToMyShop(
     customer_id: string,
-    items: Array<{ product_id: string; quantity: number }>,
+    items: Array<{ product_id: string; quantity: number; selectedVariant?: any }>,
     customerPincode: string,
     customerAddress: any
   ) {
@@ -139,6 +140,29 @@ export class OrderRoutingService {
       customerPincode,
       customerAddress,
     });
+
+    // Import SalesService at runtime to avoid circular dependency
+    const { SalesService } = await import('./SalesService');
+
+    // Record sales in history for each item and reduce stock
+    for (const item of order.items) {
+      try {
+        await SalesService.recordSale({
+          vendor_id: myShopVendor._id.toString(),
+          product_id: item.product_id.toString(),
+          quantity: item.quantity,
+          saleType: 'WEBSITE',
+          soldBy: myShopVendor._id.toString(), // MY_SHOP vendor
+          order_id: order._id.toString(),
+          sellingPrice: item.sellingPrice,
+          selectedVariant: item.selectedVariant,
+        });
+      } catch (error) {
+        console.error(`Failed to record sale for product ${item.product_id}:`, error);
+        // Log error but allow order creation to continue
+        // Stock reduction failure shouldn't block the order
+      }
+    }
 
     return order;
   }
@@ -360,7 +384,8 @@ export class OrderRoutingService {
         item.quantity,
         vendorId,
         sellingPrice,
-        purchasePrice
+        purchasePrice,
+        item.selectedVariant
       );
 
       orderItems.push(orderItem);
@@ -377,14 +402,15 @@ export class OrderRoutingService {
     quantity: number,
     vendor_id: string,
     sellingPrice: number,
-    purchasePrice: number
+    purchasePrice: number,
+    selectedVariant?: any
   ): Promise<IOrderItem> {
     const subtotal = sellingPrice * quantity;
     const purchaseSubtotal = purchasePrice * quantity;
     const profit = subtotal - purchaseSubtotal;
     const profitPercentage = subtotal > 0 ? (profit / subtotal) * 100 : 0;
 
-    return {
+    const orderItem: IOrderItem = {
       product_id: product_id.toString(),
       vendor_id: vendor_id.toString(),
       quantity,
@@ -395,6 +421,17 @@ export class OrderRoutingService {
       profit,
       profitPercentage,
     };
+
+    // Include variant info if provided
+    if (selectedVariant && selectedVariant.weight && selectedVariant.unit) {
+      orderItem.selectedVariant = {
+        weight: selectedVariant.weight,
+        unit: selectedVariant.unit,
+        displayWeight: selectedVariant.displayWeight,
+      };
+    }
+
+    return orderItem;
   }
 }
 
