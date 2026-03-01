@@ -49,5 +49,3 @@ const VendorProduct = mongoose.model<IVendorProduct>('VendorProduct', vendorProd
 
 export default VendorProduct;
 
-export default VendorProduct;
-
