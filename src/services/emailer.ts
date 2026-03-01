@@ -1,6 +1,10 @@
 import nodemailer from 'nodemailer';
+import dotenv from 'dotenv';
 import EmailLog from '../models/EmailLog';
 import logger from '../config/logger';
+
+// Load environment variables
+dotenv.config();
 
 // Initialize transporter
 const transporter = nodemailer.createTransport({
