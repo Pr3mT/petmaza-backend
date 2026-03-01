@@ -47,6 +47,30 @@ export const getUsers = async (req: AuthRequest, res: Response, next: NextFuncti
   }
 };
 
+export const getUserById = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    console.log('🔍 getUserById called with id:', id);
+
+    const user = await User.findById(id).select('-password');
+    console.log('📦 User found:', user ? 'Yes' : 'No');
+
+    if (!user) {
+      console.log('❌ User not found for id:', id);
+      return next(new AppError('User not found', 404));
+    }
+
+    console.log('✅ Returning user:', user._id);
+    res.status(200).json({
+      success: true,
+      data: { user },
+    });
+  } catch (error: any) {
+    console.error('❌ Error in getUserById:', error.message);
+    next(error);
+  }
+};
+
 export const approveVendor = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;

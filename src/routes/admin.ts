@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   getUsers,
+  getUserById,
   approveVendor,
   getAdminStats,
   getAllOrders,
@@ -26,8 +27,8 @@ router.use(verifyToken);
 router.use(checkRole('admin'));
 
 router.get('/users', getUsers);
-router.get('/vendors', getUsers); // Alias for fetching vendors with vendorType filter
 router.put('/users/:id/approve', approveVendor);
+router.get('/users/:id', getUserById);
 router.get('/stats', getAdminStats);
 router.get('/orders', getAllOrders);
 

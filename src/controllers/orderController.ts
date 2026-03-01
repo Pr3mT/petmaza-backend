@@ -2,8 +2,15 @@ import { Request, Response, NextFunction } from 'express';
 import { OrderRoutingService } from '../services/OrderRoutingService';
 import { OrderAcceptanceService } from '../services/OrderAcceptanceService';
 import Order from '../models/Order';
+import User from '../models/User';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
+import {
+  sendOrderConfirmationEmail,
+  sendOrderStatusUpdateEmail,
+  sendVendorOrderNotificationEmail,
+  sendAdminOrderNotificationEmail,
+} from '../services/emailer';
 
 // Create order (customer)
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -24,6 +31,38 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       customerPincode,
       customerAddress,
     });
+
+    // Send order confirmation email to customer
+    try {
+      const populatedOrder = await order.populate('items.product_id');
+      await sendOrderConfirmationEmail(
+        req.user.email,
+        req.user.name,
+        order._id.toString(),
+        {
+          totalAmount: order.totalAmount,
+          items: populatedOrder.items,
+          customerAddress: order.customerAddress,
+        }
+      );
+    } catch (emailError: any) {
+      console.error('Failed to send order confirmation email:', emailError.message);
+      // Don't fail the order creation if email fails
+    }
+
+    // Send admin notification
+    try {
+      const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
+      for (const adminEmail of adminEmails) {
+        await sendAdminOrderNotificationEmail(adminEmail.trim(), order._id.toString(), {
+          customerName: req.user.name,
+          totalAmount: order.totalAmount,
+          items: order.items,
+        });
+      }
+    } catch (emailError: any) {
+      console.error('Failed to send admin notification:', emailError.message);
+    }
 
     res.status(201).json({
       success: true,
@@ -309,7 +348,10 @@ export const updateOrderStatus = async (
       return next(new AppError('Invalid order ID format', 400));
     }
 
-    const order = await Order.findById(orderId);
+    const order = await Order.findById(orderId)
+      .populate('customer_id', 'email name')
+      .populate('assignedVendorId', 'name');
+    
     if (!order) {
       return next(new AppError('Order not found', 404));
     }
@@ -319,9 +361,37 @@ export const updateOrderStatus = async (
       return next(new AppError('You are not assigned to this order', 403));
     }
 
+    // Map internal status to customer-friendly status
+    const statusMap: Record<string, string> = {
+      PACKED: 'processing',
+      PICKED_UP: 'shipped',
+      IN_TRANSIT: 'shipped',
+      DELIVERED: 'delivered',
+    };
+
     // Update status
     order.status = status as any;
     await order.save();
+
+    // Send status update email to customer
+    try {
+      const customerEmail = (order.customer_id as any)?.email;
+      const customerName = (order.customer_id as any)?.name;
+      const vendorName = (order.assignedVendorId as any)?.name;
+
+      if (customerEmail) {
+        await sendOrderStatusUpdateEmail(
+          customerEmail,
+          customerName || 'Customer',
+          orderId,
+          statusMap[status] || status.toLowerCase(),
+          vendorName
+        );
+      }
+    } catch (emailError: any) {
+      console.error('Failed to send status update email:', emailError.message);
+      // Don't fail the status update if email fails
+    }
 
     console.log(`[updateOrderStatus] Order ${orderId} status updated to ${status} by vendor ${vendorId}`);
 

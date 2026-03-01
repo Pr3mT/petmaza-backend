@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import Invoice from '../models/Invoice';
 import Order from '../models/Order';
 import User from '../models/User';
-import emailService from '../services/emailService';
+import { sendEmail } from '../services/emailer';
 
 // Generate invoice number
 const generateInvoiceNumber = (): string => {
@@ -304,10 +304,11 @@ export const sendInvoiceEmail = async (req: Request, res: Response) => {
       </html>
     `;
 
-    await emailService.sendEmail({
+    await sendEmail({
       to: customer.email,
       subject: `Invoice ${invoice.invoiceNumber} - PET Marketplace`,
       html,
+      trigger: 'invoice_email',
     });
 
     res.status(200).json({

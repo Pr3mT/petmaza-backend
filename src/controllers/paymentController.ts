@@ -5,6 +5,7 @@ import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import { getRazorpayInstance } from '../config/razorpay';
 import { io } from '../server';
+import { sendPaymentSuccessEmail, sendPaymentFailureEmail } from '../services/emailer';
 
 export const createPaymentOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -188,7 +189,7 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
       return next(new AppError('Order ID is required', 400));
     }
 
-    const order = await Order.findById(order_id);
+    const order = await Order.findById(order_id).populate('customer_id', 'email name');
     if (!order) {
       return next(new AppError('Order not found', 404));
     }
@@ -208,6 +209,25 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
 
     await order.save();
 
+    // Send payment success email to customer
+    try {
+      const customerEmail = (order.customer_id as any)?.email;
+      const customerName = (order.customer_id as any)?.name;
+
+      if (customerEmail) {
+        await sendPaymentSuccessEmail(
+          customerEmail,
+          customerName || 'Customer',
+          order_id,
+          order.totalAmount || 0,
+          order.payment_id
+        );
+      }
+    } catch (emailError: any) {
+      console.error('Failed to send payment success email:', emailError.message);
+      // Don't fail the payment completion if email fails
+    }
+
     res.status(200).json({
       success: true,
       message: 'Payment completed successfully',
@@ -220,3 +240,59 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
   }
 };
 
+/**
+ * Handle payment failure
+ */
+export const handlePaymentFailure = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { order_id, reason } = req.body;
+
+    if (!order_id) {
+      return next(new AppError('Order ID is required', 400));
+    }
+
+    const order = await Order.findById(order_id).populate('customer_id', 'email name');
+    if (!order) {
+      return next(new AppError('Order not found', 404));
+    }
+
+    // Check if user owns this order
+    if (order.customer_id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+      return next(new AppError('Access denied', 403));
+    }
+
+    // Update order payment status
+    order.payment_status = 'Failed';
+
+    await order.save();
+
+    // Send payment failure email to customer
+    try {
+      const customerEmail = (order.customer_id as any)?.email;
+      const customerName = (order.customer_id as any)?.name;
+
+      if (customerEmail) {
+        await sendPaymentFailureEmail(
+          customerEmail,
+          customerName || 'Customer',
+          order_id,
+          order.totalAmount || 0,
+          reason || 'Payment was declined by your bank'
+        );
+      }
+    } catch (emailError: any) {
+      console.error('Failed to send payment failure email:', emailError.message);
+      // Don't fail the error handling if email fails
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment failure recorded',
+      data: {
+        order,
+      },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
