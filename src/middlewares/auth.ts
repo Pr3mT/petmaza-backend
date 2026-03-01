@@ -75,6 +75,7 @@ export const checkMyShopVendor = (req: AuthRequest, res: Response, next: NextFun
 
 // Alias for verifyToken
 export const authenticate = verifyToken;
+export const protect = verifyToken; // Common alias
 
 // Alias for checkRole
 export const authorize = checkRole;

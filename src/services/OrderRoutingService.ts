@@ -97,9 +97,8 @@ export class OrderRoutingService {
   }
 
   /**
-   * Route normal order directly to MY_SHOP vendor
-   * Simplified: No warehouse priority, no split shipments, no normal vendors
-   * All normal products go directly to MY_SHOP vendor who manages fulfillment
+   * Route normal order to WAREHOUSE_FULFILLER first, then MY_SHOP if needed
+   * New flow: WAREHOUSE_FULFILLER gets order first and can reassign to MY_SHOP if they can't fulfill
    */
   private static async routeNormalOrderToMyShop(
     customer_id: string,
@@ -107,7 +106,43 @@ export class OrderRoutingService {
     customerPincode: string,
     customerAddress: any
   ) {
-    // Find MY_SHOP vendor (your shop manager)
+    // Find WAREHOUSE_FULFILLER first (priority fulfillment partner)
+    const warehouseFulfiller = await User.findOne({
+      role: 'vendor',
+      vendorType: 'WAREHOUSE_FULFILLER',
+      isApproved: true,
+    });
+
+    // If warehouse fulfiller exists, route to them first
+    if (warehouseFulfiller) {
+      // Build order items with pricing
+      const orderItems = await this.buildOrderItems(items, warehouseFulfiller._id.toString());
+
+      // Calculate totals
+      const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
+      const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
+      const totalProfit = total - totalPurchasePrice;
+
+      // Create order - assigned to WAREHOUSE_FULFILLER, status PENDING (awaiting acceptance)
+      const order = await Order.create({
+        customer_id,
+        items: orderItems,
+        total,
+        totalPurchasePrice,
+        totalProfit,
+        status: 'PENDING', // Warehouse fulfiller needs to accept/reject
+        isPrime: false,
+        isSplitShipment: false,
+        assignedVendorId: warehouseFulfiller._id, // Assigned to warehouse fulfiller
+        customerPincode,
+        customerAddress,
+      });
+
+      console.log(`Order ${order._id} routed to WAREHOUSE_FULFILLER ${warehouseFulfiller._id}`);
+      return order;
+    }
+
+    // Fallback: If no warehouse fulfiller, route directly to MY_SHOP vendor
     const myShopVendor = await User.findOne({
       role: 'vendor',
       vendorType: 'MY_SHOP',
@@ -115,7 +150,7 @@ export class OrderRoutingService {
     });
 
     if (!myShopVendor) {
-      throw new AppError('MY_SHOP vendor not available. Please contact admin.', 404);
+      throw new AppError('No fulfillment partner or shop vendor available. Please contact admin.', 404);
     }
 
     // Build order items with pricing (using product's own pricing)
@@ -164,6 +199,7 @@ export class OrderRoutingService {
       }
     }
 
+    console.log(`Order ${order._id} routed directly to MY_SHOP ${myShopVendor._id}`);
     return order;
   }
 

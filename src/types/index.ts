@@ -5,7 +5,7 @@ export interface IUser extends Document {
   email: string;
   password: string;
   role: 'admin' | 'vendor' | 'customer';
-  vendorType?: 'PRIME' | 'MY_SHOP';
+  vendorType?: 'PRIME' | 'MY_SHOP' | 'WAREHOUSE_FULFILLER';
   pincodesServed?: string[];
   phone: string;
   address?: {
@@ -79,11 +79,13 @@ export type OrderStatus =
   | 'ASSIGNED'
   | 'ACCEPTED'
   | 'REJECTED'
+  | 'PICKED_FROM_VENDOR'
   | 'PACKED'
   | 'PICKED_UP'
   | 'IN_TRANSIT'
   | 'DELIVERED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'REASSIGNED_TO_SHOP';
 
 export type PaymentStatus = 'Pending' | 'Paid' | 'Failed' | 'Refunded';
 
@@ -118,6 +120,12 @@ export interface IOrder extends Document {
     pincode: string;
   };
   deliveryCost?: number; // Extra delivery cost for split shipments
+  rejectionReason?: string; // Reason for rejection by warehouse fulfiller
+  refundReason?: string; // Reason for refund by MY_SHOP vendor
+  refundedAt?: Date; // When the refund was processed
+  refundStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'; // Refund status
+  refundAmount?: number; // Amount to be refunded
+  deliveredAt?: Date; // When the order was delivered
   createdAt: Date;
   updatedAt: Date;
 }
@@ -147,7 +155,7 @@ export interface IVendorProductPricing extends Document {
 
 export interface IVendorDetails extends Document {
   vendor_id: Types.ObjectId | string;
-  vendorType: 'PRIME' | 'MY_SHOP';
+  vendorType: 'PRIME' | 'MY_SHOP' | 'WAREHOUSE_FULFILLER';
   shopName: string;
   brandsHandled: (Types.ObjectId | string)[]; // Brand IDs
   pickupAddress: {

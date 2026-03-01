@@ -14,6 +14,8 @@ export interface ISalesHistory extends mongoose.Document {
   soldBy: mongoose.Types.ObjectId; // Admin user who recorded the sale
   notes?: string; // Optional notes (for store sales)
   saleDate: Date;
+  isReversed?: boolean; // If sale was reversed (refund/cancellation)
+  reversedAt?: Date; // When the sale was reversed
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -83,6 +85,14 @@ const salesHistorySchema = new Schema<ISalesHistory>(
       required: true,
       default: Date.now,
       index: true,
+    },
+    isReversed: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    reversedAt: {
+      type: Date,
     },
   },
   {

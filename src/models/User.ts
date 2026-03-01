@@ -29,7 +29,7 @@ const userSchema = new Schema<IUser>(
     },
     vendorType: {
       type: String,
-      enum: ['PRIME', 'MY_SHOP'],
+      enum: ['PRIME', 'MY_SHOP', 'WAREHOUSE_FULFILLER'],
     },
     pincodesServed: {
       type: [String],

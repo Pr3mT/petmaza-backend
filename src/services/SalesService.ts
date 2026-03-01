@@ -129,6 +129,74 @@ export class SalesService {
   }
 
   /**
+   * Reverse a sale (refund/cancellation)
+   * Restores stock and updates sales counters
+   */
+  static async reverseSale(params: {
+    vendor_id: string;
+    product_id: string;
+    quantity: number;
+    order_id?: string;
+    selectedVariant?: { weight: number; unit: string };
+  }) {
+    const { vendor_id, product_id, quantity, order_id, selectedVariant } = params;
+
+    // Get vendor product pricing
+    const pricing = await VendorProductPricing.findOne({
+      vendor_id,
+      product_id,
+      isActive: true,
+    });
+
+    if (!pricing) {
+      throw new AppError('Product not found in vendor inventory', 404);
+    }
+
+    // Mark the sale record as reversed
+    if (order_id) {
+      await SalesHistory.updateMany(
+        {
+          vendor_id,
+          product_id,
+          order_id,
+          isReversed: { $ne: true },
+        },
+        {
+          $set: {
+            isReversed: true,
+            reversedAt: new Date(),
+          },
+        }
+      );
+    }
+
+    // Restore inventory
+    if (selectedVariant && selectedVariant.weight && selectedVariant.unit) {
+      // Restore variant-specific stock
+      const variantIndex = pricing.variantStock?.findIndex(
+        (v: any) => v.weight === selectedVariant.weight && v.unit === selectedVariant.unit
+      );
+
+      if (variantIndex !== undefined && variantIndex >= 0 && pricing.variantStock) {
+        pricing.variantStock[variantIndex].availableStock += quantity;
+        pricing.variantStock[variantIndex].totalSoldWebsite -= quantity;
+        pricing.markModified('variantStock');
+        await pricing.save();
+      }
+    } else {
+      // Restore general product stock
+      await VendorProductPricing.findByIdAndUpdate(pricing._id, {
+        $inc: {
+          availableStock: quantity,
+          totalSoldWebsite: -quantity,
+        },
+      });
+    }
+
+    return { success: true, message: 'Sale reversed successfully' };
+  }
+
+  /**
    * Get sales history for a vendor
    */
   static async getSalesHistory(params: {
