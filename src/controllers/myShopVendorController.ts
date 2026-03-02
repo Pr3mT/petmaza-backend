@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import { AuthRequest } from '../types';
+import { AuthRequest } from '../middlewares/auth';
 import Order from '../models/Order';
 import { AppError } from '../middlewares/errorHandler';
 
@@ -169,10 +169,10 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
     order.refundReason = reason || 'Unable to fulfill order';
     order.refundedAt = new Date();
     
-    // If payment was online, mark for refund processing
-    if (order.paymentMethod === 'ONLINE') {
+    // If payment was made, mark for refund processing
+    if (order.payment_status === 'Paid') {
       order.refundStatus = 'PENDING';
-      order.refundAmount = order.totalAmount;
+      order.refundAmount = order.total;
     }
 
     await order.save();
