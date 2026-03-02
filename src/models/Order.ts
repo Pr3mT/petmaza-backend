@@ -90,11 +90,13 @@ const orderSchema = new Schema<IOrder>(
         'ASSIGNED',
         'ACCEPTED',
         'REJECTED',
+        'PICKED_FROM_VENDOR',
         'PACKED',
         'PICKED_UP',
         'IN_TRANSIT',
         'DELIVERED',
         'CANCELLED',
+        'REASSIGNED_TO_SHOP',
       ],
       default: 'PENDING',
       required: true,
@@ -174,6 +176,25 @@ const orderSchema = new Schema<IOrder>(
       type: Number,
       default: 0,
       min: 0,
+    },
+    rejectionReason: {
+      type: String,
+    },
+    refundReason: {
+      type: String,
+    },
+    refundedAt: {
+      type: Date,
+    },
+    refundStatus: {
+      type: String,
+      enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED'],
+    },
+    refundAmount: {
+      type: Number,
+    },
+    deliveredAt: {
+      type: Date,
     },
   },
   {
