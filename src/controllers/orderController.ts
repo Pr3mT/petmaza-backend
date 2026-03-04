@@ -160,47 +160,41 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     await order.save();
 
-    // Send payment receipt email when payment is completed
+    // Send payment receipt email asynchronously (non-blocking)
     if (payment_status === 'Paid') {
-      console.log('[updateOrder] Payment completed, sending receipt email...');
-      try {
-        const populatedOrder = await order.populate(['customer_id', 'items.product_id']);
-        const customer = populatedOrder.customer_id as any;
-        
-        console.log('[updateOrder] Customer details:', {
-          email: customer?.email,
-          name: customer?.name,
-          orderId: order._id,
-          amount: order.total,
-          paymentId: order.payment_id,
-        });
-
-        if (customer?.email) {
-          console.log('[updateOrder] Sending payment receipt to:', customer.email);
-          await sendPaymentSuccessEmail(
-            customer.email,
-            customer.name || 'Customer',
-            `#${order._id.toString().slice(-8)}`,
-            order.total || 0,
-            order.payment_id,
-            {
-              items: populatedOrder.items,
-              customerAddress: order.customerAddress,
-              paymentGateway: order.payment_gateway || 'Razorpay',
-              paymentMethod: 'Online Payment',
-            }
-          );
-          console.log('[updateOrder] ✅ Payment receipt email sent successfully!');
-        } else {
-          console.log('[updateOrder] ⚠️ No customer email found, skipping receipt');
-        }
-      } catch (emailError: any) {
-        console.error('[updateOrder] ❌ Failed to send payment receipt:', emailError.message);
-        console.error('[updateOrder] Email error stack:', emailError.stack);
-        // Don't fail the order update if email fails
-      }
+      console.log('[updateOrder] Payment completed, sending receipt email asynchronously...');
+      
+      // Populate and send email in background
+      order.populate(['customer_id', 'items.product_id'])
+        .then((populatedOrder) => {
+          const customer = populatedOrder.customer_id as any;
+          
+          if (customer?.email) {
+            console.log('[updateOrder] Sending payment receipt to:', customer.email);
+            sendEmailAsync(
+              sendPaymentSuccessEmail(
+                customer.email,
+                customer.name || 'Customer',
+                `#${order._id.toString().slice(-8)}`,
+                order.total || 0,
+                order.payment_id,
+                {
+                  items: populatedOrder.items,
+                  customerAddress: order.customerAddress,
+                  paymentGateway: order.payment_gateway || 'Razorpay',
+                  paymentMethod: 'Online Payment',
+                }
+              ),
+              'Payment receipt email'
+            );
+          } else {
+            console.log('[updateOrder] ⚠️ No customer email found, skipping receipt');
+          }
+        })
+        .catch((err) => console.error('[updateOrder] Failed to process payment email:', err.message));
     }
 
+    // Return response immediately
     res.status(200).json({
       success: true,
       message: 'Order updated successfully',
