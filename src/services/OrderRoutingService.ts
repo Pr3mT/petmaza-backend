@@ -397,8 +397,18 @@ export class OrderRoutingService {
   ): Promise<IOrderItem[]> {
     const orderItems: IOrderItem[] = [];
 
+    // OPTIMIZATION: Fetch all products at once instead of sequential queries
+    const productIds = items.map(item => item.product_id);
+    const products = await Product.find({ _id: { $in: productIds } });
+    
+    // Create a map for quick product lookup
+    const productMap = new Map();
+    products.forEach(product => {
+      productMap.set(product._id.toString(), product);
+    });
+
     for (const item of items) {
-      const product = await Product.findById(item.product_id);
+      const product = productMap.get(item.product_id);
       if (!product) {
         throw new AppError(`Product ${item.product_id} not found`, 404);
       }

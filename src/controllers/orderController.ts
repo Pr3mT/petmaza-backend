@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { OrderRoutingService } from '../services/OrderRoutingService';
 import { OrderAcceptanceService } from '../services/OrderAcceptanceService';
+import { ShippingService } from '../services/ShippingService';
 import Order from '../models/Order';
 import User from '../models/User';
 import { AppError } from '../middlewares/errorHandler';
@@ -11,6 +12,13 @@ import {
   sendVendorOrderNotificationEmail,
   sendPaymentSuccessEmail,
 } from '../services/emailer';
+
+// Helper function to send emails asynchronously (non-blocking)
+const sendEmailAsync = (emailPromise: Promise<any>, description: string) => {
+  emailPromise
+    .then(() => console.log(`[Email] ✅ ${description} sent successfully`))
+    .catch((error) => console.error(`[Email] ❌ Failed to send ${description}:`, error.message));
+};
 
 // Create order (customer)
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -25,6 +33,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       return next(new AppError('Pincode and address are required', 400));
     }
 
+    // Create order through routing service
     const order = await OrderRoutingService.routeOrder({
       customer_id: req.user._id.toString(),
       items,
@@ -32,11 +41,22 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       customerAddress,
     });
 
-    // Send order confirmation email to customer
-    console.log('[createOrder] Sending order confirmation email to:', req.user.email);
-    try {
-      const populatedOrder = await order.populate('items.product_id');
-      await sendOrderConfirmationEmail(
+    // Calculate shipping charges and platform fee
+    const charges = await ShippingService.calculateCharges(order.total);
+    
+    // Update order with charges
+    order.subtotalBeforeCharges = order.total;
+    order.shippingCharges = charges.shippingCharges;
+    order.platformFee = charges.platformFee;
+    order.total = charges.total;
+    await order.save();
+
+    // Send emails asynchronously (non-blocking) - populate order data first
+    const populatedOrder = await order.populate('items.product_id');
+    
+    // Send order confirmation email to customer (async)
+    sendEmailAsync(
+      sendOrderConfirmationEmail(
         req.user.email,
         req.user.name,
         `#${order._id.toString().slice(-8)}`,
@@ -44,42 +64,38 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
           totalAmount: order.total,
           items: populatedOrder.items,
           customerAddress: order.customerAddress,
+          shippingCharges: order.shippingCharges,
+          platformFee: order.platformFee,
+          subtotal: order.subtotalBeforeCharges,
         }
-      );
-      console.log('[createOrder] ✅ Order confirmation email sent successfully!');
-    } catch (emailError: any) {
-      console.error('[createOrder] ❌ Failed to send order confirmation email:', emailError.message);
-      console.error('[createOrder] Email error stack:', emailError.stack);
-      // Don't fail the order creation if email fails
-    }
+      ),
+      'Order confirmation email'
+    );
 
-    // Send vendor notification if order is assigned
-    try {
-      if (order.assignedVendorId) {
-        const vendor = await User.findById(order.assignedVendorId);
-        console.log('[createOrder] Sending vendor notification to:', vendor?.email);
+    // Send vendor notification if order is assigned (async)
+    if (order.assignedVendorId) {
+      User.findById(order.assignedVendorId).then((vendor) => {
         if (vendor) {
-          const populatedOrder = await order.populate('items.product_id');
-          await sendVendorOrderNotificationEmail(
-            vendor.email,
-            vendor.name,
-            `#${order._id.toString().slice(-8)}`,
-            {
-              customerName: req.user.name,
-              customerAddress: order.customerAddress,
-              customerPincode: order.customerPincode,
-              totalAmount: order.total,
-              items: populatedOrder.items,
-            }
+          sendEmailAsync(
+            sendVendorOrderNotificationEmail(
+              vendor.email,
+              vendor.name,
+              `#${order._id.toString().slice(-8)}`,
+              {
+                customerName: req.user.name,
+                customerAddress: order.customerAddress,
+                customerPincode: order.customerPincode,
+                totalAmount: order.total,
+                items: populatedOrder.items,
+              }
+            ),
+            'Vendor notification email'
           );
-          console.log('[createOrder] ✅ Vendor notification email sent!');
         }
-      }
-    } catch (emailError: any) {
-      console.error('[createOrder] ❌ Failed to send vendor notification:', emailError.message);
-      console.error('[createOrder] Vendor email error stack:', emailError.stack);
+      }).catch(err => console.error('[Email] Error fetching vendor:', err.message));
     }
 
+    // Return response immediately without waiting for emails
     res.status(201).json({
       success: true,
       message: 'Order created successfully',

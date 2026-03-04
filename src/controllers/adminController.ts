@@ -3,7 +3,9 @@ import User from '../models/User';
 import Product from '../models/Product';
 import Order from '../models/Order';
 import Transaction from '../models/Transaction';
+import ShippingSettings from '../models/ShippingSettings';
 import { VendorProductPricingService } from '../services/VendorProductPricingService';
+import { ShippingService } from '../services/ShippingService';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 

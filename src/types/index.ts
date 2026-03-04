@@ -120,6 +120,9 @@ export interface IOrder extends Document {
     pincode: string;
   };
   deliveryCost?: number; // Extra delivery cost for split shipments
+  shippingCharges?: number; // Shipping charges applied to order
+  platformFee?: number; // Platform fee applied to order
+  subtotalBeforeCharges?: number; // Subtotal before shipping and platform fees
   rejectionReason?: string; // Reason for rejection by warehouse fulfiller
   refundReason?: string; // Reason for refund by MY_SHOP vendor
   refundedAt?: Date; // When the refund was processed

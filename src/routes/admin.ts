@@ -18,6 +18,10 @@ import {
   getOrderReport,
   getSummary,
 } from '../controllers/analyticsController';
+import {
+  getShippingSettings,
+  updateShippingSettings,
+} from '../controllers/shippingController';
 import { verifyToken, checkRole } from '../middlewares/auth';
 
 const router = express.Router();
@@ -47,6 +51,10 @@ router.post('/reseed-product', reseedVariantProduct);
 router.get('/analytics', getAnalytics);
 router.get('/analytics/summary', getSummary);
 router.get('/analytics/orders', getOrderReport);
+
+// Shipping settings routes
+router.get('/shipping-settings', getShippingSettings);
+router.put('/shipping-settings', updateShippingSettings);
 
 export default router;
 

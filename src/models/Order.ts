@@ -177,6 +177,21 @@ const orderSchema = new Schema<IOrder>(
       default: 0,
       min: 0,
     },
+    shippingCharges: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    platformFee: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    subtotalBeforeCharges: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     rejectionReason: {
       type: String,
     },

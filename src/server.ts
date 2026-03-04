@@ -125,6 +125,7 @@ import invoiceRoutes from './routes/invoices';
 import recommendationRoutes from './routes/recommendations';
 import searchRoutes from './routes/search';
 import debugRoutes from './routes/debug';
+import shippingRoutes from './routes/shipping';
 
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
@@ -150,6 +151,7 @@ app.use('/api/invoices', invoiceRoutes);
 app.use('/api/recommendations', recommendationRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/debug', debugRoutes);
+app.use('/api/shipping', shippingRoutes);
 
 // Error handling
 app.use(notFound);
