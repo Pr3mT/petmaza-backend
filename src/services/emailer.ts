@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import EmailLog from '../models/EmailLog';
 import logger from '../config/logger';
+import { generatePaymentReceiptPDF } from './pdfGenerator';
 
 // Load environment variables
 dotenv.config();
@@ -26,6 +27,11 @@ export interface EmailOptions {
   trigger: string;
   orderId?: string;
   userId?: string;
+  attachments?: Array<{
+    filename: string;
+    content: Buffer;
+    contentType: string;
+  }>;
 }
 
 /**
@@ -33,7 +39,7 @@ export interface EmailOptions {
  */
 export async function sendEmail(options: EmailOptions) {
   try {
-    const { to, cc, bcc, subject, html, trigger, orderId, userId } = options;
+    const { to, cc, bcc, subject, html, trigger, orderId, userId, attachments } = options;
 
     // Verify transporter connection
     await transporter.verify();
@@ -46,6 +52,7 @@ export async function sendEmail(options: EmailOptions) {
       bcc,
       subject,
       html,
+      attachments,
     });
 
     // Log successful email
@@ -401,12 +408,45 @@ export async function sendPaymentSuccessEmail(
     </div>
   `;
 
+  // Generate PDF attachment
+  let pdfBuffer: Buffer | undefined;
+  try {
+    pdfBuffer = await generatePaymentReceiptPDF({
+      orderId,
+      customerName,
+      customerEmail,
+      transactionId: paymentId,
+      transactionDate: new Date().toLocaleString('en-IN', {
+        dateStyle: 'full',
+        timeStyle: 'short',
+      }),
+      amount,
+      paymentGateway: orderData?.paymentGateway || 'Razorpay',
+      paymentMethod: orderData?.paymentMethod || 'Online Payment',
+      items: orderData?.items,
+      customerAddress: orderData?.customerAddress,
+    });
+    console.log('Payment receipt PDF generated successfully');
+  } catch (pdfError) {
+    console.error('Failed to generate payment receipt PDF:', pdfError);
+    // Continue without PDF if generation fails
+  }
+
   return sendEmail({
     to: customerEmail,
     subject: `Payment Receipt - Order ${orderId}`,
     html,
     trigger: 'payment_success',
     orderId,
+    attachments: pdfBuffer
+      ? [
+          {
+            filename: `Payment_Receipt_${orderId.replace('#', '')}.pdf`,
+            content: pdfBuffer,
+            contentType: 'application/pdf',
+          },
+        ]
+      : undefined,
   });
 }
 

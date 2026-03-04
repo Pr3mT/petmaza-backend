@@ -109,10 +109,19 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
     console.log(`[myShop:acceptOrder] Order ${orderId} accepted successfully by ${vendor._id}`);
 
     // Send email to customer
+    console.log('[myShop:acceptOrder] Starting email send process...');
     try {
       const populatedOrder = await order.populate('customer_id');
       const customer = populatedOrder.customer_id as any;
+      
+      console.log('[myShop:acceptOrder] Customer populated:', {
+        customerId: customer?._id,
+        email: customer?.email,
+        name: customer?.name
+      });
+      
       if (customer?.email) {
+        console.log('[myShop:acceptOrder] Sending order accepted email to:', customer.email);
         await sendOrderAcceptedEmail(
           customer.email,
           customer.name || 'Customer',
@@ -120,9 +129,13 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
           vendor.name || 'Shop Manager',
           '2-5 business days'
         );
+        console.log('[myShop:acceptOrder] ✅ Order accepted email sent successfully!');
+      } else {
+        console.log('[myShop:acceptOrder] ⚠️ No customer email found, skipping email');
       }
     } catch (emailError: any) {
-      console.error('Failed to send order accepted email:', emailError.message);
+      console.error('[myShop:acceptOrder] ❌ Failed to send order accepted email:', emailError.message);
+      console.error('[myShop:acceptOrder] Email error stack:', emailError.stack);
     }
 
     res.status(200).json({
@@ -395,11 +408,22 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
     order.deliveredAt = new Date();
     await order.save();
 
+    console.log(`[myShop:markDelivered] Order ${orderId} marked as DELIVERED by ${vendor._id}`);
+
     // Send delivery completed email to customer
+    console.log('[myShop:markDelivered] Starting customer email send process...');
     try {
       const populatedOrder = await order.populate('customer_id');
       const customer = populatedOrder.customer_id as any;
+      
+      console.log('[myShop:markDelivered] Customer populated:', {
+        customerId: customer?._id,
+        email: customer?.email,
+        name: customer?.name
+      });
+      
       if (customer?.email) {
+        console.log('[myShop:markDelivered] Sending delivery completed email to:', customer.email);
         await sendDeliveryCompletedEmail(
           customer.email,
           customer.name || 'Customer',
@@ -410,16 +434,25 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
             year: 'numeric' 
           })
         );
+        console.log('[myShop:markDelivered] ✅ Delivery completed email sent successfully!');
+      } else {
+        console.log('[myShop:markDelivered] ⚠️ No customer email found, skipping email');
       }
     } catch (emailError: any) {
-      console.error('Failed to send delivery completed email:', emailError.message);
+      console.error('[myShop:markDelivered] ❌ Failed to send delivery completed email:', emailError.message);
+      console.error('[myShop:markDelivered] Email error stack:', emailError.stack);
     }
 
     // Send admin notification for delivered order
+    console.log('[myShop:markDelivered] Starting admin notification process...');
     try {
       const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
+      console.log('[myShop:markDelivered] Admin emails:', adminEmails);
+      
       const populatedOrder = await order.populate(['customer_id', 'items.product_id']);
       const customer = populatedOrder.customer_id as any;
+      
+      console.log('[myShop:markDelivered] Sending admin notifications to', adminEmails.length, 'admins');
       
       for (const adminEmail of adminEmails) {
         await sendAdminDeliveryNotificationEmail(
@@ -434,9 +467,10 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
           }
         );
       }
-      console.log('Admin delivery notification sent successfully');
+      console.log('[myShop:markDelivered] ✅ Admin delivery notifications sent successfully');
     } catch (emailError: any) {
-      console.error('Failed to send admin delivery notification:', emailError.message);
+      console.error('[myShop:markDelivered] ❌ Failed to send admin delivery notification:', emailError.message);
+      console.error('[myShop:markDelivered] Admin email error stack:', emailError.stack);
     }
 
     res.status(200).json({

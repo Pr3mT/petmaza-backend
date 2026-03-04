@@ -210,14 +210,24 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
     await order.save();
 
     // Send payment success email to customer with full receipt
+    console.log('[completePayment] Starting payment receipt email process...');
     try {
       const customerEmail = (order.customer_id as any)?.email;
       const customerName = (order.customer_id as any)?.name;
+
+      console.log('[completePayment] Customer details:', {
+        email: customerEmail,
+        name: customerName,
+        orderId: order._id,
+        amount: order.total,
+        paymentId: order.payment_id,
+      });
 
       if (customerEmail) {
         // Populate items to show product names in receipt
         const populatedOrder = await order.populate('items.product_id');
         
+        console.log('[completePayment] Sending payment receipt email to:', customerEmail);
         await sendPaymentSuccessEmail(
           customerEmail,
           customerName || 'Customer',
@@ -231,9 +241,13 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
             paymentMethod: 'Online Payment',
           }
         );
+        console.log('[completePayment] ✅ Payment receipt email sent successfully!');
+      } else {
+        console.log('[completePayment] ⚠️ No customer email found, skipping receipt email');
       }
     } catch (emailError: any) {
-      console.error('Failed to send payment success email:', emailError.message);
+      console.error('[completePayment] ❌ Failed to send payment success email:', emailError.message);
+      console.error('[completePayment] Email error stack:', emailError.stack);
       // Don't fail the payment completion if email fails
     }
 
