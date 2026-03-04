@@ -1,7 +1,16 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middlewares/auth';
 import Order from '../models/Order';
+import User from '../models/User';
 import { AppError } from '../middlewares/errorHandler';
+import { 
+  sendOrderAcceptedEmail, 
+  sendOrderRejectedEmail, 
+  sendOrderShippedEmail,
+  sendDeliveryCompletedEmail,
+  sendRefundInitiatedEmail,
+  sendAdminDeliveryNotificationEmail
+} from '../services/emailer';
 
 /**
  * Get all orders for MY_SHOP vendor
@@ -99,6 +108,23 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     console.log(`[myShop:acceptOrder] Order ${orderId} accepted successfully by ${vendor._id}`);
 
+    // Send email to customer
+    try {
+      const populatedOrder = await order.populate('customer_id');
+      const customer = populatedOrder.customer_id as any;
+      if (customer?.email) {
+        await sendOrderAcceptedEmail(
+          customer.email,
+          customer.name || 'Customer',
+          `#${order._id.toString().slice(-8)}`,
+          vendor.name || 'Shop Manager',
+          '2-5 business days'
+        );
+      }
+    } catch (emailError: any) {
+      console.error('Failed to send order accepted email:', emailError.message);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Order accepted successfully',
@@ -179,8 +205,21 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     console.log(`Order ${orderId} refunded by MY_SHOP vendor ${vendor._id}. Reason: ${reason || 'None provided'}`);
 
-    // TODO: Send email notification to customer about refund
-    // TODO: Process payment refund if online payment
+    // Send refund initiated email to customer
+    try {
+      const customer = order.customer_id as any;
+      if (customer?.email) {
+        await sendRefundInitiatedEmail(
+          customer.email,
+          customer.name || 'Customer',
+          `#${order._id.toString().slice(-8)}`,
+          order.total || 0,
+          order.refundReason || 'Product not available'
+        );
+      }
+    } catch (emailError: any) {
+      console.error('Failed to send refund initiated email:', emailError.message);
+    }
 
     res.status(200).json({
       success: true,
@@ -299,6 +338,23 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
     order.status = 'IN_TRANSIT';
     await order.save();
 
+    // Send order shipped email to customer
+    try {
+      const populatedOrder = await order.populate('customer_id');
+      const customer = populatedOrder.customer_id as any;
+      if (customer?.email) {
+        await sendOrderShippedEmail(
+          customer.email,
+          customer.name || 'Customer',
+          `#${order._id.toString().slice(-8)}`,
+          undefined, // tracking info can be added later
+          '1-3 business days'
+        );
+      }
+    } catch (emailError: any) {
+      console.error('Failed to send order shipped email:', emailError.message);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Order marked as in transit',
@@ -338,6 +394,50 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
     order.status = 'DELIVERED';
     order.deliveredAt = new Date();
     await order.save();
+
+    // Send delivery completed email to customer
+    try {
+      const populatedOrder = await order.populate('customer_id');
+      const customer = populatedOrder.customer_id as any;
+      if (customer?.email) {
+        await sendDeliveryCompletedEmail(
+          customer.email,
+          customer.name || 'Customer',
+          `#${order._id.toString().slice(-8)}`,
+          new Date().toLocaleDateString('en-IN', { 
+            day: '2-digit', 
+            month: 'short', 
+            year: 'numeric' 
+          })
+        );
+      }
+    } catch (emailError: any) {
+      console.error('Failed to send delivery completed email:', emailError.message);
+    }
+
+    // Send admin notification for delivered order
+    try {
+      const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
+      const populatedOrder = await order.populate(['customer_id', 'items.product_id']);
+      const customer = populatedOrder.customer_id as any;
+      
+      for (const adminEmail of adminEmails) {
+        await sendAdminDeliveryNotificationEmail(
+          adminEmail.trim(),
+          `#${order._id.toString().slice(-8)}`,
+          {
+            customerName: customer?.name || 'Customer',
+            totalAmount: order.total,
+            items: populatedOrder.items,
+            deliveredAt: order.deliveredAt?.toLocaleString('en-IN') || new Date().toLocaleString('en-IN'),
+            vendorName: vendor.name || 'MyShop Vendor',
+          }
+        );
+      }
+      console.log('Admin delivery notification sent successfully');
+    } catch (emailError: any) {
+      console.error('Failed to send admin delivery notification:', emailError.message);
+    }
 
     res.status(200).json({
       success: true,

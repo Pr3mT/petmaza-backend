@@ -108,7 +108,7 @@ const reviewSchema = new Schema<IReview>(
 // Indexes
 reviewSchema.index({ product_id: 1 });
 reviewSchema.index({ customer_id: 1 });
-reviewSchema.index({ order_id: 1 });
+// order_id is part of unique compound index below
 reviewSchema.index({ status: 1 });
 reviewSchema.index({ rating: 1 });
 reviewSchema.index({ createdAt: -1 });

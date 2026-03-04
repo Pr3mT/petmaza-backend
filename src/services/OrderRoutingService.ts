@@ -4,6 +4,7 @@ import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { IOrderItem } from '../types';
+import { sendVendorOrderNotificationEmail } from './emailer';
 
 export class OrderRoutingService {
   /**
@@ -139,6 +140,28 @@ export class OrderRoutingService {
       });
 
       console.log(`Order ${order._id} routed to WAREHOUSE_FULFILLER ${warehouseFulfiller._id}`);
+
+      // Send email notification to warehouse fulfiller
+      try {
+        const populatedOrder = await order.populate('customer_id');
+        const customer = populatedOrder.customer_id as any;
+        
+        await sendVendorOrderNotificationEmail(
+          warehouseFulfiller.email,
+          warehouseFulfiller.name || 'Warehouse Fulfiller',
+          `#${order._id.toString().slice(-8)}`,
+          {
+            customerName: customer?.name || 'Customer',
+            totalAmount: order.total,
+            customerPincode: customerPincode,
+            items: orderItems,
+          }
+        );
+        console.log(`Order notification email sent to warehouse fulfiller: ${warehouseFulfiller.email}`);
+      } catch (emailError: any) {
+        console.error('Failed to send warehouse fulfiller notification email:', emailError.message);
+      }
+
       return order;
     }
 

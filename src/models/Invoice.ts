@@ -172,7 +172,7 @@ const invoiceSchema = new Schema<IInvoice>(
 );
 
 // Indexes
-invoiceSchema.index({ invoiceNumber: 1 });
+// invoiceNumber already has unique index, no need for duplicate
 invoiceSchema.index({ order_id: 1 });
 invoiceSchema.index({ customer_id: 1 });
 invoiceSchema.index({ invoiceDate: -1 });

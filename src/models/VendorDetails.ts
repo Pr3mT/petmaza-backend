@@ -89,7 +89,7 @@ const vendorDetailsSchema = new Schema<IVendorDetails>(
   }
 );
 
-vendorDetailsSchema.index({ vendor_id: 1 });
+// vendor_id already has unique index, no need for duplicate
 vendorDetailsSchema.index({ vendorType: 1 });
 vendorDetailsSchema.index({ isApproved: 1 });
 vendorDetailsSchema.index({ serviceablePincodes: 1 });

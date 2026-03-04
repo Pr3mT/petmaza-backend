@@ -209,18 +209,27 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
 
     await order.save();
 
-    // Send payment success email to customer
+    // Send payment success email to customer with full receipt
     try {
       const customerEmail = (order.customer_id as any)?.email;
       const customerName = (order.customer_id as any)?.name;
 
       if (customerEmail) {
+        // Populate items to show product names in receipt
+        const populatedOrder = await order.populate('items.product_id');
+        
         await sendPaymentSuccessEmail(
           customerEmail,
           customerName || 'Customer',
-          order_id,
-          order.totalAmount || 0,
-          order.payment_id
+          `#${order._id.toString().slice(-8)}`,
+          order.total || 0,
+          order.payment_id,
+          {
+            items: populatedOrder.items,
+            customerAddress: order.customerAddress,
+            paymentGateway: order.payment_gateway || 'Razorpay',
+            paymentMethod: 'Online Payment',
+          }
         );
       }
     } catch (emailError: any) {

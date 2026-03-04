@@ -80,7 +80,7 @@ vendorProductPricingSchema.pre('save', async function (next) {
 
 // Compound index to ensure unique vendor-product combination
 vendorProductPricingSchema.index({ vendor_id: 1, product_id: 1 }, { unique: true });
-vendorProductPricingSchema.index({ vendor_id: 1 });
+// vendor_id is already indexed as part of compound index above
 vendorProductPricingSchema.index({ product_id: 1 });
 vendorProductPricingSchema.index({ isActive: 1 });
 

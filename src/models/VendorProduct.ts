@@ -41,7 +41,7 @@ const vendorProductSchema = new Schema<IVendorProduct>(
 
 // Compound index to ensure unique vendor-product combination
 vendorProductSchema.index({ vendor_id: 1, product_id: 1 }, { unique: true });
-vendorProductSchema.index({ vendor_id: 1 });
+// vendor_id is already indexed as part of compound index above
 vendorProductSchema.index({ product_id: 1 });
 vendorProductSchema.index({ status: 1 });
 

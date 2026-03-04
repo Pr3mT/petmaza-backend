@@ -9,7 +9,6 @@ import {
   sendOrderConfirmationEmail,
   sendOrderStatusUpdateEmail,
   sendVendorOrderNotificationEmail,
-  sendAdminOrderNotificationEmail,
 } from '../services/emailer';
 
 // Create order (customer)
@@ -38,9 +37,9 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       await sendOrderConfirmationEmail(
         req.user.email,
         req.user.name,
-        order._id.toString(),
+        `#${order._id.toString().slice(-8)}`,
         {
-          totalAmount: order.totalAmount,
+          totalAmount: order.total,
           items: populatedOrder.items,
           customerAddress: order.customerAddress,
         }
@@ -50,18 +49,28 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       // Don't fail the order creation if email fails
     }
 
-    // Send admin notification
+    // Send vendor notification if order is assigned
     try {
-      const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
-      for (const adminEmail of adminEmails) {
-        await sendAdminOrderNotificationEmail(adminEmail.trim(), order._id.toString(), {
-          customerName: req.user.name,
-          totalAmount: order.totalAmount,
-          items: order.items,
-        });
+      if (order.assignedVendorId) {
+        const vendor = await User.findById(order.assignedVendorId);
+        if (vendor) {
+          const populatedOrder = await order.populate('items.product_id');
+          await sendVendorOrderNotificationEmail(
+            vendor.email,
+            vendor.name,
+            `#${order._id.toString().slice(-8)}`,
+            {
+              customerName: req.user.name,
+              customerAddress: order.customerAddress,
+              customerPincode: order.customerPincode,
+              totalAmount: order.total,
+              items: populatedOrder.items,
+            }
+          );
+        }
       }
     } catch (emailError: any) {
-      console.error('Failed to send admin notification:', emailError.message);
+      console.error('Failed to send vendor notification:', emailError.message);
     }
 
     res.status(201).json({
