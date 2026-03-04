@@ -141,12 +141,11 @@ export class OrderRoutingService {
 
       console.log(`Order ${order._id} routed to WAREHOUSE_FULFILLER ${warehouseFulfiller._id}`);
 
-      // Send email notification to warehouse fulfiller
-      try {
-        const populatedOrder = await order.populate('customer_id');
+      // Send email notification to warehouse fulfiller (async, non-blocking)
+      order.populate('customer_id').then(populatedOrder => {
         const customer = populatedOrder.customer_id as any;
         
-        await sendVendorOrderNotificationEmail(
+        sendVendorOrderNotificationEmail(
           warehouseFulfiller.email,
           warehouseFulfiller.name || 'Warehouse Fulfiller',
           `#${order._id.toString().slice(-8)}`,
@@ -156,11 +155,14 @@ export class OrderRoutingService {
             customerPincode: customerPincode,
             items: orderItems,
           }
-        );
-        console.log(`Order notification email sent to warehouse fulfiller: ${warehouseFulfiller.email}`);
-      } catch (emailError: any) {
-        console.error('Failed to send warehouse fulfiller notification email:', emailError.message);
-      }
+        ).then(() => {
+          console.log(`Order notification email sent to warehouse fulfiller: ${warehouseFulfiller.email}`);
+        }).catch(emailError => {
+          console.error('Failed to send warehouse fulfiller notification email:', emailError.message);
+        });
+      }).catch(err => {
+        console.error('Failed to populate order for email:', err.message);
+      });
 
       return order;
     }
