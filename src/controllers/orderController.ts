@@ -33,6 +33,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     });
 
     // Send order confirmation email to customer
+    console.log('[createOrder] Sending order confirmation email to:', req.user.email);
     try {
       const populatedOrder = await order.populate('items.product_id');
       await sendOrderConfirmationEmail(
@@ -45,8 +46,10 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
           customerAddress: order.customerAddress,
         }
       );
+      console.log('[createOrder] ✅ Order confirmation email sent successfully!');
     } catch (emailError: any) {
-      console.error('Failed to send order confirmation email:', emailError.message);
+      console.error('[createOrder] ❌ Failed to send order confirmation email:', emailError.message);
+      console.error('[createOrder] Email error stack:', emailError.stack);
       // Don't fail the order creation if email fails
     }
 
@@ -54,6 +57,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     try {
       if (order.assignedVendorId) {
         const vendor = await User.findById(order.assignedVendorId);
+        console.log('[createOrder] Sending vendor notification to:', vendor?.email);
         if (vendor) {
           const populatedOrder = await order.populate('items.product_id');
           await sendVendorOrderNotificationEmail(
@@ -68,10 +72,12 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
               items: populatedOrder.items,
             }
           );
+          console.log('[createOrder] ✅ Vendor notification email sent!');
         }
       }
     } catch (emailError: any) {
-      console.error('Failed to send vendor notification:', emailError.message);
+      console.error('[createOrder] ❌ Failed to send vendor notification:', emailError.message);
+      console.error('[createOrder] Vendor email error stack:', emailError.stack);
     }
 
     res.status(201).json({

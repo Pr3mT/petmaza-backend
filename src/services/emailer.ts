@@ -41,10 +41,7 @@ export async function sendEmail(options: EmailOptions) {
   try {
     const { to, cc, bcc, subject, html, trigger, orderId, userId, attachments } = options;
 
-    // Verify transporter connection
-    await transporter.verify();
-
-    // Send email
+    // Send email directly without verification (verified once at startup)
     const info = await transporter.sendMail({
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
       to,
@@ -55,8 +52,10 @@ export async function sendEmail(options: EmailOptions) {
       attachments,
     });
 
-    // Log successful email
-    await EmailLog.create({
+    logger.info(`Email sent successfully: ${subject} to ${to}`);
+
+    // Log successful email (non-blocking, don't fail email if logging fails)
+    EmailLog.create({
       recipient: to,
       subject,
       body: html,
@@ -66,29 +65,28 @@ export async function sendEmail(options: EmailOptions) {
       messageId: info.messageId,
       orderId,
       userId,
+    }).catch((logError) => {
+      logger.error(`Failed to log sent email: ${logError.message}`);
     });
 
-    logger.info(`Email sent successfully: ${subject} to ${to}`);
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
     logger.error(`Email send failed: ${error.message}`);
 
-    // Log failed email
-    try {
-      await EmailLog.create({
-        recipient: options.to,
-        subject: options.subject,
-        body: options.html,
-        status: 'failed',
-        trigger: options.trigger,
-        timestamp: new Date(),
-        error: error.message,
-        orderId: options.orderId,
-        userId: options.userId,
-      });
-    } catch (logError) {
-      logger.error(`Failed to log email: ${logError}`);
-    }
+    // Log failed email (non-blocking)
+    EmailLog.create({
+      recipient: options.to,
+      subject: options.subject,
+      body: options.html,
+      status: 'failed',
+      trigger: options.trigger,
+      timestamp: new Date(),
+      error: error.message,
+      orderId: options.orderId,
+      userId: options.userId,
+    }).catch((logError) => {
+      logger.error(`Failed to log failed email: ${logError.message}`);
+    });
 
     throw error;
   }
