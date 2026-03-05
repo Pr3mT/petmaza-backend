@@ -127,7 +127,9 @@ export async function sendOrderConfirmationEmail(
         </ul>
         
         <p><strong>Delivery Address:</strong><br>
-        ${orderData.customerAddress}</p>
+        ${orderData.customerAddress?.street || 'N/A'}<br>
+        ${orderData.customerAddress?.city || 'N/A'}, ${orderData.customerAddress?.state || 'N/A'}<br>
+        Pincode: ${orderData.customerAddress?.pincode || 'N/A'}</p>
         
         <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
           <h4 style="margin-top: 0;">What's Next?</h4>
@@ -698,7 +700,10 @@ export async function sendFulfillerDeliveryNotificationEmail(
           <h3>Delivery Assignment Details</h3>
           <p><strong>Order ID:</strong> ${orderId}</p>
           <p><strong>Customer Name:</strong> ${orderData.customerName || 'N/A'}</p>
-          <p><strong>Delivery Address:</strong><br>${orderData.customerAddress || 'N/A'}</p>
+          <p><strong>Delivery Address:</strong><br>
+          ${orderData.customerAddress?.street || 'N/A'}<br>
+          ${orderData.customerAddress?.city || 'N/A'}, ${orderData.customerAddress?.state || 'N/A'}<br>
+          Pincode: ${orderData.customerAddress?.pincode || 'N/A'}</p>
           <p><strong>Customer Phone:</strong> ${orderData.customerPhone || 'Contact in order details'}</p>
           <p><strong>Total Amount:</strong> ₹${(orderData.totalAmount || 0).toFixed(2)}</p>
           <p><strong>Delivery Pincode:</strong> ${orderData.customerPincode || 'N/A'}</p>
