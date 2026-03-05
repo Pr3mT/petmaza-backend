@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import EmailLog from '../models/EmailLog';
 import logger from '../config/logger';
 import { generatePaymentReceiptPDF } from './pdfGenerator';
+import { emailQueue } from '../utils/emailQueue';
 
 // Load environment variables
 dotenv.config();
@@ -1081,7 +1082,6 @@ export async function sendRefundInitiatedEmail(
   });
 }
 
-<<<<<<< HEAD
 /**
  * Send email verification code
  */
@@ -1141,31 +1141,10 @@ export async function sendVerificationEmail(email: string, verificationCode: str
     subject: 'Verify Your Email - Petmaza',
     html,
     trigger: 'email_verification',
-=======
-// ========================================
-// QUEUED EMAIL FUNCTIONS (NON-BLOCKING)
-// ========================================
-
-import { emailQueue } from '../utils/emailQueue';
-
-/**
- * Queue order confirmation email (non-blocking)
- * Returns immediately without waiting for email to send
- */
-export function queueOrderConfirmationEmail(
-  customerEmail: string,
-  customerName: string,
-  orderId: string,
-  orderData: any
-): string {
-  return emailQueue.add(async () => {
-    await sendOrderConfirmationEmail(customerEmail, customerName, orderId, orderData);
->>>>>>> 1426f296d4edf4813f403e11f068ae237718e925
   });
 }
 
 /**
-<<<<<<< HEAD
  * Send thank you email after successful verification
  */
 export async function sendVerificationSuccessEmail(email: string, name: string) {
@@ -1253,7 +1232,29 @@ export async function sendVerificationSuccessEmail(email: string, name: string) 
     subject: 'Welcome to Petmaza - Email Verified Successfully!',
     html,
     trigger: 'email_verified',
-=======
+  });
+}
+
+// ========================================
+// QUEUED EMAIL FUNCTIONS (NON-BLOCKING)
+// ========================================
+
+/**
+ * Queue order confirmation email (non-blocking)
+ * Returns immediately without waiting for email to send
+ */
+export function queueOrderConfirmationEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  orderData: any
+): string {
+  return emailQueue.add(async () => {
+    await sendOrderConfirmationEmail(customerEmail, customerName, orderId, orderData);
+  });
+}
+
+/**
  * Queue vendor notification email (non-blocking)
  */
 export function queueVendorOrderNotificationEmail(
@@ -1310,6 +1311,5 @@ export function queueOrderAcceptedEmail(
 ): string {
   return emailQueue.add(async () => {
     await sendOrderAcceptedEmail(customerEmail, customerName, orderId, vendorName, estimatedDelivery);
->>>>>>> 1426f296d4edf4813f403e11f068ae237718e925
   });
 }
