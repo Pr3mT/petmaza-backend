@@ -45,9 +45,9 @@ export async function generatePaymentReceiptPDF(data: PaymentReceiptData): Promi
 
       // Header - Company Logo/Name
       doc
-        .fontSize(28)
-        .fillColor('#FFD700')
-        .text('🐾 PETMAZA', { align: 'center' })
+        .fontSize(32)
+        .fillColor('#0051a5')
+        .text('PETMAZA', { align: 'center' })
         .fontSize(12)
         .fillColor('#666666')
         .text('Payment Receipt', { align: 'center' })
@@ -57,7 +57,7 @@ export async function generatePaymentReceiptPDF(data: PaymentReceiptData): Promi
       doc
         .fontSize(18)
         .fillColor('#2e7d32')
-        .text('✓ PAYMENT SUCCESSFUL', { align: 'center' })
+        .text('PAYMENT SUCCESSFUL', { align: 'center' })
         .moveDown(1);
 
       // Draw horizontal line

@@ -127,7 +127,9 @@ export async function sendOrderConfirmationEmail(
         </ul>
         
         <p><strong>Delivery Address:</strong><br>
-        ${orderData.customerAddress}</p>
+        ${orderData.customerAddress?.street || 'N/A'}<br>
+        ${orderData.customerAddress?.city || 'N/A'}, ${orderData.customerAddress?.state || 'N/A'}<br>
+        Pincode: ${orderData.customerAddress?.pincode || 'N/A'}</p>
         
         <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
           <h4 style="margin-top: 0;">What's Next?</h4>
@@ -307,13 +309,19 @@ export async function sendPaymentSuccessEmail(
     <div style="font-family: Arial, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #ddd;">
       <!-- Header -->
       <div style="background-color: #ffd700; padding: 25px; text-align: center;">
-        <h1 style="margin: 0; color: #333; font-size: 32px;">🐾 PETMAZA</h1>
+        <h1 style="margin: 0; color: #0051a5; font-size: 36px; font-weight: bold;">PETMAZA</h1>
         <p style="margin: 5px 0 0 0; color: #555; font-size: 14px;">Payment Receipt</p>
       </div>
       
       <!-- Success Banner -->
-      <div style="background-color: #c8e6c9; padding: 25px; text-align: center;">
-        <div style="background-color: #2e7d32; color: white; width: 60px; height: 60px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 36px; margin-bottom: 10px;">✓</div>
+      <div style="background-color: #c8e6c9; padding: 30px; text-align: center;">
+        <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+          <tr>
+            <td align="center">
+              <div style="background-color: #2e7d32; color: white; width: 60px; height: 60px; border-radius: 50%; line-height: 60px; font-size: 40px; margin: 0 auto 10px;">&#10003;</div>
+            </td>
+          </tr>
+        </table>
         <h2 style="margin: 10px 0 5px 0; color: #2e7d32; font-size: 28px;">Payment Successful!</h2>
         <p style="margin: 0; color: #555;">Your order has been confirmed</p>
       </div>
@@ -359,8 +367,8 @@ export async function sendPaymentSuccessEmail(
               </td>
             </tr>
             <tr>
-              <td style="padding: 12px 0; color: #666; font-size: 18px; border-top: 2px solid #ddd; padding-top: 15px;">Amount Paid:</td>
-              <td style="padding: 12px 0; font-size: 24px; font-weight: bold; color: #2e7d32; border-top: 2px solid #ddd; padding-top: 15px;">₹${amount.toFixed(2)}</td>
+              <td style="padding: 12px 0; color: #666; font-size: 14px; border-top: 2px solid #ddd; padding-top: 15px;">Amount Paid:</td>
+              <td style="padding: 12px 0; font-size: 18px; font-weight: bold; color: #2e7d32; border-top: 2px solid #ddd; padding-top: 15px;">&#8377;${amount.toFixed(2)}</td>
             </tr>
           </table>
         </div>
@@ -698,7 +706,10 @@ export async function sendFulfillerDeliveryNotificationEmail(
           <h3>Delivery Assignment Details</h3>
           <p><strong>Order ID:</strong> ${orderId}</p>
           <p><strong>Customer Name:</strong> ${orderData.customerName || 'N/A'}</p>
-          <p><strong>Delivery Address:</strong><br>${orderData.customerAddress || 'N/A'}</p>
+          <p><strong>Delivery Address:</strong><br>
+          ${orderData.customerAddress?.street || 'N/A'}<br>
+          ${orderData.customerAddress?.city || 'N/A'}, ${orderData.customerAddress?.state || 'N/A'}<br>
+          Pincode: ${orderData.customerAddress?.pincode || 'N/A'}</p>
           <p><strong>Customer Phone:</strong> ${orderData.customerPhone || 'Contact in order details'}</p>
           <p><strong>Total Amount:</strong> ₹${(orderData.totalAmount || 0).toFixed(2)}</p>
           <p><strong>Delivery Pincode:</strong> ${orderData.customerPincode || 'N/A'}</p>
