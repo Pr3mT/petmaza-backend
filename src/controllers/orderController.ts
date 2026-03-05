@@ -13,13 +13,6 @@ import {
   sendPaymentSuccessEmail,
 } from '../services/emailer';
 
-// Helper function to send emails asynchronously (non-blocking)
-const sendEmailAsync = (emailPromise: Promise<any>, description: string) => {
-  emailPromise
-    .then(() => console.log(`[Email] ✅ ${description} sent successfully`))
-    .catch((error) => console.error(`[Email] ❌ Failed to send ${description}:`, error.message));
-};
-
 // Create order (customer)
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -51,12 +44,11 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     order.total = charges.total;
     await order.save();
 
-    // Send emails asynchronously (non-blocking) - populate order data first
-    const populatedOrder = await order.populate('items.product_id');
-    
-    // Send order confirmation email to customer (async)
-    sendEmailAsync(
-      sendOrderConfirmationEmail(
+    // Send order confirmation email to customer
+    console.log('[createOrder] Sending order confirmation email to:', req.user.email);
+    try {
+      const populatedOrder = await order.populate('items.product_id');
+      await sendOrderConfirmationEmail(
         req.user.email,
         req.user.name,
         `#${order._id.toString().slice(-8)}`,
@@ -68,34 +60,41 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
           platformFee: order.platformFee,
           subtotal: order.subtotalBeforeCharges,
         }
-      ),
-      'Order confirmation email'
-    );
-
-    // Send vendor notification if order is assigned (async)
-    if (order.assignedVendorId) {
-      User.findById(order.assignedVendorId).then((vendor) => {
-        if (vendor) {
-          sendEmailAsync(
-            sendVendorOrderNotificationEmail(
-              vendor.email,
-              vendor.name,
-              `#${order._id.toString().slice(-8)}`,
-              {
-                customerName: req.user.name,
-                customerAddress: order.customerAddress,
-                customerPincode: order.customerPincode,
-                totalAmount: order.total,
-                items: populatedOrder.items,
-              }
-            ),
-            'Vendor notification email'
-          );
-        }
-      }).catch(err => console.error('[Email] Error fetching vendor:', err.message));
+      );
+      console.log('[createOrder] ✅ Order confirmation email sent successfully!');
+    } catch (emailError: any) {
+      console.error('[createOrder] ❌ Failed to send order confirmation email:', emailError.message);
+      console.error('[createOrder] Email error stack:', emailError.stack);
+      // Don't fail the order creation if email fails
     }
 
-    // Return response immediately without waiting for emails
+    // Send vendor notification if order is assigned
+    try {
+      if (order.assignedVendorId) {
+        const vendor = await User.findById(order.assignedVendorId);
+        console.log('[createOrder] Sending vendor notification to:', vendor?.email);
+        if (vendor) {
+          const populatedOrder = await order.populate('items.product_id');
+          await sendVendorOrderNotificationEmail(
+            vendor.email,
+            vendor.name,
+            `#${order._id.toString().slice(-8)}`,
+            {
+              customerName: req.user.name,
+              customerAddress: order.customerAddress,
+              customerPincode: order.customerPincode,
+              totalAmount: order.total,
+              items: populatedOrder.items,
+            }
+          );
+          console.log('[createOrder] ✅ Vendor notification email sent!');
+        }
+      }
+    } catch (emailError: any) {
+      console.error('[createOrder] ❌ Failed to send vendor notification:', emailError.message);
+      console.error('[createOrder] Vendor email error stack:', emailError.stack);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Order created successfully',
@@ -160,41 +159,46 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     await order.save();
 
-    // Send payment receipt email asynchronously (non-blocking)
+    // Send payment receipt email when payment is completed
     if (payment_status === 'Paid') {
-      console.log('[updateOrder] Payment completed, sending receipt email asynchronously...');
-      
-      // Populate and send email in background
-      order.populate(['customer_id', 'items.product_id'])
-        .then((populatedOrder) => {
-          const customer = populatedOrder.customer_id as any;
-          
-          if (customer?.email) {
-            console.log('[updateOrder] Sending payment receipt to:', customer.email);
-            sendEmailAsync(
-              sendPaymentSuccessEmail(
-                customer.email,
-                customer.name || 'Customer',
-                `#${order._id.toString().slice(-8)}`,
-                order.total || 0,
-                order.payment_id,
-                {
-                  items: populatedOrder.items,
-                  customerAddress: order.customerAddress,
-                  paymentGateway: order.payment_gateway || 'Razorpay',
-                  paymentMethod: 'Online Payment',
-                }
-              ),
-              'Payment receipt email'
-            );
-          } else {
-            console.log('[updateOrder] ⚠️ No customer email found, skipping receipt');
-          }
-        })
-        .catch((err) => console.error('[updateOrder] Failed to process payment email:', err.message));
-    }
+      console.log('[updateOrder] Payment completed, sending receipt email...');
+      try {
+        const populatedOrder = await order.populate(['customer_id', 'items.product_id']);
+        const customer = populatedOrder.customer_id as any;
+        
+        console.log('[updateOrder] Customer details:', {
+          email: customer?.email,
+          name: customer?.name,
+          orderId: order._id,
+          amount: order.total,
+          paymentId: order.payment_id,
+        });
 
-    // Return response immediately
+        if (customer?.email) {
+          console.log('[updateOrder] Sending payment receipt to:', customer.email);
+          await sendPaymentSuccessEmail(
+            customer.email,
+            customer.name || 'Customer',
+            `#${order._id.toString().slice(-8)}`,
+            order.total || 0,
+            order.payment_id,
+            {
+              items: populatedOrder.items,
+              customerAddress: order.customerAddress,
+              paymentGateway: order.payment_gateway || 'Razorpay',
+              paymentMethod: 'Online Payment',
+            }
+          );
+          console.log('[updateOrder] ✅ Payment receipt email sent successfully!');
+        } else {
+          console.log('[updateOrder] ⚠️ No customer email found, skipping receipt');
+        }
+      } catch (emailError: any) {
+        console.error('[updateOrder] ❌ Failed to send payment receipt:', emailError.message);
+        console.error('[updateOrder] Email error stack:', emailError.stack);
+        // Don't fail the order update if email fails
+      }
+    }
     res.status(200).json({
       success: true,
       message: 'Order updated successfully',
