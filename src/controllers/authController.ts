@@ -4,6 +4,7 @@ import VendorDetails from '../models/VendorDetails';
 import { generateToken } from '../utils/jwt';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
+import { sendVerificationEmail, sendVerificationSuccessEmail } from '../services/emailer';
 
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -189,6 +190,64 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
       data: {
         user,
       },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Send verification email with OTP
+ */
+export const sendVerificationEmailController = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return next(new AppError('Email is required', 400));
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return next(new AppError('Invalid email format', 400));
+    }
+
+    // Generate 6-digit verification code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Send verification email
+    await sendVerificationEmail(email, verificationCode);
+
+    res.status(200).json({
+      success: true,
+      message: 'Verification email sent successfully',
+      data: {
+        code: verificationCode, // In production, store this in Redis/DB with expiry
+      },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Send thank you email after successful verification
+ */
+export const sendVerificationSuccessController = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email, name } = req.body;
+
+    if (!email || !name) {
+      return next(new AppError('Email and name are required', 400));
+    }
+
+    // Send thank you email
+    await sendVerificationSuccessEmail(email, name);
+
+    res.status(200).json({
+      success: true,
+      message: 'Thank you email sent successfully',
     });
   } catch (error: any) {
     next(error);

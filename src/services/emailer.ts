@@ -1080,3 +1080,156 @@ export async function sendRefundInitiatedEmail(
     orderId,
   });
 }
+
+/**
+ * Send email verification code
+ */
+export async function sendVerificationEmail(email: string, verificationCode: string) {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #ddd;">
+      <!-- Header -->
+      <div style="background-color: #ffd700; padding: 25px; text-align: center;">
+        <h1 style="margin: 0; color: #0051a5; font-size: 36px; font-weight: bold;">PETMAZA</h1>
+        <p style="margin: 5px 0 0 0; color: #555; font-size: 14px;">Email Verification</p>
+      </div>
+      
+      <div style="padding: 30px;">
+        <h2 style="color: #333; margin-bottom: 20px;">Verify Your Email Address</h2>
+        
+        <p style="color: #555; line-height: 1.6; margin-bottom: 20px;">
+          Thank you for registering with Petmaza! To complete your registration, please use the verification code below:
+        </p>
+        
+        <!-- Verification Code Box -->
+        <div style="background-color: #f8f9fa; border: 2px dashed #0051a5; border-radius: 8px; padding: 30px; text-align: center; margin: 30px 0;">
+          <p style="color: #666; margin: 0 0 10px 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Your Verification Code</p>
+          <div style="font-size: 36px; font-weight: bold; color: #0051a5; letter-spacing: 8px; font-family: 'Courier New', monospace;">
+            ${verificationCode}
+          </div>
+        </div>
+        
+        <p style="color: #555; line-height: 1.6; margin-bottom: 20px;">
+          Enter this code on the registration page to verify your email address and complete your account setup.
+        </p>
+        
+        <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+          <p style="margin: 0; color: #856404; font-size: 14px;">
+            <strong>Important:</strong> This verification code is valid for 10 minutes only. If you didn't request this code, please ignore this email.
+          </p>
+        </div>
+        
+        <p style="color: #555; line-height: 1.6;">
+          If you have any questions, please contact our support team at <a href="mailto:support@petmaza.com" style="color: #0051a5;">support@petmaza.com</a>
+        </p>
+      </div>
+      
+      <!-- Footer -->
+      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
+        <p style="color: #999; font-size: 12px; margin: 0;">
+          This is an automated email. Please do not reply to this message.
+        </p>
+        <p style="color: #999; font-size: 12px; margin: 5px 0 0 0;">
+          &#169; ${new Date().getFullYear()} Petmaza. All rights reserved.
+        </p>
+      </div>
+    </div>
+  `;
+
+  return sendEmail({
+    to: email,
+    subject: 'Verify Your Email - Petmaza',
+    html,
+    trigger: 'email_verification',
+  });
+}
+
+/**
+ * Send thank you email after successful verification
+ */
+export async function sendVerificationSuccessEmail(email: string, name: string) {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #ddd;">
+      <!-- Header -->
+      <div style="background-color: #ffd700; padding: 25px; text-align: center;">
+        <h1 style="margin: 0; color: #0051a5; font-size: 36px; font-weight: bold;">PETMAZA</h1>
+        <p style="margin: 5px 0 0 0; color: #555; font-size: 14px;">Welcome to Petmaza!</p>
+      </div>
+      
+      <!-- Success Banner -->
+      <div style="background-color: #d4edda; padding: 30px; text-align: center;">
+        <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+          <tr>
+            <td align="center">
+              <div style="background-color: #28a745; color: white; width: 70px; height: 70px; border-radius: 50%; line-height: 70px; font-size: 45px; margin: 0 auto 15px;">&#10003;</div>
+            </td>
+          </tr>
+        </table>
+        <h2 style="margin: 10px 0 5px 0; color: #28a745; font-size: 28px;">Email Verified Successfully!</h2>
+        <p style="margin: 0; color: #555;">Thank you for verifying your email address</p>
+      </div>
+      
+      <div style="padding: 30px;">
+        <p style="font-size: 16px; margin-bottom: 20px;">Hi <strong>${name}</strong>,</p>
+        
+        <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">
+          <strong>Congratulations!</strong> Your email has been verified successfully. Thank you for registering with Petmaza!
+        </p>
+        
+        <p style="color: #555; line-height: 1.6; margin-bottom: 20px;">
+          You can now complete your registration and start exploring our amazing pet products marketplace.
+        </p>
+        
+        <!-- What's Next Box -->
+        <div style="background-color: #e3f2fd; border-left: 4px solid #2196f3; padding: 20px; margin: 25px 0; border-radius: 4px;">
+          <h3 style="margin-top: 0; color: #1976d2; font-size: 18px;">🎉 What's Next?</h3>
+          <ul style="margin: 10px 0; padding-left: 20px; color: #555; line-height: 1.8;">
+            <li>Complete your registration by filling in the remaining details</li>
+            <li>Browse thousands of quality pet products</li>
+            <li>Add items to your cart and place orders</li>
+            <li>Track your orders in real-time</li>
+            <li>Get exclusive deals and offers</li>
+          </ul>
+        </div>
+        
+        <!-- Features Section -->
+        <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 20px; margin: 25px 0; border-radius: 4px;">
+          <h3 style="margin-top: 0; color: #856404; font-size: 18px;">🐾 Why Choose Petmaza?</h3>
+          <ul style="margin: 10px 0; padding-left: 20px; color: #555; line-height: 1.8;">
+            <li><strong>Wide Selection:</strong> Thousands of pet products for all pet types</li>
+            <li><strong>Quality Assured:</strong> Verified vendors and authentic products</li>
+            <li><strong>Fast Delivery:</strong> Quick shipping to your doorstep</li>
+            <li><strong>Secure Payments:</strong> Safe and encrypted transactions</li>
+            <li><strong>24/7 Support:</strong> We're here to help anytime</li>
+          </ul>
+        </div>
+        
+        <p style="color: #555; line-height: 1.6; margin-top: 25px;">
+          If you have any questions or need assistance, feel free to contact us at 
+          <a href="mailto:support@petmaza.com" style="color: #0051a5; text-decoration: none;">support@petmaza.com</a>
+        </p>
+        
+        <p style="color: #555; line-height: 1.6; margin-top: 20px;">
+          Happy shopping!<br>
+          <strong>The Petmaza Team</strong>
+        </p>
+      </div>
+      
+      <!-- Footer -->
+      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
+        <p style="color: #999; font-size: 12px; margin: 0;">
+          This is an automated email. Please do not reply to this message.
+        </p>
+        <p style="color: #999; font-size: 12px; margin: 5px 0 0 0;">
+          &#169; ${new Date().getFullYear()} Petmaza. All rights reserved.
+        </p>
+      </div>
+    </div>
+  `;
+
+  return sendEmail({
+    to: email,
+    subject: 'Welcome to Petmaza - Email Verified Successfully!',
+    html,
+    trigger: 'email_verified',
+  });
+}
