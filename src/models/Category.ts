@@ -31,8 +31,10 @@ const categorySchema = new Schema<ICategory>(
 );
 
 // Indexes
+categorySchema.index({ name: 1 }); // Index for name lookups
 categorySchema.index({ parentCategoryId: 1 });
 categorySchema.index({ isActive: 1 });
+categorySchema.index({ isActive: 1, name: 1 }); // Compound index
 
 const Category = mongoose.model<ICategory>('Category', categorySchema);
 

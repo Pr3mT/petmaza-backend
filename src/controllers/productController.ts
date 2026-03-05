@@ -12,10 +12,6 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
       return next(new AppError('Only Admin and MY_SHOP vendors can create products', 403));
     }
     
-    console.log('Create Product Request Body:', JSON.stringify(req.body, null, 2));
-    console.log('Images received:', req.body.images);
-    console.log('User role:', user.role, 'Vendor type:', user.vendorType);
-    
     const product = await ProductService.createProduct(req.body);
     
     // If MY_SHOP vendor created the product, auto-create VendorProductPricing entry
@@ -36,7 +32,6 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
         // Create variantStock array with initial stock from variants
         const variantStock = product.variants.map((variant: any, index: number) => {
           const variantData = req.body.variants[index];
-          console.log(`Variant ${index} - Weight: ${variant.weight}${variant.unit}, initialStock from request:`, variantData?.initialStock);
           return {
             weight: variant.weight,
             unit: variant.unit,
@@ -47,8 +42,6 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
             isActive: variant.isActive || true,
           };
         });
-        
-        console.log('Creating VendorProductPricing with variantStock:', JSON.stringify(variantStock, null, 2));
         
         const vendorPricing = await VendorProductPricing.create({
           vendor_id: user._id,
@@ -61,9 +54,6 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
           isActive: req.body.isActive !== undefined ? req.body.isActive : true,
           variantStock: variantStock,
         });
-        
-        console.log('✅ VendorProductPricing created successfully. ID:', vendorPricing._id);
-        console.log('✅ Saved variantStock:', JSON.stringify(vendorPricing.variantStock, null, 2));
       } else {
         // Single product (non-variant)
         if (!purchasePrice && product.mrp) {
@@ -118,7 +108,6 @@ export const getProducts = async (req: Request, res: Response, next: NextFunctio
       data: { products },
     });
   } catch (error: any) {
-    console.error('Error in getProducts:', error);
     next(error);
   }
 };

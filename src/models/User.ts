@@ -70,6 +70,13 @@ userSchema.methods.comparePassword = async function (candidatePassword: string):
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
+// Indexes for better query performance
+userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ role: 1 });
+userSchema.index({ vendorType: 1 });
+userSchema.index({ isApproved: 1 });
+userSchema.index({ role: 1, isApproved: 1 }); // Compound index for vendor queries
+
 const User = mongoose.model<IUser>('User', userSchema);
 
 export default User;

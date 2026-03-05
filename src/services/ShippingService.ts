@@ -6,7 +6,7 @@ export class ShippingService {
    */
   private static settingsCache: any = null;
   private static cacheExpiry: number = 0;
-  private static CACHE_TTL = 60000; // 1 minute cache
+  private static CACHE_TTL = 300000; // 5 minutes cache (increased from 1 minute)
 
   static async getSettings() {
     const now = Date.now();
@@ -16,8 +16,8 @@ export class ShippingService {
       return this.settingsCache;
     }
 
-    // Fetch from database
-    let settings = await ShippingSettings.findOne();
+    // Fetch from database with lean() for better performance
+    let settings = await ShippingSettings.findOne().lean();
     
     // Create default settings if none exist
     if (!settings) {
@@ -29,6 +29,8 @@ export class ShippingService {
         platformFeeThreshold: 0,
         platformFeeAmount: 10,
       });
+      // Convert to plain object
+      settings = settings.toObject();
     }
 
     // Update cache

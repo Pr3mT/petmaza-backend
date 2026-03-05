@@ -2,6 +2,7 @@ import express, { Express, Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -11,6 +12,8 @@ import logger from './config/logger';
 import { errorHandler } from './middlewares/errorHandler';
 import { notFound } from './middlewares/notFound';
 import { initializeWebSocket } from './websocket/server';
+import { requestTimeout } from './middlewares/timeout';
+import { performanceMonitor } from './middlewares/performance';
 
 // Load environment variables
 dotenv.config();
@@ -31,6 +34,9 @@ const io = new Server(httpServer, {
 });
 
 const PORT = Number(process.env.PORT) || 6969;
+
+// Increase max listeners to prevent memory leak warnings
+require('events').EventEmitter.defaultMaxListeners = 20;
 
 // Middleware
 app.use(helmet({
@@ -71,12 +77,28 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Add request timeout middleware (30 seconds)
+app.use(requestTimeout(30000));
+
+// Add performance monitoring middleware
+app.use(performanceMonitor);
+
+// Add compression middleware (should be early in middleware chain)
+app.use(compression());
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
+// Disable unnecessary middleware for better performance
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
 // Serve static files from public directory
-app.use(express.static(path.join(__dirname, '../public')));
+app.use(express.static(path.join(__dirname, '../public'), {
+  maxAge: '1d', // Cache static files for 1 day
+  etag: true,
+}));
 
 // Initialize WebSocket
 initializeWebSocket(io);
@@ -157,7 +179,7 @@ app.use('/api/shipping', shippingRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
-// MongoDB connection
+// MongoDB connection with optimization
 const connectDB = async () => {
   try {
     const mongoURI = process.env.MONGODB_URI;
@@ -165,8 +187,21 @@ const connectDB = async () => {
       throw new Error('MONGODB_URI is not defined in environment variables');
     }
     
-    await mongoose.connect(mongoURI);
-    logger.info('MongoDB connected successfully');
+    // MongoDB connection options for optimal performance
+    await mongoose.connect(mongoURI, {
+      maxPoolSize: 50, // Maximum connection pool size
+      minPoolSize: 10, // Minimum connection pool size
+      serverSelectionTimeoutMS: 5000, // Timeout after 5s if no server found
+      socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+      family: 4, // Use IPv4, skip trying IPv6
+    });
+    
+    // Enable query logging in development only
+    if (process.env.NODE_ENV === 'development') {
+      mongoose.set('debug', false); // Set to true only when debugging
+    }
+    
+    logger.info('MongoDB connected successfully with connection pooling');
   } catch (error) {
     logger.error('MongoDB connection error:', error);
     process.exit(1);
@@ -178,8 +213,20 @@ const startServer = async () => {
   try {
     await connectDB();
     const HOST = '0.0.0.0'; // Bind to all network interfaces for cloud deployment
+    
+    // Configure HTTP server for better performance
+    httpServer.keepAliveTimeout = 65000; // Slightly higher than typical load balancer timeout
+    httpServer.headersTimeout = 66000; // Should be higher than keepAliveTimeout
+    httpServer.maxHeadersCount = 100;
+    httpServer.timeout = 30000; // 30 second timeout for requests
+    
     httpServer.listen(PORT, HOST, () => {
       logger.info(`Server running on ${HOST}:${PORT} in ${process.env.NODE_ENV} mode`);
+      logger.info('Performance optimizations enabled:');
+      logger.info('- Connection pooling: 50 connections');
+      logger.info('- User authentication caching: 5 minutes');
+      logger.info('- Response compression: enabled');
+      logger.info('- Request timeout: 30 seconds');
     });
   } catch (error) {
     logger.error('Failed to start server:', error);

@@ -143,7 +143,9 @@ export const logout = async (req: Request, res: Response) => {
 
 export const getMe = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const user = await User.findById(req.user._id);
+    // User is already fetched in auth middleware, just return it
+    // No need for another DB query
+    const user = req.user;
 
     if (!user) {
       return next(new AppError('User not found', 404));
