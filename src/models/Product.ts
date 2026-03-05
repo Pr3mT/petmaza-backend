@@ -192,11 +192,16 @@ productSchema.pre('findOneAndUpdate', function (next) {
   next();
 });
 
-// Indexes
+// Indexes for better query performance
 productSchema.index({ category_id: 1 });
 productSchema.index({ brand_id: 1 });
 productSchema.index({ isPrime: 1 });
 productSchema.index({ isActive: 1 });
+productSchema.index({ createdAt: -1 }); // For sorting by newest
+productSchema.index({ category_id: 1, isActive: 1 }); // Compound index
+productSchema.index({ brand_id: 1, isActive: 1 }); // Compound index
+productSchema.index({ isPrime: 1, isActive: 1 }); // Compound index
+productSchema.index({ name: 'text', description: 'text' }); // Text search index
 
 const Product = mongoose.model<IProduct>('Product', productSchema);
 

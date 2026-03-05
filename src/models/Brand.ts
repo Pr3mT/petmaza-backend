@@ -27,7 +27,9 @@ const brandSchema = new Schema<IBrand>(
 );
 
 // Indexes
+brandSchema.index({ name: 1 }, { unique: true }); // Unique index on name
 brandSchema.index({ isActive: 1 });
+brandSchema.index({ isActive: 1, name: 1 }); // Compound index
 
 const Brand = mongoose.model<IBrand>('Brand', brandSchema);
 

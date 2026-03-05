@@ -92,14 +92,14 @@ export class ProductService {
     let products = await Product.find(query)
       .populate('category_id', 'name')
       .populate('brand_id', 'name')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean(); // Convert to plain JavaScript objects for better performance
 
     // Add inStock field to each product based on product.isActive
     if (products.length > 0) {
       products = products.map((p) => {
-        const productObj = p.toObject();
-        productObj.inStock = productObj.isActive === true;
-        return productObj;
+        p.inStock = p.isActive === true;
+        return p;
       });
     }
 
@@ -154,7 +154,8 @@ export class ProductService {
   static async getProductById(id: string, pincode?: string) {
     const product = await Product.findById(id)
       .populate('category_id', 'name')
-      .populate('brand_id', 'name');
+      .populate('brand_id', 'name')
+      .lean(); // Use lean for better performance
 
     if (!product) {
       throw new AppError('Product not found', 404);
@@ -173,7 +174,7 @@ export class ProductService {
     }
 
     const productWithStock = {
-      ...product.toObject(),
+      ...product,
       inStock,
     };
 

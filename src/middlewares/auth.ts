@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import User from '../models/User';
 import { AppError } from './errorHandler';
+import { userCache } from '../utils/userCache';
 
 export interface AuthRequest extends Request {
   user?: any;
@@ -30,10 +31,20 @@ export const verifyToken = async (
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
-      const user = await User.findById(decoded.id).select('-password');
+      
+      // Try to get user from cache first - HUGE performance boost!
+      let user = userCache.get(decoded.id);
       
       if (!user) {
-        return next(new AppError('User not found', 404));
+        // Cache miss - fetch from database
+        user = await User.findById(decoded.id).select('-password').lean();
+        
+        if (!user) {
+          return next(new AppError('User not found', 404));
+        }
+        
+        // Store in cache for future requests
+        userCache.set(decoded.id, user);
       }
 
       req.user = user;

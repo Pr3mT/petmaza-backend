@@ -7,12 +7,13 @@ import {
   deleteProduct,
 } from '../controllers/productController';
 import { verifyToken, checkRole } from '../middlewares/auth';
+import { cacheResponse } from '../middlewares/cache';
 
 const router = express.Router();
 
-// Public routes
-router.get('/', getProducts);
-router.get('/:id', getProduct);
+// Public routes with 2-minute caching for products (shorter due to frequent updates)
+router.get('/', cacheResponse(120000), getProducts);
+router.get('/:id', cacheResponse(120000), getProduct);
 
 // Protected routes - Admin and MY_SHOP vendors can create/manage products
 router.post('/', verifyToken, createProduct); // MY_SHOP vendors can create products

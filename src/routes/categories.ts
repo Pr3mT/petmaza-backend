@@ -7,12 +7,13 @@ import {
   deleteCategory,
 } from '../controllers/categoryController';
 import { verifyToken, checkRole, checkMyShopVendor } from '../middlewares/auth';
+import { cacheResponse } from '../middlewares/cache';
 
 const router = express.Router();
 
-// Public routes
-router.get('/', getAllCategories);
-router.get('/:id', getCategoryById);
+// Public routes with 5-minute caching
+router.get('/', cacheResponse(300000), getAllCategories);
+router.get('/:id', cacheResponse(300000), getCategoryById);
 
 // Admin and MY_SHOP vendor can create
 router.post('/', verifyToken, checkMyShopVendor, createCategory);

@@ -7,12 +7,13 @@ import {
   deleteBrand,
 } from '../controllers/brandController';
 import { verifyToken, checkRole, checkMyShopVendor } from '../middlewares/auth';
+import { cacheResponse } from '../middlewares/cache';
 
 const router = express.Router();
 
-// Public routes
-router.get('/', getAllBrands);
-router.get('/:id', getBrandById);
+// Public routes with 5-minute caching
+router.get('/', cacheResponse(300000), getAllBrands);
+router.get('/:id', cacheResponse(300000), getBrandById);
 
 // Admin and MY_SHOP vendor can create
 router.post('/', verifyToken, checkMyShopVendor, createBrand);
