@@ -1069,3 +1069,84 @@ export async function sendRefundInitiatedEmail(
     orderId,
   });
 }
+
+// ========================================
+// QUEUED EMAIL FUNCTIONS (NON-BLOCKING)
+// ========================================
+
+import { emailQueue } from '../utils/emailQueue';
+
+/**
+ * Queue order confirmation email (non-blocking)
+ * Returns immediately without waiting for email to send
+ */
+export function queueOrderConfirmationEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  orderData: any
+): string {
+  return emailQueue.add(async () => {
+    await sendOrderConfirmationEmail(customerEmail, customerName, orderId, orderData);
+  });
+}
+
+/**
+ * Queue vendor notification email (non-blocking)
+ */
+export function queueVendorOrderNotificationEmail(
+  vendorEmail: string,
+  vendorName: string,
+  orderId: string,
+  orderData: any
+): string {
+  return emailQueue.add(async () => {
+    await sendVendorOrderNotificationEmail(vendorEmail, vendorName, orderId, orderData);
+  });
+}
+
+/**
+ * Queue order status update email (non-blocking)
+ */
+export function queueOrderStatusUpdateEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  status: string,
+  vendorName?: string
+): string {
+  return emailQueue.add(async () => {
+    await sendOrderStatusUpdateEmail(customerEmail, customerName, orderId, status, vendorName);
+  });
+}
+
+/**
+ * Queue payment success email (non-blocking)
+ */
+export function queuePaymentSuccessEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  amount: number,
+  razorpayPaymentId: string,
+  orderDetails: any
+): string {
+  return emailQueue.add(async () => {
+    await sendPaymentSuccessEmail(customerEmail, customerName, orderId, amount, razorpayPaymentId, orderDetails);
+  });
+}
+
+/**
+ * Queue order accepted email (non-blocking)
+ */
+export function queueOrderAcceptedEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  vendorName: string,
+  estimatedDelivery: string
+): string {
+  return emailQueue.add(async () => {
+    await sendOrderAcceptedEmail(customerEmail, customerName, orderId, vendorName, estimatedDelivery);
+  });
+}

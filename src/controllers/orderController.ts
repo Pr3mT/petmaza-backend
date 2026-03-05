@@ -6,11 +6,12 @@ import Order from '../models/Order';
 import User from '../models/User';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
+import logger from '../config/logger';
 import {
-  sendOrderConfirmationEmail,
-  sendOrderStatusUpdateEmail,
-  sendVendorOrderNotificationEmail,
-  sendPaymentSuccessEmail,
+  queueOrderConfirmationEmail,
+  queueOrderStatusUpdateEmail,
+  queueVendorOrderNotificationEmail,
+  queuePaymentSuccessEmail,
 } from '../services/emailer';
 
 // Create order (customer)
@@ -44,11 +45,11 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     order.total = charges.total;
     await order.save();
 
-    // Send order confirmation email to customer
-    console.log('[createOrder] Sending order confirmation email to:', req.user.email);
+    // Queue order confirmation email to customer (non-blocking)
+    logger.info('[createOrder] Queueing order confirmation email to:', req.user.email);
     try {
       const populatedOrder = await order.populate('items.product_id');
-      await sendOrderConfirmationEmail(
+      const jobId = queueOrderConfirmationEmail(
         req.user.email,
         req.user.name,
         `#${order._id.toString().slice(-8)}`,
@@ -61,21 +62,20 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
           subtotal: order.subtotalBeforeCharges,
         }
       );
-      console.log('[createOrder] ✅ Order confirmation email sent successfully!');
+      logger.info(`[createOrder] ✅ Order confirmation email queued (Job: ${jobId})`);
     } catch (emailError: any) {
-      console.error('[createOrder] ❌ Failed to send order confirmation email:', emailError.message);
-      console.error('[createOrder] Email error stack:', emailError.stack);
-      // Don't fail the order creation if email fails
+      logger.error('[createOrder] ❌ Failed to queue order confirmation email:', emailError.message);
+      // Don't fail the order creation if email queueing fails
     }
 
-    // Send vendor notification if order is assigned
+    // Queue vendor notification if order is assigned (non-blocking)
     try {
       if (order.assignedVendorId) {
-        const vendor = await User.findById(order.assignedVendorId);
-        console.log('[createOrder] Sending vendor notification to:', vendor?.email);
+        const vendor = await User.findById(order.assignedVendorId).lean();
+        logger.info('[createOrder] Queueing vendor notification to:', vendor?.email);
         if (vendor) {
           const populatedOrder = await order.populate('items.product_id');
-          await sendVendorOrderNotificationEmail(
+          const jobId = queueVendorOrderNotificationEmail(
             vendor.email,
             vendor.name,
             `#${order._id.toString().slice(-8)}`,
@@ -87,12 +87,11 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
               items: populatedOrder.items,
             }
           );
-          console.log('[createOrder] ✅ Vendor notification email sent!');
+          logger.info(`[createOrder] ✅ Vendor notification email queued (Job: ${jobId})`);
         }
       }
     } catch (emailError: any) {
-      console.error('[createOrder] ❌ Failed to send vendor notification:', emailError.message);
-      console.error('[createOrder] Vendor email error stack:', emailError.stack);
+      logger.error('[createOrder] ❌ Failed to queue vendor notification:', emailError.message);
     }
 
     res.status(201).json({
@@ -159,24 +158,16 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     await order.save();
 
-    // Send payment receipt email when payment is completed
+    // Queue payment receipt email when payment is completed (non-blocking)
     if (payment_status === 'Paid') {
-      console.log('[updateOrder] Payment completed, sending receipt email...');
+      logger.info('[updateOrder] Payment completed, queueing receipt email...');
       try {
         const populatedOrder = await order.populate(['customer_id', 'items.product_id']);
         const customer = populatedOrder.customer_id as any;
-        
-        console.log('[updateOrder] Customer details:', {
-          email: customer?.email,
-          name: customer?.name,
-          orderId: order._id,
-          amount: order.total,
-          paymentId: order.payment_id,
-        });
 
         if (customer?.email) {
-          console.log('[updateOrder] Sending payment receipt to:', customer.email);
-          await sendPaymentSuccessEmail(
+          logger.info('[updateOrder] Queueing payment receipt to:', customer.email);
+          const jobId = queuePaymentSuccessEmail(
             customer.email,
             customer.name || 'Customer',
             `#${order._id.toString().slice(-8)}`,
@@ -189,14 +180,13 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
               paymentMethod: 'Online Payment',
             }
           );
-          console.log('[updateOrder] ✅ Payment receipt email sent successfully!');
+          logger.info(`[updateOrder] ✅ Payment receipt email queued (Job: ${jobId})`);
         } else {
-          console.log('[updateOrder] ⚠️ No customer email found, skipping receipt');
+          logger.info('[updateOrder] ⚠️ No customer email found, skipping receipt');
         }
       } catch (emailError: any) {
-        console.error('[updateOrder] ❌ Failed to send payment receipt:', emailError.message);
-        console.error('[updateOrder] Email error stack:', emailError.stack);
-        // Don't fail the order update if email fails
+        logger.error('[updateOrder] ❌ Failed to queue payment receipt:', emailError.message);
+        // Don't fail the order update if email queueing fails
       }
     }
     res.status(200).json({
@@ -444,27 +434,28 @@ export const updateOrderStatus = async (
     order.status = status as any;
     await order.save();
 
-    // Send status update email to customer
+    // Queue status update email to customer (non-blocking)
     try {
       const customerEmail = (order.customer_id as any)?.email;
       const customerName = (order.customer_id as any)?.name;
       const vendorName = (order.assignedVendorId as any)?.name;
 
       if (customerEmail) {
-        await sendOrderStatusUpdateEmail(
+        const jobId = queueOrderStatusUpdateEmail(
           customerEmail,
           customerName || 'Customer',
           orderId,
           statusMap[status] || status.toLowerCase(),
           vendorName
         );
+        logger.info(`[updateOrderStatus] Status update email queued (Job: ${jobId})`);
       }
     } catch (emailError: any) {
-      console.error('Failed to send status update email:', emailError.message);
-      // Don't fail the status update if email fails
+      logger.error('Failed to queue status update email:', emailError.message);
+      // Don't fail the status update if email queueing fails
     }
 
-    console.log(`[updateOrderStatus] Order ${orderId} status updated to ${status} by vendor ${vendorId}`);
+    logger.info(`[updateOrderStatus] Order ${orderId} status updated to ${status} by vendor ${vendorId}`);
 
     res.status(200).json({
       success: true,

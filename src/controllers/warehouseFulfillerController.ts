@@ -3,8 +3,9 @@ import Order from '../models/Order';
 import User from '../models/User';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
+import logger from '../config/logger';
 import { 
-  sendOrderAcceptedEmail, 
+  queueOrderAcceptedEmail, 
   sendOrderRejectedEmail, 
   sendOrderShippedEmail,
   sendDeliveryCompletedEmail,
@@ -99,35 +100,28 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
     order.status = 'ACCEPTED';
     await order.save();
 
-    console.log(`[acceptOrder] Order ${orderId} accepted successfully by ${fulfiller._id}`);
+    logger.info(`[acceptOrder] Order ${orderId} accepted successfully by ${fulfiller._id}`);
 
-    // Send email to customer
+    // Queue email to customer (non-blocking)
     try {
-      console.log('[acceptOrder] Starting email send process...');
       const populatedOrder = await order.populate('customer_id');
       const customer = populatedOrder.customer_id as any;
-      console.log('[acceptOrder] Customer populated:', {
-        customerId: customer?._id,
-        email: customer?.email,
-        name: customer?.name,
-      });
       
       if (customer?.email) {
-        console.log('[acceptOrder] Sending order accepted email to:', customer.email);
-        await sendOrderAcceptedEmail(
+        logger.info('[acceptOrder] Queueing order accepted email to:', customer.email);
+        const jobId = queueOrderAcceptedEmail(
           customer.email,
           customer.name || 'Customer',
           `#${order._id.toString().slice(-8)}`,
           fulfiller.name || 'Warehouse',
           '2-5 business days'
         );
-        console.log('[acceptOrder] ✅ Order accepted email sent successfully!');
+        logger.info(`[acceptOrder] ✅ Order accepted email queued (Job: ${jobId})`);
       } else {
-        console.log('[acceptOrder] ⚠️ Customer email not found, skipping email');
+        logger.info('[acceptOrder] ⚠️ Customer email not found, skipping email');
       }
     } catch (emailError: any) {
-      console.error('[acceptOrder] ❌ Failed to send order accepted email:', emailError.message);
-      console.error('[acceptOrder] Email error stack:', emailError.stack);
+      logger.error('[acceptOrder] ❌ Failed to queue order accepted email:', emailError.message);
     }
 
     res.status(200).json({
