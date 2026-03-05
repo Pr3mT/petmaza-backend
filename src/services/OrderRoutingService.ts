@@ -4,7 +4,8 @@ import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { IOrderItem } from '../types';
-import { sendVendorOrderNotificationEmail } from './emailer';
+import { queueVendorOrderNotificationEmail } from './emailer';
+import logger from '../config/logger';
 
 export class OrderRoutingService {
   /**
@@ -139,14 +140,14 @@ export class OrderRoutingService {
         customerAddress,
       });
 
-      console.log(`Order ${order._id} routed to WAREHOUSE_FULFILLER ${warehouseFulfiller._id}`);
+      logger.info(`Order ${order._id} routed to WAREHOUSE_FULFILLER ${warehouseFulfiller._id}`);
 
-      // Send email notification to warehouse fulfiller
+      // Queue email notification to warehouse fulfiller (non-blocking)
       try {
         const populatedOrder = await order.populate('customer_id');
         const customer = populatedOrder.customer_id as any;
 
-        await sendVendorOrderNotificationEmail(
+        const jobId = queueVendorOrderNotificationEmail(
           warehouseFulfiller.email,
           warehouseFulfiller.name || 'Warehouse Fulfiller',
           `#${order._id.toString().slice(-8)}`,
@@ -158,9 +159,9 @@ export class OrderRoutingService {
             items: orderItems,
           }
         );
-        console.log(`Order notification email sent to warehouse fulfiller: ${warehouseFulfiller.email}`);
+        logger.info(`Order notification queued for warehouse fulfiller: ${warehouseFulfiller.email} (Job: ${jobId})`);
       } catch (emailError: any) {
-        console.error('Failed to send warehouse fulfiller notification email:', emailError.message);
+        logger.error('Failed to queue warehouse fulfiller notification email:', emailError.message);
       }
 
       return order;
@@ -217,13 +218,13 @@ export class OrderRoutingService {
           selectedVariant: item.selectedVariant,
         });
       } catch (error) {
-        console.error(`Failed to record sale for product ${item.product_id}:`, error);
+        logger.error(`Failed to record sale for product ${item.product_id}:`, error);
         // Log error but allow order creation to continue
         // Stock reduction failure shouldn't block the order
       }
     }
 
-    console.log(`Order ${order._id} routed directly to MY_SHOP ${myShopVendor._id}`);
+    logger.info(`Order ${order._id} routed directly to MY_SHOP ${myShopVendor._id}`);
     return order;
   }
 
