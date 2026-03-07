@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IHeroBanner extends Document {
+  bannerType: 'text' | 'image'; // 'text' for text-based banners, 'image' for full carousel images
   title: string;
   subtitle: string;
   description?: string;
@@ -9,7 +10,7 @@ export interface IHeroBanner extends Document {
   ctaLink: string;
   bgColor: string;
   accentColor: string;
-  image: string; // Emoji or image URL
+  image: string; // Emoji or image URL (for text type) or full carousel image URL (for image type)
   isActive: boolean;
   displayOrder: number;
   createdAt: Date;
@@ -18,14 +19,24 @@ export interface IHeroBanner extends Document {
 
 const heroBannerSchema = new Schema<IHeroBanner>(
   {
+    bannerType: {
+      type: String,
+      enum: ['text', 'image'],
+      default: 'text',
+      required: true,
+    },
     title: {
       type: String,
-      required: [true, 'Banner title is required'],
+      required: function(this: IHeroBanner) {
+        return this.bannerType === 'text';
+      },
       trim: true,
     },
     subtitle: {
       type: String,
-      required: [true, 'Banner subtitle is required'],
+      required: function(this: IHeroBanner) {
+        return this.bannerType === 'text';
+      },
       trim: true,
     },
     description: {
@@ -39,24 +50,23 @@ const heroBannerSchema = new Schema<IHeroBanner>(
     },
     ctaText: {
       type: String,
-      required: [true, 'CTA text is required'],
+      required: function(this: IHeroBanner) {
+        return this.bannerType === 'text';
+      },
       default: 'Shop Now',
       trim: true,
     },
     ctaLink: {
       type: String,
-      required: [true, 'CTA link is required'],
-      default: '/products',
       trim: true,
+      default: '/products',
     },
     bgColor: {
       type: String,
-      required: [true, 'Background color is required'],
       default: '#FFF9F0',
     },
     accentColor: {
       type: String,
-      required: [true, 'Accent color is required'],
       default: '#FFE5ED',
     },
     image: {
