@@ -15,12 +15,23 @@ const productSchema = new Schema<IProduct>(
     category_id: {
       type: Schema.Types.ObjectId,
       ref: 'Category',
-      required: [true, 'Please provide a category'],
+      required: false, // Optional - using mainCategory/subCategory now
     },
     brand_id: {
       type: Schema.Types.ObjectId,
       ref: 'Brand',
       required: [true, 'Please provide a brand'],
+    },
+    mainCategory: {
+      type: String,
+      enum: ['Dog', 'Cat', 'Fish', 'Bird', 'Small Animals'],
+      required: [true, 'Please provide a main category'],
+      trim: true,
+    },
+    subCategory: {
+      type: String,
+      required: [true, 'Please provide a subcategory'],
+      trim: true,
     },
     weight: {
       type: Number,
@@ -195,6 +206,9 @@ productSchema.pre('findOneAndUpdate', function (next) {
 // Indexes for better query performance
 productSchema.index({ category_id: 1 });
 productSchema.index({ brand_id: 1 });
+productSchema.index({ mainCategory: 1 });
+productSchema.index({ subCategory: 1 });
+productSchema.index({ mainCategory: 1, subCategory: 1 }); // Compound index
 productSchema.index({ isPrime: 1 });
 productSchema.index({ isActive: 1 });
 productSchema.index({ createdAt: -1 }); // For sorting by newest

@@ -35,8 +35,10 @@ export interface IProductVariant {
 export interface IProduct extends Document {
   name: string;
   description?: string;
-  category_id: Types.ObjectId | string;
+  category_id?: Types.ObjectId | string; // Optional - legacy field
   brand_id: Types.ObjectId | string;
+  mainCategory: string; // Dog, Cat, Fish, Bird, Small Animals
+  subCategory: string; // E.g., Dog Food, Cat Accessories, etc.
   hasVariants?: boolean;
   variants?: IProductVariant[];
   weight?: number; // in grams
