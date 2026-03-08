@@ -14,6 +14,7 @@
     "seed:products-pricing": "ts-node-dev --transpile-only src/scripts/seedProductsWithVendorPricing.ts",
     "seed:variant-products": "ts-node-dev --transpile-only src/scripts/seedVariantProducts.ts",
     "seed:comprehensive": "ts-node-dev --transpile-only src/scripts/seedComprehensiveProducts.ts",
+    "seed:products-variants": "ts-node --transpile-only src/scripts/seedProductsWithVariants.ts",
     "convert:variants": "ts-node-dev --transpile-only src/scripts/convertVariantsToProducts.ts",
     "revert:variants": "ts-node-dev --transpile-only src/scripts/revertToVariantSystem.ts",
     "verify:products": "ts-node-dev --transpile-only src/scripts/verifyProducts.ts",

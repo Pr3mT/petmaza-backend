@@ -253,6 +253,7 @@ export class ProductService {
     if (data.hasVariants || existingProduct.hasVariants) {
       // If updating variants, calculate prices for each variant
       if (data.variants && Array.isArray(data.variants)) {
+        // Calculate prices for all variants (including single variant)
         data.variants = data.variants.map((variant: any) => {
           if (variant.mrp && variant.sellingPercentage !== undefined) {
             variant.sellingPrice = variant.mrp * (variant.sellingPercentage / 100);
@@ -263,13 +264,28 @@ export class ProductService {
           }
           return variant;
         });
+        
+        console.log('Updating with variants:', data.variants.length);
+      } else if (data.hasVariants === false) {
+        // Switching from variant to non-variant product
+        console.log('Converting from variant to non-variant product');
+        data.variants = [];
       }
       
-      // Don't calculate root-level prices for variant products
-      const product = await Product.findByIdAndUpdate(id, data, {
-        new: true,
-        runValidators: true,
-      });
+      // Update product with explicit $set to replace variants array completely
+      const product = await Product.findByIdAndUpdate(
+        id, 
+        { 
+          $set: {
+            ...data,
+            variants: data.variants || []
+          }
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
       
       console.log('Variant product updated successfully:', {
         id: product?._id,
