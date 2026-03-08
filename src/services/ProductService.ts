@@ -9,10 +9,12 @@ import { AppError } from '../middlewares/errorHandler';
 export class ProductService {
   // Create product
   static async createProduct(data: any) {
-    // Validate category exists
-    const category = await Category.findById(data.category_id);
-    if (!category) {
-      throw new AppError('Category not found', 404);
+    // Validate category exists (only if category_id is provided for backward compatibility)
+    if (data.category_id) {
+      const category = await Category.findById(data.category_id);
+      if (!category) {
+        throw new AppError('Category not found', 404);
+      }
     }
 
     // Validate brand exists
@@ -209,7 +211,16 @@ export class ProductService {
 
   // Update product
   static async updateProduct(id: string, data: any) {
-    // Validate category if provided
+    console.log('ProductService.updateProduct called with:', {
+      id,
+      mainCategory: data.mainCategory,
+      subCategory: data.subCategory,
+      name: data.name,
+      brand_id: data.brand_id,
+      hasVariants: data.hasVariants
+    });
+    
+    // Validate category_id only if provided (for backward compatibility)
     if (data.category_id) {
       const category = await Category.findById(data.category_id);
       if (!category) {
@@ -230,6 +241,13 @@ export class ProductService {
     if (!existingProduct) {
       throw new AppError('Product not found', 404);
     }
+    
+    console.log('Existing product:', {
+      id: existingProduct._id,
+      name: existingProduct.name,
+      mainCategory: existingProduct.mainCategory,
+      subCategory: existingProduct.subCategory
+    });
 
     // Handle variant products
     if (data.hasVariants || existingProduct.hasVariants) {
@@ -252,6 +270,15 @@ export class ProductService {
         new: true,
         runValidators: true,
       });
+      
+      console.log('Variant product updated successfully:', {
+        id: product?._id,
+        name: product?.name,
+        mainCategory: product?.mainCategory,
+        subCategory: product?.subCategory,
+        variantsCount: product?.variants?.length
+      });
+      
       return product;
     }
 
@@ -273,6 +300,14 @@ export class ProductService {
     const product = await Product.findByIdAndUpdate(id, data, {
       new: true,
       runValidators: true,
+    });
+
+    console.log('Product updated successfully:', {
+      id: product?._id,
+      name: product?.name,
+      mainCategory: product?.mainCategory,
+      subCategory: product?.subCategory,
+      brand_id: product?.brand_id
     });
 
     return product;
