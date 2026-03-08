@@ -13,6 +13,8 @@ export const advancedSearch = async (req: Request, res: Response) => {
       maxPrice,
       minRating,
       isPrime,
+      mainCategory, // Pet type filter
+      subCategory, // Subcategory filter
       sortBy = 'relevance', // relevance, price_asc, price_desc, rating, newest
       page = 1,
       limit = 20,
@@ -32,6 +34,16 @@ export const advancedSearch = async (req: Request, res: Response) => {
     // Category filter
     if (category_id) {
       filter.category_id = category_id;
+    }
+
+    // Main category (Pet type) filter
+    if (mainCategory) {
+      filter.mainCategory = mainCategory;
+    }
+
+    // Subcategory filter
+    if (subCategory) {
+      filter.subCategory = subCategory;
     }
 
     // Brand filter (can be multiple)

@@ -55,11 +55,23 @@ export class ProductService {
     isActive?: boolean;
     pincode?: string; // Filter by availability in pincode
     search?: string; // Search by product name or description
+    mainCategory?: string; // Filter by main category (Dog, Cat, Fish, Bird, Small Animals)
+    subCategory?: string; // Filter by subcategory
   } = {}) {
     const query: any = {};
 
     if (filters.category_id) {
       query.category_id = filters.category_id;
+    }
+
+    // Filter by mainCategory (Pet Type)
+    if (filters.mainCategory) {
+      query.mainCategory = filters.mainCategory;
+    }
+
+    // Filter by subCategory
+    if (filters.subCategory) {
+      query.subCategory = filters.subCategory;
     }
 
     if (filters.brand_id) {
