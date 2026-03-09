@@ -90,7 +90,6 @@ const orderSchema = new Schema<IOrder>(
         'ASSIGNED',
         'ACCEPTED',
         'REJECTED',
-        'PICKED_FROM_VENDOR',
         'PACKED',
         'PICKED_UP',
         'IN_TRANSIT',

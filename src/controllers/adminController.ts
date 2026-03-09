@@ -475,3 +475,216 @@ export const reseedVariantProduct = async (req: Request, res: Response, next: Ne
     next(error);
   }
 };
+
+// ==================== FULFILLER MANAGEMENT ====================
+
+/**
+ * Create a new warehouse fulfiller
+ */
+export const createFulfiller = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, email, password, phone, assignedSubcategories, isActive } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !password || !phone) {
+      return next(new AppError('Please provide all required fields', 400));
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return next(new AppError('User with this email already exists', 400));
+    }
+
+    // Create user with WAREHOUSE_FULFILLER role
+    const user = await User.create({
+      name,
+      email,
+      password,
+      phone,
+      role: 'vendor',
+      vendorType: 'WAREHOUSE_FULFILLER',
+      isApproved: isActive !== undefined ? isActive : true,
+    });
+
+    // Import VendorDetails model
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+
+    // Create vendor details with subcategories
+    const vendorDetails = await VendorDetails.create({
+      vendor_id: user._id,
+      vendorType: 'WAREHOUSE_FULFILLER',
+      shopName: `${name} Warehouse`,
+      assignedSubcategories: assignedSubcategories || [],
+      pickupAddress: {
+        street: 'TBD',
+        city: 'TBD',
+        state: 'TBD',
+        pincode: '000000',
+      },
+      isApproved: isActive !== undefined ? isActive : true,
+      approvedBy: req.user._id,
+      approvedAt: new Date(),
+    });
+
+    // Return user without password
+    const userResponse = await User.findById(user._id).select('-password');
+
+    res.status(201).json({
+      success: true,
+      message: 'Fulfiller created successfully',
+      data: {
+        user: userResponse,
+        vendorDetails,
+      },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Get all warehouse fulfillers
+ */
+export const getFulfillers = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+
+    // Find all warehouse fulfiller users
+    const users = await User.find({
+      role: 'vendor',
+      vendorType: 'WAREHOUSE_FULFILLER',
+    })
+      .select('-password')
+      .skip(skip)
+      .limit(Number(limit))
+      .sort({ createdAt: -1 });
+
+    // Get vendor details for each fulfiller
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    const userIds = users.map(u => u._id);
+    const vendorDetails = await VendorDetails.find({
+      vendor_id: { $in: userIds },
+    });
+
+    // Combine user and vendor details
+    const fulfillers = users.map(user => {
+      const details = vendorDetails.find(
+        vd => vd.vendor_id.toString() === user._id.toString()
+      );
+      return {
+        ...user.toObject(),
+        assignedSubcategories: details?.assignedSubcategories || [],
+        vendorDetails: details,
+      };
+    });
+
+    const total = await User.countDocuments({
+      role: 'vendor',
+      vendorType: 'WAREHOUSE_FULFILLER',
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        fulfillers,
+        pagination: {
+          page: Number(page),
+          limit: Number(limit),
+          total,
+          pages: Math.ceil(total / Number(limit)),
+        },
+      },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Update a fulfiller
+ */
+export const updateFulfiller = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { name, email, phone, assignedSubcategories, isActive, password } = req.body;
+
+    // Find user
+    const user = await User.findById(id);
+    if (!user) {
+      return next(new AppError('Fulfiller not found', 404));
+    }
+
+    if (user.vendorType !== 'WAREHOUSE_FULFILLER') {
+      return next(new AppError('User is not a warehouse fulfiller', 400));
+    }
+
+    // Update user fields
+    if (name) user.name = name;
+    if (email) user.email = email;
+    if (phone) user.phone = phone;
+    if (password) user.password = password; // Will be hashed by pre-save hook
+    if (isActive !== undefined) user.isApproved = isActive;
+
+    await user.save();
+
+    // Update vendor details
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    const vendorDetails = await VendorDetails.findOneAndUpdate(
+      { vendor_id: id },
+      {
+        assignedSubcategories: assignedSubcategories || [],
+        isApproved: isActive !== undefined ? isActive : true,
+      },
+      { new: true }
+    );
+
+    // Return user without password
+    const userResponse = await User.findById(id).select('-password');
+
+    res.status(200).json({
+      success: true,
+      message: 'Fulfiller updated successfully',
+      data: {
+        user: userResponse,
+        vendorDetails,
+      },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Delete a fulfiller
+ */
+export const deleteFulfiller = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+
+    // Find user
+    const user = await User.findById(id);
+    if (!user) {
+      return next(new AppError('Fulfiller not found', 404));
+    }
+
+    if (user.vendorType !== 'WAREHOUSE_FULFILLER') {
+      return next(new AppError('User is not a warehouse fulfiller', 400));
+    }
+
+    // Delete vendor details
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    await VendorDetails.findOneAndDelete({ vendor_id: id });
+
+    // Delete user
+    await User.findByIdAndDelete(id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Fulfiller deleted successfully',
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};

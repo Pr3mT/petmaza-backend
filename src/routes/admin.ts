@@ -12,6 +12,10 @@ import {
   removeVendorProductAssignment,
   cleanupVariantProducts,
   reseedVariantProduct,
+  createFulfiller,
+  getFulfillers,
+  updateFulfiller,
+  deleteFulfiller,
 } from '../controllers/adminController';
 import {
   getAnalytics,
@@ -55,6 +59,12 @@ router.get('/analytics/orders', getOrderReport);
 // Shipping settings routes
 router.get('/shipping-settings', getShippingSettings);
 router.put('/shipping-settings', updateShippingSettings);
+
+// Fulfiller management routes
+router.post('/fulfillers', createFulfiller);
+router.get('/fulfillers', getFulfillers);
+router.put('/fulfillers/:id', updateFulfiller);
+router.delete('/fulfillers/:id', deleteFulfiller);
 
 export default router;
 

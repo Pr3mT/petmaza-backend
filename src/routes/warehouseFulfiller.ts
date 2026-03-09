@@ -17,7 +17,6 @@ router.post('/orders/:orderId/accept', warehouseFulfillerController.acceptOrder)
 router.post('/orders/:orderId/reject', warehouseFulfillerController.rejectAndReassign);
 
 // Update order status stages
-router.post('/orders/:orderId/picked-from-vendor', warehouseFulfillerController.markPickedFromVendor);
 router.post('/orders/:orderId/packed', warehouseFulfillerController.markPacked);
 router.post('/orders/:orderId/picked-up', warehouseFulfillerController.markPickedUp);
 router.post('/orders/:orderId/in-transit', warehouseFulfillerController.markInTransit);

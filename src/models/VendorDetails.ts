@@ -24,6 +24,10 @@ const vendorDetailsSchema = new Schema<IVendorDetails>(
       ref: 'Brand',
       default: [],
     },
+    assignedSubcategories: {
+      type: [String],
+      default: [],
+    },
     pickupAddress: {
       street: {
         type: String,

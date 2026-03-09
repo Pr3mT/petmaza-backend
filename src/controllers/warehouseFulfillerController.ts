@@ -14,6 +14,7 @@ import {
 
 /**
  * Get orders assigned to warehouse fulfiller
+ * Shows orders that contain products from fulfiller's assigned subcategories
  */
 export const getWarehouseFulfillerOrders = async (
   req: AuthRequest,
@@ -27,13 +28,28 @@ export const getWarehouseFulfillerOrders = async (
       return next(new AppError('Access denied. Only warehouse fulfillers can access this.', 403));
     }
 
+    // Get fulfiller's assigned subcategories from VendorDetails
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    const vendorDetails = await VendorDetails.findOne({ vendor_id: fulfiller._id });
+
+    if (!vendorDetails || !vendorDetails.assignedSubcategories || vendorDetails.assignedSubcategories.length === 0) {
+      logger.info(`[getWarehouseFulfillerOrders] Fulfiller ${fulfiller._id} has no assigned subcategories`);
+      return res.status(200).json({
+        success: true,
+        data: { orders: [] },
+      });
+    }
+
+    const assignedSubcategories = vendorDetails.assignedSubcategories;
+    logger.info(`[getWarehouseFulfillerOrders] Fulfiller ${fulfiller.name} assigned subcategories:`, assignedSubcategories);
+
+    // Fetch orders assigned to this fulfiller
     const orders = await Order.find({
       assignedVendorId: fulfiller._id,
       status: {
         $in: [
           'PENDING',
           'ACCEPTED',
-          'PICKED_FROM_VENDOR',
           'PACKED',
           'PICKED_UP',
           'IN_TRANSIT',
@@ -42,65 +58,94 @@ export const getWarehouseFulfillerOrders = async (
       },
     })
       .populate('customer_id', 'name email phone')
-      .populate('items.product_id', 'name images')
+      .populate('items.product_id', 'name images subCategory mainCategory')
       .sort({ createdAt: -1 });
+
+    logger.info(`[getWarehouseFulfillerOrders] Found ${orders.length} orders for ${fulfiller.name}`);
 
     res.status(200).json({
       success: true,
       data: { orders },
     });
   } catch (error: any) {
+    logger.error('[getWarehouseFulfillerOrders] Error:', error);
     next(error);
   }
 };
 
 /**
  * Accept order by warehouse fulfiller
+ * Verifies that order contains products from fulfiller's assigned subcategories
  */
 export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { orderId } = req.params;
     const fulfiller = req.user;
 
-    console.log('[acceptOrder] Request received:', {
+    logger.info('[acceptOrder] Request received:', {
       orderId,
       userId: fulfiller?._id,
+      userName: fulfiller?.name,
       userRole: fulfiller?.role,
       vendorType: fulfiller?.vendorType,
     });
 
     if (fulfiller.vendorType !== 'WAREHOUSE_FULFILLER') {
-      console.log('[acceptOrder] Access denied - not a warehouse fulfiller');
+      logger.warn('[acceptOrder] Access denied - not a warehouse fulfiller');
       return next(new AppError('Access denied. Only warehouse fulfillers can accept orders.', 403));
     }
 
-    const order = await Order.findById(orderId);
+    // Get fulfiller's assigned subcategories
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    const vendorDetails = await VendorDetails.findOne({ vendor_id: fulfiller._id });
+
+    if (!vendorDetails || !vendorDetails.assignedSubcategories || vendorDetails.assignedSubcategories.length === 0) {
+      logger.warn('[acceptOrder] Fulfiller has no assigned subcategories');
+      return next(new AppError('You have no assigned subcategories. Please contact admin.', 403));
+    }
+
+    const assignedSubcategories = vendorDetails.assignedSubcategories;
+    logger.info(`[acceptOrder] Fulfiller ${fulfiller.name} assigned subcategories:`, assignedSubcategories);
+
+    // Find order and populate products
+    const order = await Order.findById(orderId).populate('items.product_id', 'name images subCategory mainCategory');
 
     if (!order) {
-      console.log('[acceptOrder] Order not found:', orderId);
+      logger.warn('[acceptOrder] Order not found:', orderId);
       return next(new AppError('Order not found', 404));
     }
 
-    console.log('[acceptOrder] Order found:', {
+    logger.info('[acceptOrder] Order found:', {
       orderId: order._id,
       status: order.status,
-      assignedVendorId: order.assignedVendorId,
+      itemsCount: order.items.length,
     });
 
-    if (order.assignedVendorId?.toString() !== fulfiller._id.toString()) {
-      console.log('[acceptOrder] Order not assigned to this fulfiller');
-      return next(new AppError('This order is not assigned to you', 403));
+    // Verify that order contains products from assigned subcategories
+    const hasMatchingProducts = order.items.some(item => {
+      const product = item.product_id as any;
+      if (product && product.subCategory) {
+        return assignedSubcategories.includes(product.subCategory);
+      }
+      return false;
+    });
+
+    if (!hasMatchingProducts) {
+      logger.warn('[acceptOrder] Order does not contain products from fulfiller\'s assigned subcategories');
+      return next(new AppError('This order does not contain products from your assigned categories', 403));
     }
 
     if (order.status !== 'PENDING') {
-      console.log('[acceptOrder] Order not pending:', order.status);
+      logger.warn('[acceptOrder] Order not pending:', order.status);
       return next(new AppError(`Order is already ${order.status}`, 400));
     }
 
+    // Assign the order to this fulfiller and mark as accepted
     order.status = 'ACCEPTED';
+    order.assignedVendorId = fulfiller._id as any;
     await order.save();
 
-    logger.info(`[acceptOrder] Order ${orderId} accepted successfully by ${fulfiller._id}`);
+    logger.info(`[acceptOrder] ✅ Order ${orderId} accepted successfully by ${fulfiller.name} (${fulfiller._id})`);
 
     // Queue email to customer (non-blocking)
     try {
@@ -194,57 +239,7 @@ export const rejectAndReassign = async (req: AuthRequest, res: Response, next: N
   }
 };
 
-/**
- * Update order status to PICKED_FROM_VENDOR
- */
-export const markPickedFromVendor = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { orderId } = req.params;
-    const fulfiller = req.user;
 
-    if (fulfiller.vendorType !== 'WAREHOUSE_FULFILLER') {
-      return next(
-        new AppError('Access denied. Only warehouse fulfillers can update order status.', 403)
-      );
-    }
-
-    const order = await Order.findById(orderId);
-
-    if (!order) {
-      return next(new AppError('Order not found', 404));
-    }
-
-    if (order.assignedVendorId?.toString() !== fulfiller._id.toString()) {
-      return next(new AppError('This order is not assigned to you', 403));
-    }
-
-    if (order.status !== 'ACCEPTED') {
-      return next(
-        new AppError(
-          `Cannot mark as picked. Order must be ACCEPTED first. Current status: ${order.status}`,
-          400
-        )
-      );
-    }
-
-    order.status = 'PICKED_FROM_VENDOR';
-    await order.save();
-
-    console.log(`Order ${orderId} marked as PICKED_FROM_VENDOR by ${fulfiller._id}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Order marked as picked from vendor',
-      data: { order },
-    });
-  } catch (error: any) {
-    next(error);
-  }
-};
 
 /**
  * Update order status to PACKED
@@ -254,7 +249,10 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
     const { orderId } = req.params;
     const fulfiller = req.user;
 
+    console.log('[markPacked] Request received:', { orderId, fulfillerId: fulfiller._id, vendorType: fulfiller.vendorType });
+
     if (fulfiller.vendorType !== 'WAREHOUSE_FULFILLER') {
+      console.log('[markPacked] Access denied - not a warehouse fulfiller');
       return next(
         new AppError('Access denied. Only warehouse fulfillers can update order status.', 403)
       );
@@ -263,17 +261,27 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
     const order = await Order.findById(orderId);
 
     if (!order) {
+      console.log('[markPacked] Order not found:', orderId);
       return next(new AppError('Order not found', 404));
     }
 
+    console.log('[markPacked] Order found:', {
+      orderId: order._id,
+      currentStatus: order.status,
+      assignedVendorId: order.assignedVendorId,
+      requesterVendorId: fulfiller._id
+    });
+
     if (order.assignedVendorId?.toString() !== fulfiller._id.toString()) {
+      console.log('[markPacked] Order not assigned to this fulfiller');
       return next(new AppError('This order is not assigned to you', 403));
     }
 
-    if (order.status !== 'PICKED_FROM_VENDOR') {
+    if (order.status !== 'ACCEPTED') {
+      console.log(`[markPacked] Invalid status. Expected: ACCEPTED, Got: ${order.status}`);
       return next(
         new AppError(
-          `Cannot mark as packed. Order must be PICKED_FROM_VENDOR first. Current status: ${order.status}`,
+          `Cannot mark as packed. Order must be ACCEPTED first. Current status: ${order.status}`,
           400
         )
       );
@@ -282,7 +290,7 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
     order.status = 'PACKED';
     await order.save();
 
-    console.log(`Order ${orderId} marked as PACKED by ${fulfiller._id}`);
+    console.log(`[markPacked] ✅ Order ${orderId} marked as PACKED by ${fulfiller._id}`);
 
     res.status(200).json({
       success: true,
@@ -290,6 +298,7 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
       data: { order },
     });
   } catch (error: any) {
+    console.error('[markPacked] Error:', error);
     next(error);
   }
 };

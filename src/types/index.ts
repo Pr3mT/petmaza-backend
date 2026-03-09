@@ -81,7 +81,6 @@ export type OrderStatus =
   | 'ASSIGNED'
   | 'ACCEPTED'
   | 'REJECTED'
-  | 'PICKED_FROM_VENDOR'
   | 'PACKED'
   | 'PICKED_UP'
   | 'IN_TRANSIT'
@@ -163,6 +162,7 @@ export interface IVendorDetails extends Document {
   vendorType: 'PRIME' | 'MY_SHOP' | 'WAREHOUSE_FULFILLER';
   shopName: string;
   brandsHandled: (Types.ObjectId | string)[]; // Brand IDs
+  assignedSubcategories?: string[]; // Subcategories assigned to fulfiller (e.g., ['Dog Food', 'Cat Food'])
   pickupAddress: {
     street: string;
     city: string;
