@@ -57,6 +57,8 @@ export class ProductService {
     search?: string; // Search by product name or description
     mainCategory?: string; // Filter by main category (Dog, Cat, Fish, Bird, Small Animals)
     subCategory?: string; // Filter by subcategory
+    page?: number; // Page number for pagination
+    limit?: number; // Number of items per page
   } = {}) {
     const query: any = {};
 
@@ -103,10 +105,17 @@ export class ProductService {
       ];
     }
 
+    // Pagination
+    const page = filters.page && filters.page > 0 ? filters.page : 1;
+    const limit = filters.limit && filters.limit > 0 ? filters.limit : 1000; // Default to large number if not specified
+    const skip = (page - 1) * limit;
+
     let products = await Product.find(query)
       .populate('category_id', 'name')
       .populate('brand_id', 'name')
       .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .lean(); // Convert to plain JavaScript objects for better performance
 
     // Add inStock field to each product based on product.isActive

@@ -85,7 +85,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
 
 export const getProducts = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { category_id, brand_id, isPrime, pincode, search, mainCategory, subCategory } = req.query;
+    const { category_id, brand_id, isPrime, pincode, search, mainCategory, subCategory, page, limit } = req.query;
 
     const filters: any = {};
     if (category_id) filters.category_id = category_id as string;
@@ -103,11 +103,18 @@ export const getProducts = async (req: Request, res: Response, next: NextFunctio
     if (search) filters.search = search as string;
     if (mainCategory) filters.mainCategory = mainCategory as string;
     if (subCategory) filters.subCategory = subCategory as string;
+    if (page) filters.page = parseInt(page as string);
+    if (limit) filters.limit = parseInt(limit as string);
 
     const products = await ProductService.getAllProducts(filters);
     res.status(200).json({
       success: true,
-      data: { products },
+      data: { 
+        products,
+        page: filters.page || 1,
+        limit: filters.limit || products.length,
+        hasMore: products.length === (filters.limit || products.length)
+      },
     });
   } catch (error: any) {
     next(error);
