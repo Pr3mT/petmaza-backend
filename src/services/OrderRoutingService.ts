@@ -61,28 +61,41 @@ export class OrderRoutingService {
     customerPincode: string,
     customerAddress: any
   ) {
-    // Find Prime Vendor
-    const primeVendor = await User.findOne({
-      role: 'vendor',
-      vendorType: 'PRIME',
-      isApproved: true,
-    });
+    // Fetch products to determine which Prime Vendor owns them
+    const productIds = items.map((item) => item.product_id);
+    const products = await Product.find({ _id: { $in: productIds } });
 
-    if (!primeVendor) {
-      throw new AppError('No Prime Vendor available', 404);
+    // All products in the order should belong to the same Prime Vendor
+    const primeVendorId = products[0]?.primeVendor_id;
+    
+    if (!primeVendorId) {
+      throw new AppError('Prime product has no assigned vendor', 400);
     }
 
-    // Build order items with pricing
-    const orderItems = await this.buildOrderItems(items, primeVendor._id.toString());
+    // Convert to string to ensure we have the ID
+    const vendorIdString = primeVendorId.toString();
+
+    // Verify all products belong to the same vendor
+    const allSameVendor = products.every(
+      (p) => p.primeVendor_id?.toString() === vendorIdString
+    );
+
+    if (!allSameVendor) {
+      throw new AppError('All Prime products in an order must belong to the same vendor', 400);
+    }
+
+    // Build order items with pricing (pass just the ID string)
+    const orderItems = await this.buildOrderItems(items, vendorIdString);
 
     // Calculate totals
     const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
     const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
     const totalProfit = total - totalPurchasePrice;
 
-    // Create order - broadcast to all Prime vendors (first come first serve)
+    // Create order - assign to specific Prime Vendor who owns the product
     const order = await Order.create({
       customer_id,
+      assignedVendorId: vendorIdString,  // Assign to the Prime Vendor who owns the product
       items: orderItems,
       total,
       totalPurchasePrice,
@@ -90,7 +103,6 @@ export class OrderRoutingService {
       status: 'PENDING',
       isPrime: true,
       isSplitShipment: false,
-      // Don't assign to specific vendor - let first vendor accept
       customerPincode,
       customerAddress,
     });

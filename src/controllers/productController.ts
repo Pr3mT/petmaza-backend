@@ -2,17 +2,54 @@ import { Request, Response, NextFunction } from 'express';
 import { ProductService } from '../services/ProductService';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
+import PrimeProduct from '../models/PrimeProduct';
+import VendorDetails from '../models/VendorDetails';
 
 export const createProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const user = req.user;
     
-    // Check permissions: Admin or MY_SHOP vendor
-    if (user.role !== 'admin' && user.vendorType !== 'MY_SHOP') {
-      return next(new AppError('Only Admin and MY_SHOP vendors can create products', 403));
+    // Check permissions: Admin, MY_SHOP vendor, or PRIME vendor
+    if (user.role !== 'admin' && user.vendorType !== 'MY_SHOP' && user.vendorType !== 'PRIME') {
+      return next(new AppError('Only Admin, MY_SHOP, and PRIME vendors can create products', 403));
     }
     
-    const product = await ProductService.createProduct(req.body);
+    // For PRIME vendors, auto-set isPrime and primeVendor_id
+    let productData = { ...req.body };
+    if (user.vendorType === 'PRIME') {
+      productData.isPrime = true;
+      productData.primeVendor_id = user._id;
+    }
+    
+    const product = await ProductService.createProduct(productData);
+    
+    // If PRIME vendor created the product, auto-create PrimeProduct listing
+    if (user.vendorType === 'PRIME') {
+      // Create initial PrimeProduct listing for their own product
+      await PrimeProduct.create({
+        vendor_id: user._id,
+        product_id: product._id,
+        vendorMRP: product.mrp || (product.variants && product.variants.length > 0 ? product.variants[0].mrp : 0),
+        vendorPrice: product.sellingPrice || (product.variants && product.variants.length > 0 ? product.variants[0].sellingPrice : 0),
+        stock: product.initialStock || 0,
+        minOrderQuantity: 1,
+        maxOrderQuantity: 100,
+        deliveryTime: '3-5 business days',
+        isActive: true,
+        isAvailable: true,
+        // Use first variant if product has variants
+        variant_id: product.hasVariants && product.variants && product.variants.length > 0 
+          ? product.variants[0]._id 
+          : undefined,
+        selectedVariant: product.hasVariants && product.variants && product.variants.length > 0
+          ? {
+              weight: product.variants[0].weight,
+              unit: product.variants[0].unit,
+              displayWeight: product.variants[0].displayWeight,
+            }
+          : undefined,
+      });
+    }
     
     // If MY_SHOP vendor created the product, auto-create VendorProductPricing entry
     if (user.vendorType === 'MY_SHOP') {
@@ -194,6 +231,152 @@ export const deleteProduct = async (req: AuthRequest, res: Response, next: NextF
       message: 'Product deleted successfully',
       data: { product },
     });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Get Prime Listings for a Product
+ * Returns all prime vendor listings for a specific product
+ */
+export const getPrimeListingsForProduct = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { productId } = req.params;
+    const { variantId } = req.query;
+
+    // Build query
+    const query: any = { 
+      product_id: productId, 
+      isActive: true, 
+      isAvailable: true 
+    };
+
+    if (variantId) {
+      query.variant_id = variantId;
+    }
+
+    // Get prime listings with vendor details
+    const primeListings = await PrimeProduct.find(query)
+      .populate('product_id', 'name images category subcategory')
+      .populate({
+        path: 'vendor_id',
+        select: 'name shopName email phone',
+      })
+      .sort({ vendorPrice: 1 }); // Sort by price ascending
+
+    // Get vendor details for each listing
+    const listingsWithVendorDetails = await Promise.all(
+      primeListings.map(async (listing) => {
+        const vendorDetails = await VendorDetails.findOne({ 
+          vendor_id: listing.vendor_id 
+        }).select('rating totalOrders averageDeliveryTime returnPolicy shopName');
+
+        return {
+          ...listing.toObject(),
+          vendorDetails,
+        };
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      data: listingsWithVendorDetails,
+      count: listingsWithVendorDetails.length,
+    });
+
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Get Prime Products by Category
+ * Browse all prime products in a category with vendor information
+ */
+export const getPrimeProductsByCategory = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { category, subcategory } = req.query;
+    const { 
+      page = 1, 
+      limit = 20,
+      minPrice,
+      maxPrice,
+      sortBy = 'vendorPrice',
+      sortOrder = 'asc',
+    } = req.query;
+
+    if (!category) {
+      return next(new AppError('Category is required', 400));
+    }
+
+    // Build product filter
+    const productFilter: any = { category };
+    if (subcategory) {
+      productFilter.subcategory = subcategory;
+    }
+
+    // Find products matching category
+    const products = await ProductService.getProducts({ 
+      filter: productFilter 
+    });
+
+    const productIds = products.map((p: any) => p._id);
+
+    // Build prime product query
+    const primeQuery: any = {
+      product_id: { $in: productIds },
+      isActive: true,
+      isAvailable: true,
+    };
+
+    if (minPrice) primeQuery.vendorPrice = { $gte: Number(minPrice) };
+    if (maxPrice) {
+      primeQuery.vendorPrice = primeQuery.vendorPrice 
+        ? { ...primeQuery.vendorPrice, $lte: Number(maxPrice) }
+        : { $lte: Number(maxPrice) };
+    }
+
+    // Pagination
+    const skip = (Number(page) - 1) * Number(limit);
+    const sortOptions: any = {};
+    sortOptions[sortBy as string] = sortOrder === 'asc' ? 1 : -1;
+
+    // Get prime listings
+    const primeProducts = await PrimeProduct.find(primeQuery)
+      .populate('product_id', 'name images category subcategory')
+      .populate('vendor_id', 'name shopName')
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(Number(limit));
+
+    const total = await PrimeProduct.countDocuments(primeQuery);
+
+    // Get vendor details for each listing
+    const productsWithVendorDetails = await Promise.all(
+      primeProducts.map(async (listing) => {
+        const vendorDetails = await VendorDetails.findOne({ 
+          vendor_id: listing.vendor_id 
+        }).select('rating totalOrders averageDeliveryTime shopName');
+
+        return {
+          ...listing.toObject(),
+          vendorDetails,
+        };
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      data: productsWithVendorDetails,
+      pagination: {
+        currentPage: Number(page),
+        totalPages: Math.ceil(total / Number(limit)),
+        totalItems: total,
+        itemsPerPage: Number(limit),
+      },
+    });
+
   } catch (error: any) {
     next(error);
   }

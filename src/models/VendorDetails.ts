@@ -76,6 +76,51 @@ const vendorDetailsSchema = new Schema<IVendorDetails>(
       gstNumber: String,
       billingAddress: String,
     },
+    // Prime Vendor specific fields
+    businessType: {
+      type: String,
+      enum: ['MANUFACTURER', 'WHOLESALER', 'DISTRIBUTOR', 'RETAILER'],
+    },
+    yearsInBusiness: {
+      type: Number,
+      default: 0,
+    },
+    averageDeliveryTime: {
+      type: String,
+      default: '2-5 days',
+    },
+    returnPolicy: {
+      type: String,
+      default: '7 days return policy',
+    },
+    // Vendor Stats
+    totalOrders: {
+      type: Number,
+      default: 0,
+    },
+    completedOrders: {
+      type: Number,
+      default: 0,
+    },
+    rating: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5,
+    },
+    // Prime Vendor Stats
+    totalPrimeProducts: {
+      type: Number,
+      default: 0,
+    },
+    activePrimeProducts: {
+      type: Number,
+      default: 0,
+    },
+    totalPrimeSales: {
+      type: Number,
+      default: 0,
+    },
     isApproved: {
       type: Boolean,
       default: false,

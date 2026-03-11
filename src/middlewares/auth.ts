@@ -84,6 +84,19 @@ export const checkMyShopVendor = (req: AuthRequest, res: Response, next: NextFun
   return next(new AppError('Access denied. Insufficient permissions', 403));
 };
 
+// Check for PRIME vendor type
+export const checkPrimeVendor = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return next(new AppError('Not authorized', 401));
+  }
+
+  if (req.user.role === 'admin' || (req.user.role === 'vendor' && req.user.vendorType === 'PRIME')) {
+    return next();
+  }
+
+  return next(new AppError('Access denied. Only Prime vendors can access this resource', 403));
+};
+
 // Alias for verifyToken
 export const authenticate = verifyToken;
 export const protect = verifyToken; // Common alias

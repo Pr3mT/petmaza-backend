@@ -59,8 +59,37 @@ export interface IProduct extends Document {
   updatedAt: Date;
 }
 
+// Prime Product - Vendor's listing of a product at their own price
+export interface IPrimeProduct extends Document {
+  vendor_id: Types.ObjectId | string;
+  product_id: Types.ObjectId | string;
+  vendorPrice: number;
+  vendorMRP: number;
+  discount: number;
+  stock: number;
+  minOrderQuantity: number;
+  maxOrderQuantity: number;
+  isAvailable: boolean;
+  isActive: boolean;
+  deliveryTime: string;
+  deliveryNotes?: string;
+  vendorDescription?: string;
+  vendorImages: string[];
+  selectedVariant?: {
+    weight: number;
+    unit: string;
+    displayWeight: string;
+  };
+  views: number;
+  ordersCount: number;
+  soldQuantity: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface IOrderItem {
   product_id: Types.ObjectId | string;
+  primeProduct_id?: Types.ObjectId | string;
   vendor_id?: Types.ObjectId | string;
   quantity: number;
   sellingPrice: number; // Global selling price
@@ -122,7 +151,8 @@ export interface IOrder extends Document {
   };
   deliveryCost?: number; // Extra delivery cost for split shipments
   shippingCharges?: number; // Shipping charges applied to order
-  platformFee?: number; // Platform fee applied to order
+  platformFee?: number; // Platform fee applied to order (₹10 for prime orders)
+  grandTotal?: number; // Total including platform fee and shipping (total + platformFee + shippingCharges)
   subtotalBeforeCharges?: number; // Subtotal before shipping and platform fees
   rejectionReason?: string; // Reason for rejection by warehouse fulfiller
   refundReason?: string; // Reason for refund by MY_SHOP vendor
@@ -182,6 +212,18 @@ export interface IVendorDetails extends Document {
     gstNumber?: string;
     billingAddress?: string;
   };
+  // Prime Vendor specific fields
+  businessType?: 'MANUFACTURER' | 'WHOLESALER' | 'DISTRIBUTOR' | 'RETAILER';
+  yearsInBusiness?: number;
+  averageDeliveryTime?: string;
+  returnPolicy?: string;
+  totalOrders?: number;
+  completedOrders?: number;
+  rating?: number;
+  // Prime Vendor Stats
+  totalPrimeProducts?: number;
+  activePrimeProducts?: number;
+  totalPrimeSales?: number;
   isApproved: boolean;
   approvedBy?: Types.ObjectId | string; // Admin user ID
   approvedAt?: Date;

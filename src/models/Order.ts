@@ -8,6 +8,10 @@ const orderItemSchema = new Schema(
       ref: 'Product',
       required: true,
     },
+    primeProduct_id: {
+      type: Schema.Types.ObjectId,
+      ref: 'PrimeProduct',
+    },
     vendor_id: {
       type: Schema.Types.ObjectId,
       ref: 'User',
@@ -186,6 +190,11 @@ const orderSchema = new Schema<IOrder>(
       default: 0,
       min: 0,
     },
+    grandTotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     subtotalBeforeCharges: {
       type: Number,
       default: 0,
@@ -222,6 +231,8 @@ orderSchema.index({ assignedVendorId: 1 });
 orderSchema.index({ assignedVendors: 1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ isPrime: 1 });
+orderSchema.index({ isPrime: 1, status: 1 });
+orderSchema.index({ assignedVendorId: 1, isPrime: 1, status: 1 });
 orderSchema.index({ customerPincode: 1 });
 orderSchema.index({ acceptanceDeadline: 1 });
 orderSchema.index({ parentOrderId: 1 });

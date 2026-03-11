@@ -93,13 +93,16 @@ export class OrderAcceptanceService {
     // Only PRIME vendors see pending Prime orders
     console.log(`[getPendingOrders] PRIME vendor - showing pending Prime orders`);
 
-    // Get all PENDING Prime orders that are not yet assigned
+    // Get all PENDING Prime orders that are either:
+    // 1. Not yet assigned (broadcast orders), OR
+    // 2. Assigned to this specific vendor
     const allPendingOrders = await Order.find({
       status: 'PENDING',
       isPrime: true,
       $or: [
         { assignedVendorId: { $exists: false } },
-        { assignedVendorId: null }
+        { assignedVendorId: null },
+        { assignedVendorId: vendorObjectId }  // Include orders assigned to this vendor
       ]
     })
       .populate('customer_id', 'name email phone')
@@ -116,12 +119,20 @@ export class OrderAcceptanceService {
 
     console.log(`[getPendingOrders] Found ${allPendingOrders.length} pending Prime orders`);
     
-    // Filter orders based on vendor's brand assignments
+    // Filter orders based on assignment and vendor details
     const eligibleOrders = [];
     
     for (const order of allPendingOrders) {
       console.log(`[getPendingOrders] Checking order ${order._id}`);
       
+      // If order is directly assigned to this vendor, skip all checks - it's theirs
+      if (order.assignedVendorId && order.assignedVendorId.toString() === vendorObjectId.toString()) {
+        console.log(`[getPendingOrders] Order ${order._id} is directly assigned to this Prime vendor - adding to eligible orders`);
+        eligibleOrders.push(order);
+        continue; // Skip brand and availability checks
+      }
+      
+      // For broadcast orders (not directly assigned), check brand assignments
       // For PRIME vendors: Check if all products belong to brands they handle
       if (vendorDetails.brandsHandled && vendorDetails.brandsHandled.length > 0) {
         const vendorBrandIds = vendorDetails.brandsHandled.map(b => 
@@ -164,69 +175,10 @@ export class OrderAcceptanceService {
         console.log(`[getPendingOrders] Order ${order._id} - Prime vendor has no brands configured, showing order`);
       }
 
-      // Check if vendor has all products available (active)
-      const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
-      let hasAllProducts = true;
-      
-      for (const item of order.items) {
-        const pricing = await VendorProductPricing.findOne({
-          vendor_id: vendorObjectId,
-          product_id: item.product_id,
-          isActive: true,
-        });
-        
-        if (!pricing) {
-          console.log(`[getPendingOrders] Order ${order._id} skipped - vendor doesn't have product ${item.product_id} available`);
-          hasAllProducts = false;
-          break;
-        }
-      }
-
-      if (!hasAllProducts) {
-        continue;
-      }
-      
-      console.log(`[getPendingOrders] Order ${order._id} is eligible for vendor ${vendor_id}`);
-
-      // Calculate purchase price vendor will receive (earnings)
-      let totalPurchasePrice = 0;
-      const itemsWithPricing = [];
-      
-      for (const item of order.items) {
-        const pricing = await VendorProductPricing.findOne({
-          vendor_id: vendorObjectId,
-          product_id: item.product_id,
-        });
-        
-        if (pricing) {
-          const itemPurchasePrice = pricing.purchasePrice * item.quantity;
-          totalPurchasePrice += itemPurchasePrice;
-          
-          // Get product name from populated product_id
-          const product = item.product_id as any; // Type assertion for populated product
-          const productName = (product && typeof product === 'object' && product.name) ? product.name : 'N/A';
-          
-          // Add product details with pricing
-          itemsWithPricing.push({
-            product_id: (product && typeof product === 'object' && product._id) ? product._id : item.product_id,
-            product_name: productName,
-            quantity: item.quantity,
-            sellingPrice: item.sellingPrice || 0,
-            purchasePrice: pricing.purchasePrice,
-            purchaseSubtotal: itemPurchasePrice,
-          });
-        }
-      }
-
-      // Since we used .lean(), order is already a plain object
-      eligibleOrders.push({
-        ...order,
-        earnings: totalPurchasePrice, // Total purchase price vendor will receive
-        itemsWithPricing: itemsWithPricing, // Product-wise pricing details
-      });
+      eligibleOrders.push(order);
     }
 
-    console.log(`[getPendingOrders] Returning ${eligibleOrders.length} eligible orders for vendor ${vendor_id}`);
+    console.log(`[getPendingOrders] Returning ${eligibleOrders.length} eligible Prime orders after filtering`);
     return eligibleOrders;
   }
 

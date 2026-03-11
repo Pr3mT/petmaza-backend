@@ -70,7 +70,8 @@ const productSchema = new Schema<IProduct>(
     sellingPercentage: {
       type: Number,
       required: function() {
-        return !this.hasVariants;
+        // Not required for Prime products or products with variants
+        return !this.hasVariants && !this.isPrime;
       },
       min: 0,
       max: 100,
@@ -146,7 +147,20 @@ productSchema.pre('save', function (next) {
   // Handle single product (no variants)
   const mrp = this.get('mrp') as number;
   
-  if (mrp && !this.hasVariants && (this.isModified('mrp') || this.isModified('sellingPercentage'))) {
+  // For Prime products: calculate sellingPercentage from mrp and sellingPrice
+  if (this.isPrime && mrp && this.get('sellingPrice') && !this.hasVariants) {
+    const sellingPrice = this.get('sellingPrice') as number;
+    if (mrp > 0) {
+      const sellingPercentage = (sellingPrice / mrp) * 100;
+      this.set('sellingPercentage', Math.round(sellingPercentage * 100) / 100);
+      
+      // Auto-calculate discount percentage
+      const discount = ((mrp - sellingPrice) / mrp) * 100;
+      this.set('discount', Math.round(discount * 100) / 100);
+    }
+  }
+  // For non-Prime products: calculate sellingPrice from mrp and sellingPercentage
+  else if (mrp && !this.hasVariants && (this.isModified('mrp') || this.isModified('sellingPercentage'))) {
     const sellingPercentage = this.get('sellingPercentage') as number;
     const sellingPrice = mrp * (sellingPercentage / 100);
     this.set('sellingPrice', sellingPrice);

@@ -4,6 +4,8 @@ import { OrderAcceptanceService } from '../services/OrderAcceptanceService';
 import { ShippingService } from '../services/ShippingService';
 import Order from '../models/Order';
 import User from '../models/User';
+import PrimeProduct from '../models/PrimeProduct';
+import Product from '../models/Product';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
@@ -44,8 +46,17 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     // Calculate combined subtotal across all orders
     const combinedSubtotal = orders.reduce((sum, order) => sum + order.total, 0);
 
+    // Check if order contains Prime products
+    const hasPrimeProducts = orders.some(order => order.isPrime);
+
     // Calculate shipping charges and platform fee based on combined total
-    const charges = await ShippingService.calculateCharges(combinedSubtotal);
+    let charges = await ShippingService.calculateCharges(combinedSubtotal);
+    
+    // For Prime products, always apply ₹10 platform fee
+    if (hasPrimeProducts) {
+      charges.platformFee = 10;
+      charges.total = combinedSubtotal + charges.shippingCharges + charges.platformFee;
+    }
     
     // Distribute charges EQUALLY across all orders (50-50 split for 2 orders, etc.)
     // NOT proportionally - each fulfiller gets equal share of fees
@@ -559,6 +570,159 @@ export const adminAssignOrderToVendor = async (
     });
   } catch (error: any) {
     console.error('[adminAssignOrderToVendor] Error:', error);
+    next(error);
+  }
+};
+
+/**
+ * Create Prime Order
+ * Creates a direct order for a prime product listing
+ */
+export const createPrimeOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { primeProductId, quantity, customerPincode, customerAddress } = req.body;
+
+    // Validation
+    if (!primeProductId || !quantity) {
+      return next(new AppError('Prime product ID and quantity are required', 400));
+    }
+
+    if (!customerPincode || !customerAddress) {
+      return next(new AppError('Pincode and address are required', 400));
+    }
+
+    // Get prime product listing
+    const primeListing = await PrimeProduct.findById(primeProductId)
+      .populate('product_id')
+      .populate('vendor_id', 'name email shopName');
+
+    if (!primeListing) {
+      return next(new AppError('Prime product listing not found', 404));
+    }
+
+    if (!primeListing.isActive || !primeListing.isAvailable) {
+      return next(new AppError('This product is not available', 400));
+    }
+
+    // Check stock
+    if (quantity > primeListing.stock) {
+      return next(new AppError(`Only ${primeListing.stock} items available in stock`, 400));
+    }
+
+    // Check min/max order quantity
+    if (quantity < primeListing.minOrderQuantity) {
+      return next(new AppError(`Minimum order quantity is ${primeListing.minOrderQuantity}`, 400));
+    }
+
+    if (quantity > primeListing.maxOrderQuantity) {
+      return next(new AppError(`Maximum order quantity is ${primeListing.maxOrderQuantity}`, 400));
+    }
+
+    // Check if vendor serves this pincode
+    const vendor = await User.findById(primeListing.vendor_id);
+    if (!vendor) {
+      return next(new AppError('Vendor not found', 404));
+    }
+
+    if (!vendor.pincodesServed || !vendor.pincodesServed.includes(customerPincode)) {
+      return next(new AppError('Vendor does not deliver to this pincode', 400));
+    }
+
+    // Calculate order total
+    const itemTotal = primeListing.vendorPrice * quantity;
+    const platformFee = 10; // Fixed ₹10 for prime orders
+    const shippingCharges = 0; // Free shipping for prime
+    const grandTotal = itemTotal + platformFee + shippingCharges;
+
+    // Create order
+    const order = await Order.create({
+      customer_id: req.user._id,
+      items: [{
+        product_id: primeListing.product_id,
+        primeProduct_id: primeListing._id,
+        originalPrice: primeListing.vendorMRP,
+        quantity: quantity,
+        priceAtPurchase: primeListing.vendorPrice,
+        subtotal: itemTotal,
+        fulfillmentType: 'PRIME_VENDOR',
+        variant_id: null,
+      }],
+      total: itemTotal,
+      platformFee: platformFee,
+      shippingCharges: shippingCharges,
+      grandTotal: grandTotal,
+      assignedVendorId: primeListing.vendor_id,
+      customerPincode: customerPincode,
+      customerAddress: customerAddress,
+      status: 'ASSIGNED', // Direct to vendor
+      isPrime: true,
+      isSplitShipment: false,
+      orderType: 'PRIME',
+    });
+
+    // Update prime product stock and analytics
+    primeListing.stock -= quantity;
+    primeListing.ordersCount += 1;
+    primeListing.soldQuantity += quantity;
+    await primeListing.save();
+
+    // Populate order for response
+    await order.populate('items.product_id');
+
+    // Queue order confirmation email to customer (non-blocking)
+    logger.info('[createPrimeOrder] Queueing prime order confirmation email to:', req.user.email);
+    try {
+      const jobId = queueOrderConfirmationEmail(
+        req.user.email,
+        req.user.name,
+        `#${order._id.toString().slice(-8)}`,
+        {
+          totalAmount: grandTotal,
+          items: order.items,
+          customerAddress: order.customerAddress,
+          shippingCharges: shippingCharges,
+          platformFee: platformFee,
+          subtotal: itemTotal,
+          isSplitShipment: false,
+          isPrimeOrder: true,
+          vendorName: (primeListing.vendor_id as any).shopName || (primeListing.vendor_id as any).name,
+        }
+      );
+      logger.info(`[createPrimeOrder] ✅ Order confirmation email queued (Job: ${jobId})`);
+    } catch (emailError: any) {
+      logger.error('[createPrimeOrder] ❌ Failed to queue order confirmation email:', emailError.message);
+    }
+
+    // Queue vendor notification email (non-blocking)
+    try {
+      const vendorEmail = (primeListing.vendor_id as any).email;
+      const jobId = queueVendorOrderNotificationEmail(
+        vendorEmail,
+        (primeListing.vendor_id as any).shopName || (primeListing.vendor_id as any).name,
+        order._id.toString(),
+        {
+          items: order.items,
+          totalAmount: itemTotal,
+          customerAddress: order.customerAddress,
+          customerPincode: order.customerPincode,
+        }
+      );
+      logger.info(`[createPrimeOrder] ✅ Vendor notification email queued (Job: ${jobId})`);
+    } catch (emailError: any) {
+      logger.error('[createPrimeOrder] ❌ Failed to queue vendor notification email:', emailError.message);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Prime order created successfully',
+      data: { 
+        order,
+        isPrimeOrder: true,
+        deliveryTime: primeListing.deliveryTime,
+      },
+    });
+
+  } catch (error: any) {
     next(error);
   }
 };

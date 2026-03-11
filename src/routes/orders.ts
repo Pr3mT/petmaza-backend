@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   createOrder,
+  createPrimeOrder,
   getCustomerOrders,
   getOrderById,
   updateOrder,
@@ -19,6 +20,7 @@ const router = express.Router();
 
 // Customer routes
 router.post('/', verifyToken, checkRole('customer'), createOrder);
+router.post('/prime', verifyToken, checkRole('customer'), createPrimeOrder);
 router.get('/my', verifyToken, checkRole('customer'), getCustomerOrders);
 router.put('/:id', verifyToken, updateOrder);
 router.get('/:id', verifyToken, getOrderById);

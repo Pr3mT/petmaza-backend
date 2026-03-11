@@ -254,3 +254,101 @@ export const sendVerificationSuccessController = async (req: Request, res: Respo
   }
 };
 
+/**
+ * Register Prime Vendor
+ * Special registration endpoint for prime vendors with additional business details
+ */
+export const registerPrimeVendor = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const {
+      // User Details
+      name, email, password, phone,
+      
+      // Business Details
+      shopName, panCard, aadharCard,
+      businessType, yearsInBusiness,
+      
+      // Bank Details
+      bankDetails,
+      
+      // Billing Details
+      billingDetails,
+      
+      // Address
+      pickupAddress,
+      serviceablePincodes,
+      
+      // Optional
+      brandsHandled,
+      averageDeliveryTime,
+      returnPolicy,
+    } = req.body;
+
+    // Validation
+    if (!name || !email || !password || !phone) {
+      return next(new AppError('Please provide all required user details', 400));
+    }
+
+    if (!shopName || !panCard || !aadharCard || !businessType) {
+      return next(new AppError('Please provide all required business details', 400));
+    }
+
+    if (!bankDetails || !billingDetails || !pickupAddress) {
+      return next(new AppError('Please provide bank, billing, and pickup address details', 400));
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return next(new AppError('User already exists with this email', 400));
+    }
+
+    // Create User
+    const user = await User.create({
+      name,
+      email,
+      password,
+      phone,
+      role: 'vendor',
+      vendorType: 'PRIME',
+      address: pickupAddress,
+      pincodesServed: serviceablePincodes || [],
+      isApproved: false, // Pending admin approval
+    });
+
+    // Create Vendor Details
+    await VendorDetails.create({
+      vendor_id: user._id,
+      vendorType: 'PRIME',
+      shopName,
+      panCard,
+      aadharCard,
+      bankDetails,
+      billingDetails,
+      pickupAddress,
+      serviceablePincodes: serviceablePincodes || [],
+      brandsHandled: brandsHandled || [],
+      businessType,
+      yearsInBusiness: yearsInBusiness || 0,
+      averageDeliveryTime: averageDeliveryTime || '2-5 days',
+      returnPolicy: returnPolicy || '7 days return policy',
+      isApproved: false,
+    });
+
+    // TODO: Send welcome email + pending approval notification
+
+    res.status(201).json({
+      success: true,
+      message: 'Prime vendor registration successful. Your application is pending admin approval.',
+      data: {
+        userId: user._id,
+        email: user.email,
+        status: 'pending_approval',
+      },
+    });
+
+  } catch (error: any) {
+    next(error);
+  }
+};
+
