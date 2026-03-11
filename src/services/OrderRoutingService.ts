@@ -100,8 +100,8 @@ export class OrderRoutingService {
 
   /**
    * Route normal order to WAREHOUSE_FULFILLER based on assigned subcategories
-   * NEW: Split orders across multiple fulfillers based on product subcategories
-   * Each fulfiller receives ONLY their assigned products
+   * NEW: Broadcast to ALL fulfillers handling each subcategory (first-come-first-serve)
+   * Supports multiple fulfillers per subcategory for competitive acceptance
    */
   private static async routeNormalOrderToMyShop(
     customer_id: string,
@@ -135,11 +135,12 @@ export class OrderRoutingService {
         vendor_id: { $in: fulfillerIds },
       }).lean();
 
-      // Map: fulfiller_id -> items they should handle
-      const fulfillerItemsMap = new Map();
+      // NEW: Group items by SUBCATEGORY (not by individual fulfiller)
+      // Multiple fulfillers can compete for same subcategory
+      const subcategoryItemsMap = new Map(); // subcategory -> { items, eligibleFulfillers }
       const unassignedItems = [];
 
-      // Assign each item to the correct fulfiller based on product subcategory
+      // First, group items by subcategory and find ALL eligible fulfillers for each
       for (const item of items) {
         const product = productMap.get(item.product_id);
         if (!product || !product.subCategory) {
@@ -148,90 +149,104 @@ export class OrderRoutingService {
           continue;
         }
 
-        // Find fulfiller who handles this product's subcategory
-        let assignedFulfiller = null;
+        const subcategory = product.subCategory;
+
+        // Find ALL fulfillers who can handle this subcategory
+        const eligibleFulfillers = [];
         for (const fulfiller of warehouseFulfillers) {
           const details = vendorDetailsArray.find(
             vd => vd.vendor_id.toString() === fulfiller._id.toString()
           );
 
           if (details && details.assignedSubcategories && 
-              details.assignedSubcategories.includes(product.subCategory)) {
-            assignedFulfiller = fulfiller;
-            break;
+              details.assignedSubcategories.includes(subcategory)) {
+            eligibleFulfillers.push(fulfiller);
           }
         }
 
-        if (assignedFulfiller) {
-          const fulfillerId = assignedFulfiller._id.toString();
-          if (!fulfillerItemsMap.has(fulfillerId)) {
-            fulfillerItemsMap.set(fulfillerId, {
-              fulfiller: assignedFulfiller,
-              items: []
+        if (eligibleFulfillers.length > 0) {
+          if (!subcategoryItemsMap.has(subcategory)) {
+            subcategoryItemsMap.set(subcategory, {
+              items: [],
+              eligibleFulfillers: eligibleFulfillers,
             });
           }
-          fulfillerItemsMap.get(fulfillerId).items.push(item);
-          logger.info(`[routeNormalOrderToMyShop] Assigned ${product.name} (${product.subCategory}) to ${assignedFulfiller.name}`);
+          subcategoryItemsMap.get(subcategory).items.push(item);
+          logger.info(`[routeNormalOrderToMyShop] ${product.name} (${subcategory}) → ${eligibleFulfillers.length} eligible fulfiller(s)`);
         } else {
-          logger.warn(`[routeNormalOrderToMyShop] No fulfiller handles ${product.subCategory}, will route to MY_SHOP`);
+          logger.warn(`[routeNormalOrderToMyShop] No fulfiller handles ${subcategory}, will route to MY_SHOP`);
           unassignedItems.push(item);
         }
       }
 
-      // Create separate orders for each fulfiller
+      // NEW: Create broadcast orders per SUBCATEGORY (not per fulfiller)
+      // Multiple fulfillers compete for each order (first-come-first-serve)
       const createdOrders = [];
-      const isSplitShipment = fulfillerItemsMap.size > 1 || (fulfillerItemsMap.size > 0 && unassignedItems.length > 0);
+      const isSplitShipment = subcategoryItemsMap.size > 1 || (subcategoryItemsMap.size > 0 && unassignedItems.length > 0);
 
-      // Create orders for warehouse fulfillers
-      for (const [fulfillerId, { fulfiller, items: fulfillerItems }] of fulfillerItemsMap) {
-        logger.info(`[routeNormalOrderToMyShop] Creating order for ${fulfiller.name} with ${fulfillerItems.length} items`);
+      // Create one order per subcategory group - broadcast to all eligible fulfillers
+      for (const [subcategory, { items: subcategoryItems, eligibleFulfillers }] of subcategoryItemsMap) {
+        logger.info(`[routeNormalOrderToMyShop] Creating broadcast order for ${subcategory} (${eligibleFulfillers.length} eligible fulfillers)`);
 
-        // Build order items with pricing
-        const orderItems = await this.buildOrderItems(fulfillerItems, fulfiller._id.toString());
+        // Build order items with pricing - use first fulfiller for price calculation
+        const orderItems = await this.buildOrderItems(subcategoryItems, eligibleFulfillers[0]._id.toString());
 
         // Calculate totals
         const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
         const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
         const totalProfit = total - totalPurchasePrice;
 
-        // Create order - assigned to this WAREHOUSE_FULFILLER, status PENDING (awaiting acceptance)
+        // Calculate acceptance deadline (5 minutes from now)
+        const acceptanceDeadline = new Date(Date.now() + 5 * 60 * 1000);
+
+        // Create order - NOT assigned to specific fulfiller (competitive acceptance)
         const order = await Order.create({
           customer_id,
           items: orderItems,
           total,
           totalPurchasePrice,
           totalProfit,
-          status: 'PENDING', // Warehouse fulfiller needs to accept/reject
+          status: 'PENDING', // Warehouse fulfiller needs to accept
           isPrime: false,
-          isSplitShipment, // Mark as split if multiple fulfillers or mixed with MY_SHOP
-          assignedVendorId: fulfiller._id, // Assigned to this warehouse fulfiller
+          isSplitShipment,
+          assignedVendorId: null, // NOT assigned yet - first to accept gets it
+          acceptanceDeadline, // Deadline for acceptance
           customerPincode,
           customerAddress,
         });
 
         createdOrders.push(order);
-        logger.info(`[routeNormalOrderToMyShop] ✅ Order ${order._id} created for ${fulfiller.name} (${fulfillerItems.length} items, ₹${total})`);
+        logger.info(`[routeNormalOrderToMyShop] ✅ Broadcast order ${order._id} created for ${subcategory} (${eligibleFulfillers.length} competing fulfillers)`);
 
-        // Queue email notification to this warehouse fulfiller (non-blocking)
+        // Broadcast notification to ALL eligible fulfillers for this subcategory
         try {
           const populatedOrder = await order.populate('customer_id');
           const customer = populatedOrder.customer_id as any;
 
-          const jobId = queueVendorOrderNotificationEmail(
-            fulfiller.email,
-            fulfiller.name || 'Warehouse Fulfiller',
-            `#${order._id.toString().slice(-8)}`,
-            {
-              customerName: customer?.name || 'Customer',
-              totalAmount: order.total,
-              customerAddress: customerAddress,
-              customerPincode: customerPincode,
-              items: orderItems,
+          for (const fulfiller of eligibleFulfillers) {
+            try {
+              const jobId = queueVendorOrderNotificationEmail(
+                fulfiller.email,
+                fulfiller.name || 'Warehouse Fulfiller',
+                `#${order._id.toString().slice(-8)}`,
+                {
+                  customerName: customer?.name || 'Customer',
+                  totalAmount: order.total,
+                  customerAddress: customerAddress,
+                  customerPincode: customerPincode,
+                  items: orderItems,
+                  isCompetitive: true, // Flag to indicate competitive order
+                  competitorCount: eligibleFulfillers.length,
+                  acceptanceDeadline: acceptanceDeadline.toISOString(),
+                }
+              );
+              logger.info(`[routeNormalOrderToMyShop] 📢 Broadcast notification to ${fulfiller.name} (${fulfiller.email}) - Job: ${jobId}`);
+            } catch (emailError: any) {
+              logger.error(`[routeNormalOrderToMyShop] Failed to notify ${fulfiller.email}:`, emailError.message);
             }
-          );
-          logger.info(`[routeNormalOrderToMyShop] Order notification queued for ${fulfiller.email} (Job: ${jobId})`);
+          }
         } catch (emailError: any) {
-          logger.error('[routeNormalOrderToMyShop] Failed to queue warehouse fulfiller notification email:', emailError.message);
+          logger.error('[routeNormalOrderToMyShop] Failed to broadcast order notifications:', emailError.message);
         }
       }
 

@@ -43,9 +43,47 @@ export const getWarehouseFulfillerOrders = async (
     const assignedSubcategories = vendorDetails.assignedSubcategories;
     logger.info(`[getWarehouseFulfillerOrders] Fulfiller ${fulfiller.name} assigned subcategories:`, assignedSubcategories);
 
-    // Fetch orders assigned to this fulfiller
+    // Get all products in assigned subcategories
+    const Product = (await import('../models/Product')).default;
+    const subcategoryProducts = await Product.find({
+      subCategory: { $in: assignedSubcategories },
+    }).select('_id name subCategory');
+
+    const subcategoryProductIds = subcategoryProducts.map(p => p._id);
+
+    logger.info(`[getWarehouseFulfillerOrders] Found ${subcategoryProductIds.length} products in assigned subcategories`);
+    logger.info(`[getWarehouseFulfillerOrders] Sample products:`, subcategoryProducts.slice(0, 3).map(p => `${p.name} (${p.subCategory})`));
+
+    // Debug: Check all pending broadcast orders
+    const allBroadcastOrders = await Order.find({
+      assignedVendorId: null,
+      status: 'PENDING',
+    }).select('_id items.product_id total').lean();
+    
+    logger.info(`[getWarehouseFulfillerOrders] Total broadcast orders in DB: ${allBroadcastOrders.length}`);
+    if (allBroadcastOrders.length > 0) {
+      logger.info(`[getWarehouseFulfillerOrders] Sample broadcast order products:`, 
+        allBroadcastOrders.slice(0, 2).map(o => ({
+          orderId: o._id,
+          productIds: o.items.map((i: any) => i.product_id)
+        }))
+      );
+    }
+
+    // Fetch orders:
+    // 1. Orders already assigned to this fulfiller (assignedVendorId = fulfiller._id)
+    // 2. Broadcast orders (assignedVendorId = null) with products from assigned subcategories
     const orders = await Order.find({
-      assignedVendorId: fulfiller._id,
+      $or: [
+        // Orders already assigned to this fulfiller
+        { assignedVendorId: fulfiller._id },
+        // Broadcast orders (competitive) with products from assigned subcategories
+        {
+          assignedVendorId: null,
+          status: 'PENDING',
+          'items.product_id': { $in: subcategoryProductIds },
+        },
+      ],
       status: {
         $in: [
           'PENDING',
@@ -61,11 +99,22 @@ export const getWarehouseFulfillerOrders = async (
       .populate('items.product_id', 'name images subCategory mainCategory')
       .sort({ createdAt: -1 });
 
-    logger.info(`[getWarehouseFulfillerOrders] Found ${orders.length} orders for ${fulfiller.name}`);
+    logger.info(`[getWarehouseFulfillerOrders] Query returned ${orders.length} orders for ${fulfiller.name}`);
+
+    // Add metadata to identify broadcast orders
+    const ordersWithMetadata = orders.map(order => {
+      const orderObj = order.toObject();
+      return {
+        ...orderObj,
+        isBroadcast: !orderObj.assignedVendorId,
+        isCompetitive: !orderObj.assignedVendorId && orderObj.status === 'PENDING',
+        acceptanceDeadline: orderObj.acceptanceDeadline,
+      };
+    });
 
     res.status(200).json({
       success: true,
-      data: { orders },
+      data: { orders: ordersWithMetadata },
     });
   } catch (error: any) {
     logger.error('[getWarehouseFulfillerOrders] Error:', error);

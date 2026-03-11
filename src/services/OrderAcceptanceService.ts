@@ -42,6 +42,54 @@ export class OrderAcceptanceService {
       return [];
     }
 
+    // WAREHOUSE_FULFILLER vendors see competitive broadcast orders
+    if (vendorDetails.vendorType === 'WAREHOUSE_FULFILLER') {
+      console.log(`[getPendingOrders] WAREHOUSE_FULFILLER vendor - showing competitive broadcast orders`);
+      
+      // Get assigned subcategories for this fulfiller
+      const assignedSubcategories = vendorDetails.assignedSubcategories || [];
+      if (assignedSubcategories.length === 0) {
+        console.log(`[getPendingOrders] WAREHOUSE_FULFILLER has no assigned subcategories`);
+        return [];
+      }
+
+      console.log(`[getPendingOrders] Assigned subcategories:`, assignedSubcategories);
+
+      // Find all products in these subcategories
+      const Product = (await import('../models/Product')).default;
+      const subcategoryProductIds = await Product.find({
+        subCategory: { $in: assignedSubcategories },
+      }).distinct('_id');
+
+      console.log(`[getPendingOrders] Found ${subcategoryProductIds.length} products in assigned subcategories`);
+
+      // Get PENDING broadcast orders (assignedVendorId: null) with products from these subcategories
+      const broadcastOrders = await Order.find({
+        status: 'PENDING',
+        assignedVendorId: null, // Broadcast orders only
+        'items.product_id': { $in: subcategoryProductIds },
+      })
+        .populate('customer_id', 'name email phone')
+        .populate({
+          path: 'items.product_id',
+          select: 'name images mrp sellingPrice subCategory',
+        })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      console.log(`[getPendingOrders] Found ${broadcastOrders.length} broadcast orders for WAREHOUSE_FULFILLER`);
+
+      // Add acceptance deadline and competitor count info
+      const eligibleOrders = broadcastOrders.map(order => ({
+        ...order,
+        acceptanceDeadline: order.acceptanceDeadline,
+        isCompetitive: true,
+      }));
+
+      console.log(`[getPendingOrders] Returning ${eligibleOrders.length} eligible broadcast orders`);
+      return eligibleOrders;
+    }
+
     // Only PRIME vendors see pending Prime orders
     console.log(`[getPendingOrders] PRIME vendor - showing pending Prime orders`);
 
@@ -184,7 +232,7 @@ export class OrderAcceptanceService {
 
   // Accept order - first come first serve
   static async acceptOrder(order_id: string, vendor_id: string) {
-    console.log('[OrderAcceptanceService] acceptOrder called for order:', order_id, 'vendor:', vendor_id, '- NO DEADLINE CHECK');
+    console.log('[OrderAcceptanceService] acceptOrder called for order:', order_id, 'vendor:', vendor_id);
     const order = await Order.findById(order_id);
 
     if (!order) {
@@ -199,6 +247,11 @@ export class OrderAcceptanceService {
     // Check if order is already accepted by another vendor
     if (order.assignedVendorId) {
       throw new AppError('Order was already accepted by another vendor', 409);
+    }
+
+    // Check acceptance deadline for competitive orders
+    if (order.acceptanceDeadline && new Date() > order.acceptanceDeadline) {
+      throw new AppError('Acceptance deadline has expired', 400);
     }
 
     // Verify vendor can fulfill this order
@@ -274,10 +327,15 @@ export class OrderAcceptanceService {
 
     // Use atomic update to ensure only first vendor can accept
     // Accept both PENDING and ASSIGNED orders (ASSIGNED means payment is done but not yet accepted)
+    // For competitive orders, also check that assignedVendorId is still null
     const updatedOrder = await Order.findOneAndUpdate(
       {
         _id: order_id,
         status: { $in: ['PENDING', 'ASSIGNED'] }, // Accept both pending and assigned (paid but not accepted)
+        $or: [
+          { assignedVendorId: null }, // Competitive order - must be unassigned
+          { assignedVendorId: { $exists: false } }, // Legacy order without assignedVendorId field
+        ],
       },
       {
         $set: {
@@ -315,7 +373,73 @@ export class OrderAcceptanceService {
     }
 
     // TODO: Trigger courier pickup notification
-    // TODO: Notify other vendors that order is no longer available
+    // Notify other vendors that order is no longer available
+    try {
+      // Get accepting vendor info
+      const User = (await import('../models/User')).default;
+      const acceptingVendor = await User.findById(vendor_id);
+      const acceptingVendorName = acceptingVendor?.name || 'Another vendor';
+
+      // Find all other eligible fulfillers who were competing for this order
+      const VendorDetails = (await import('../models/VendorDetails')).default;
+      
+      // Get all subcategories from the order items
+      const Product = (await import('../models/Product')).default;
+      const subcategories = new Set<string>();
+      for (const item of updatedOrder.items) {
+        const product = await Product.findById(item.product_id);
+        if (product && product.subCategory) {
+          subcategories.add(product.subCategory);
+        }
+      }
+
+      // Find all WAREHOUSE_FULFILLERs who can handle these subcategories
+      const eligibleFulfillers = await VendorDetails.find({
+        vendorType: 'WAREHOUSE_FULFILLER',
+        isApproved: true,
+        assignedSubcategories: { $in: Array.from(subcategories) },
+        vendor_id: { $ne: vendor_id }, // Exclude the vendor who accepted
+      }).populate('vendor_id', 'name email');
+
+      console.log(`[OrderAcceptanceService] Found ${eligibleFulfillers.length} other fulfillers to notify about order ${order_id}`);
+
+      // Notify losers via WebSocket (if available)
+      try {
+        const io = (await import('../server')).io;
+        for (const fulfiller of eligibleFulfillers) {
+          const loserId = fulfiller.vendor_id.toString();
+          io.to(`vendor:${loserId}`).emit('order:taken', {
+            orderId: updatedOrder._id.toString(),
+            winnerName: acceptingVendorName,
+            message: `Order was accepted by ${acceptingVendorName}`,
+          });
+          console.log(`📢 WebSocket notification sent to loser vendor ${loserId}`);
+        }
+      } catch (wsError) {
+        console.error('[OrderAcceptanceService] WebSocket notification failed:', wsError);
+        // Continue even if WebSocket fails
+      }
+
+      // Send email notifications to losers (optional - using existing email queue)
+      const { queueOrderTakenNotificationEmail } = await import('./emailer');
+      for (const fulfiller of eligibleFulfillers) {
+        try {
+          await queueOrderTakenNotificationEmail({
+            vendorEmail: (fulfiller.vendor_id as any).email,
+            vendorName: (fulfiller.vendor_id as any).name,
+            orderId: updatedOrder._id.toString(),
+            winnerName: acceptingVendorName,
+          });
+          console.log(`📧 Order taken email queued for ${(fulfiller.vendor_id as any).email}`);
+        } catch (emailError) {
+          console.error(`Failed to queue email for ${(fulfiller.vendor_id as any).email}:`, emailError);
+          // Continue even if email fails
+        }
+      }
+    } catch (notifyError) {
+      console.error('[OrderAcceptanceService] Failed to notify other vendors:', notifyError);
+      // Don't fail the acceptance if notifications fail - order is already accepted
+    }
 
     return updatedOrder;
   }

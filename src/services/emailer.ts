@@ -1352,3 +1352,72 @@ export function queueOrderAcceptedEmail(
     await sendOrderAcceptedEmail(customerEmail, customerName, orderId, vendorName, estimatedDelivery);
   });
 }
+
+/**
+ * Send order taken notification to competing vendors (when another vendor accepts first)
+ */
+export async function sendOrderTakenNotificationEmail(
+  vendorEmail: string,
+  vendorName: string,
+  orderId: string,
+  winnerName: string
+) {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
+        <h1 style="margin: 0; color: #333;">🐾 PETMAZA Vendor Portal</h1>
+      </div>
+      
+      <div style="padding: 20px;">
+        <div style="background-color: #fff3cd; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0; border-left: 4px solid #ff9800;">
+          <h2 style="margin: 0; font-size: 28px;">⚡</h2>
+          <h2 style="margin: 10px 0 0 0; color: #e65100;">Order Already Taken</h2>
+        </div>
+        
+        <p>Hi ${vendorName},</p>
+        <p>The order <strong>${orderId}</strong> has been accepted by <strong>${winnerName}</strong>.</p>
+        <p>This order is no longer available for acceptance. Better luck next time!</p>
+        
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <p style="margin: 5px 0;"><strong>💡 Tip:</strong> Accept orders faster to increase your fulfillment rate!</p>
+          <p style="margin: 5px 0;">Check your pending orders regularly to stay ahead of the competition.</p>
+        </div>
+        
+        <p>
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/vendor/orders" style="display: inline-block; background-color: #1976d2; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Pending Orders</a>
+        </p>
+      </div>
+      
+      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
+        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
+      </div>
+    </div>
+  `;
+
+  return sendEmail({
+    to: vendorEmail,
+    subject: `Order ${orderId} was accepted by another vendor`,
+    html,
+    trigger: 'order_taken_notification',
+    orderId,
+  });
+}
+
+/**
+ * Queue order taken notification email (non-blocking)
+ */
+export function queueOrderTakenNotificationEmail(data: {
+  vendorEmail: string;
+  vendorName: string;
+  orderId: string;
+  winnerName: string;
+}): string {
+  return emailQueue.add(async () => {
+    await sendOrderTakenNotificationEmail(
+      data.vendorEmail,
+      data.vendorName,
+      data.orderId,
+      data.winnerName
+    );
+  });
+}
