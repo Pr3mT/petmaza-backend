@@ -100,7 +100,8 @@ export class OrderRoutingService {
 
   /**
    * Route normal order to WAREHOUSE_FULFILLER based on assigned subcategories
-   * New flow: Assign to fulfiller who handles the product subcategories
+   * NEW: Split orders across multiple fulfillers based on product subcategories
+   * Each fulfiller receives ONLY their assigned products
    */
   private static async routeNormalOrderToMyShop(
     customer_id: string,
@@ -111,6 +112,10 @@ export class OrderRoutingService {
     // Fetch all products with subcategory information
     const productIds = items.map((item) => item.product_id);
     const products = await Product.find({ _id: { $in: productIds } }).lean();
+
+    // Create product map for easy lookup
+    const productMap = new Map();
+    products.forEach(p => productMap.set(p._id.toString(), p));
 
     // Get all subcategories in this order
     const orderSubcategories = [...new Set(products.map(p => p.subCategory).filter(Boolean))];
@@ -130,47 +135,66 @@ export class OrderRoutingService {
         vendor_id: { $in: fulfillerIds },
       }).lean();
 
-      // Find the best matching fulfiller
-      let bestMatch = null;
-      let maxMatchCount = 0;
+      // Map: fulfiller_id -> items they should handle
+      const fulfillerItemsMap = new Map();
+      const unassignedItems = [];
 
-      for (const fulfiller of warehouseFulfillers) {
-        const details = vendorDetailsArray.find(
-          vd => vd.vendor_id.toString() === fulfiller._id.toString()
-        );
-
-        if (!details || !details.assignedSubcategories || details.assignedSubcategories.length === 0) {
-          logger.info(`[routeNormalOrderToMyShop] Fulfiller ${fulfiller.name} has no assigned subcategories`);
+      // Assign each item to the correct fulfiller based on product subcategory
+      for (const item of items) {
+        const product = productMap.get(item.product_id);
+        if (!product || !product.subCategory) {
+          logger.warn(`[routeNormalOrderToMyShop] Product ${item.product_id} has no subcategory, will route to MY_SHOP`);
+          unassignedItems.push(item);
           continue;
         }
 
-        // Count how many order subcategories this fulfiller can handle
-        const matchCount = orderSubcategories.filter(subcat => 
-          details.assignedSubcategories.includes(subcat)
-        ).length;
+        // Find fulfiller who handles this product's subcategory
+        let assignedFulfiller = null;
+        for (const fulfiller of warehouseFulfillers) {
+          const details = vendorDetailsArray.find(
+            vd => vd.vendor_id.toString() === fulfiller._id.toString()
+          );
 
-        logger.info(`[routeNormalOrderToMyShop] Fulfiller ${fulfiller.name} can handle ${matchCount}/${orderSubcategories.length} subcategories`);
+          if (details && details.assignedSubcategories && 
+              details.assignedSubcategories.includes(product.subCategory)) {
+            assignedFulfiller = fulfiller;
+            break;
+          }
+        }
 
-        // If fulfiller can handle more subcategories, they're a better match
-        if (matchCount > maxMatchCount) {
-          maxMatchCount = matchCount;
-          bestMatch = fulfiller;
+        if (assignedFulfiller) {
+          const fulfillerId = assignedFulfiller._id.toString();
+          if (!fulfillerItemsMap.has(fulfillerId)) {
+            fulfillerItemsMap.set(fulfillerId, {
+              fulfiller: assignedFulfiller,
+              items: []
+            });
+          }
+          fulfillerItemsMap.get(fulfillerId).items.push(item);
+          logger.info(`[routeNormalOrderToMyShop] Assigned ${product.name} (${product.subCategory}) to ${assignedFulfiller.name}`);
+        } else {
+          logger.warn(`[routeNormalOrderToMyShop] No fulfiller handles ${product.subCategory}, will route to MY_SHOP`);
+          unassignedItems.push(item);
         }
       }
 
-      // If we found a fulfiller who can handle at least one subcategory
-      if (bestMatch && maxMatchCount > 0) {
-        logger.info(`[routeNormalOrderToMyShop] ✅ Assigning order to ${bestMatch.name} (matches ${maxMatchCount}/${orderSubcategories.length} subcategories)`);
+      // Create separate orders for each fulfiller
+      const createdOrders = [];
+      const isSplitShipment = fulfillerItemsMap.size > 1 || (fulfillerItemsMap.size > 0 && unassignedItems.length > 0);
+
+      // Create orders for warehouse fulfillers
+      for (const [fulfillerId, { fulfiller, items: fulfillerItems }] of fulfillerItemsMap) {
+        logger.info(`[routeNormalOrderToMyShop] Creating order for ${fulfiller.name} with ${fulfillerItems.length} items`);
 
         // Build order items with pricing
-        const orderItems = await this.buildOrderItems(items, bestMatch._id.toString());
+        const orderItems = await this.buildOrderItems(fulfillerItems, fulfiller._id.toString());
 
         // Calculate totals
         const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
         const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
         const totalProfit = total - totalPurchasePrice;
 
-        // Create order - assigned to matched WAREHOUSE_FULFILLER, status PENDING (awaiting acceptance)
+        // Create order - assigned to this WAREHOUSE_FULFILLER, status PENDING (awaiting acceptance)
         const order = await Order.create({
           customer_id,
           items: orderItems,
@@ -179,22 +203,23 @@ export class OrderRoutingService {
           totalProfit,
           status: 'PENDING', // Warehouse fulfiller needs to accept/reject
           isPrime: false,
-          isSplitShipment: false,
-          assignedVendorId: bestMatch._id, // Assigned to matched warehouse fulfiller
+          isSplitShipment, // Mark as split if multiple fulfillers or mixed with MY_SHOP
+          assignedVendorId: fulfiller._id, // Assigned to this warehouse fulfiller
           customerPincode,
           customerAddress,
         });
 
-        logger.info(`[routeNormalOrderToMyShop] Order ${order._id} routed to WAREHOUSE_FULFILLER ${bestMatch._id} (${bestMatch.name})`);
+        createdOrders.push(order);
+        logger.info(`[routeNormalOrderToMyShop] ✅ Order ${order._id} created for ${fulfiller.name} (${fulfillerItems.length} items, ₹${total})`);
 
-        // Queue email notification to warehouse fulfiller (non-blocking)
+        // Queue email notification to this warehouse fulfiller (non-blocking)
         try {
           const populatedOrder = await order.populate('customer_id');
           const customer = populatedOrder.customer_id as any;
 
           const jobId = queueVendorOrderNotificationEmail(
-            bestMatch.email,
-            bestMatch.name || 'Warehouse Fulfiller',
+            fulfiller.email,
+            fulfiller.name || 'Warehouse Fulfiller',
             `#${order._id.toString().slice(-8)}`,
             {
               customerName: customer?.name || 'Customer',
@@ -204,19 +229,76 @@ export class OrderRoutingService {
               items: orderItems,
             }
           );
-          logger.info(`[routeNormalOrderToMyShop] Order notification queued for ${bestMatch.email} (Job: ${jobId})`);
+          logger.info(`[routeNormalOrderToMyShop] Order notification queued for ${fulfiller.email} (Job: ${jobId})`);
         } catch (emailError: any) {
           logger.error('[routeNormalOrderToMyShop] Failed to queue warehouse fulfiller notification email:', emailError.message);
         }
+      }
 
-        return order;
-      } else {
-        logger.warn(`[routeNormalOrderToMyShop] No warehouse fulfiller found matching subcategories: ${orderSubcategories.join(', ')}`);
+      // Handle unassigned items - route to MY_SHOP
+      if (unassignedItems.length > 0) {
+        logger.info(`[routeNormalOrderToMyShop] ${unassignedItems.length} unassigned items, routing to MY_SHOP vendor`);
+        
+        const myShopVendor = await User.findOne({
+          role: 'vendor',
+          vendorType: 'MY_SHOP',
+          isApproved: true,
+        });
+
+        if (myShopVendor) {
+          const orderItems = await this.buildOrderItems(unassignedItems, myShopVendor._id.toString());
+          const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
+          const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
+          const totalProfit = total - totalPurchasePrice;
+
+          const order = await Order.create({
+            customer_id,
+            items: orderItems,
+            total,
+            totalPurchasePrice,
+            totalProfit,
+            status: 'ACCEPTED', // MY_SHOP auto-accepts
+            isPrime: false,
+            isSplitShipment,
+            assignedVendorId: myShopVendor._id,
+            customerPincode,
+            customerAddress,
+          });
+
+          createdOrders.push(order);
+          logger.info(`[routeNormalOrderToMyShop] ✅ MY_SHOP order ${order._id} created (${unassignedItems.length} items, ₹${total})`);
+
+          // Record sales for MY_SHOP items
+          const { SalesService } = await import('./SalesService');
+          for (const item of order.items) {
+            try {
+              await SalesService.recordSale({
+                vendor_id: myShopVendor._id.toString(),
+                product_id: (item.product_id as any)._id.toString(),
+                quantity: item.quantity,
+                salePrice: item.price,
+                purchasePrice: item.purchasePrice,
+                profit: item.profit,
+                customer_id,
+                order_id: order._id.toString(),
+              });
+            } catch (error: any) {
+              logger.error('[routeNormalOrderToMyShop] Failed to record sale:', error.message);
+            }
+          }
+        }
+      }
+
+      // Return ALL created orders (for split shipment handling)
+      if (createdOrders.length > 0) {
+        logger.info(`[routeNormalOrderToMyShop] ✅ Split order completed: ${createdOrders.length} separate orders created`);
+        // Return array of orders if split, single order if not
+        return createdOrders.length > 1 ? createdOrders : createdOrders[0];
       }
     }
 
-    // Fallback: If no matching warehouse fulfiller, route directly to MY_SHOP vendor
-    logger.info('[routeNormalOrderToMyShop] No matching warehouse fulfiller, routing to MY_SHOP vendor');
+    // Fallback: If no warehouse fulfillers exist at all, route everything to MY_SHOP vendor
+    logger.info('[routeNormalOrderToMyShop] No warehouse fulfillers available, routing entire order to MY_SHOP vendor');
     
     const myShopVendor = await User.findOne({
       role: 'vendor',

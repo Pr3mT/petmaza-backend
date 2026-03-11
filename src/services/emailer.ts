@@ -102,6 +102,11 @@ export async function sendOrderConfirmationEmail(
   orderId: string,
   orderData: any
 ) {
+  // Check if this is a split shipment
+  const isSplit = orderData.isSplitShipment || false;
+  const splitCount = orderData.splitOrderCount || 1;
+  const splitIds = orderData.splitOrderIds || [orderId];
+
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <div style="background-color: #ffd700; padding: 20px; text-align: center;">
@@ -114,6 +119,18 @@ export async function sendOrderConfirmationEmail(
         
         <p>Thank you for your order! We're excited to help you find the perfect pet products.</p>
         
+        ${isSplit ? `
+        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+          <h4 style="margin-top: 0; color: #856404;">📦 Split Shipment Notice</h4>
+          <p style="margin: 0; color: #856404;">
+            Your order will arrive in <strong>${splitCount} separate shipments</strong> from different warehouses for faster delivery!
+          </p>
+          <p style="margin: 10px 0 0 0; font-size: 13px; color: #856404;">
+            <strong>Order IDs:</strong> ${splitIds.join(', ')}
+          </p>
+        </div>
+        ` : ''}
+        
         <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
           <h3>Order Details</h3>
           <p><strong>Order ID:</strong> ${orderId}</p>
@@ -122,10 +139,31 @@ export async function sendOrderConfirmationEmail(
           <p><strong>Status:</strong> <span style="color: #ff9800; font-weight: bold;">Pending</span></p>
         </div>
         
-        <h3>Items Ordered:</h3>
+        <h3>Items Ordered (${orderData.items.length}):</h3>
         <ul>
-          ${orderData.items.map((item: any) => `<li>${item.product_id?.name || 'Product'} - Qty: ${item.quantity}</li>`).join('')}
+          ${orderData.items.map((item: any) => `<li><strong>${item.product_id?.name || 'Product'}</strong> - Qty: ${item.quantity} - ₹${(item.subtotal || item.price * item.quantity).toFixed(2)}</li>`).join('')}
         </ul>
+        
+        <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 5px 0;"><strong>Subtotal:</strong></td>
+              <td style="padding: 5px 0; text-align: right;">₹${(orderData.subtotal || 0).toFixed(2)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 5px 0;"><strong>Shipping Charges:</strong></td>
+              <td style="padding: 5px 0; text-align: right;">₹${(orderData.shippingCharges || 0).toFixed(2)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 5px 0;"><strong>Platform Fee:</strong></td>
+              <td style="padding: 5px 0; text-align: right;">₹${(orderData.platformFee || 0).toFixed(2)}</td>
+            </tr>
+            <tr style="border-top: 2px solid #ddd;">
+              <td style="padding: 10px 0 0 0;"><strong>Total Amount:</strong></td>
+              <td style="padding: 10px 0 0 0; text-align: right;"><strong>₹${(orderData.totalAmount || 0).toFixed(2)}</strong></td>
+            </tr>
+          </table>
+        </div>
         
         <p><strong>Delivery Address:</strong><br>
         ${orderData.customerAddress?.street || 'N/A'}<br>
@@ -135,8 +173,9 @@ export async function sendOrderConfirmationEmail(
         <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
           <h4 style="margin-top: 0;">What's Next?</h4>
           <p>✓ Payment will be verified</p>
-          <p>✓ Order will be assigned to nearest vendor</p>
-          <p>✓ You'll receive updates via email</p>
+          <p>✓ ${isSplit ? 'Each item will be processed by its assigned warehouse' : 'Order will be assigned to nearest vendor'}</p>
+          <p>✓ You'll receive updates via email for each shipment</p>
+          ${isSplit ? '<p>✓ Track each shipment separately in your order history</p>' : ''}
         </div>
         
         <p style="color: #666; font-size: 12px;">
@@ -152,7 +191,7 @@ export async function sendOrderConfirmationEmail(
 
   return sendEmail({
     to: customerEmail,
-    subject: `Order Confirmation - ${orderId}`,
+    subject: `Order Confirmation - ${orderId}${isSplit ? ` (${splitCount} shipments)` : ''}`,
     html,
     trigger: 'order_confirmation',
     orderId,

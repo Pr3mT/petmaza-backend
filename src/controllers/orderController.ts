@@ -27,39 +27,62 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       return next(new AppError('Pincode and address are required', 400));
     }
 
-    // Create order through routing service
-    const order = await OrderRoutingService.routeOrder({
+    // Create order through routing service (may return single order or array of split orders)
+    const orderResult = await OrderRoutingService.routeOrder({
       customer_id: req.user._id.toString(),
       items,
       customerPincode,
       customerAddress,
     });
 
-    // Calculate shipping charges and platform fee
-    const charges = await ShippingService.calculateCharges(order.total);
-    
-    // Update order with charges
-    order.subtotalBeforeCharges = order.total;
-    order.shippingCharges = charges.shippingCharges;
-    order.platformFee = charges.platformFee;
-    order.total = charges.total;
-    await order.save();
+    // Handle both single order and split orders
+    const orders = Array.isArray(orderResult) ? orderResult : [orderResult];
+    const isSplitShipment = orders.length > 1;
 
-    // Queue order confirmation email to customer (non-blocking)
+    logger.info(`[createOrder] ${orders.length} order(s) created (split: ${isSplitShipment})`);
+
+    // Calculate combined subtotal across all orders
+    const combinedSubtotal = orders.reduce((sum, order) => sum + order.total, 0);
+
+    // Calculate shipping charges and platform fee based on combined total
+    const charges = await ShippingService.calculateCharges(combinedSubtotal);
+    
+    // Distribute charges proportionally across all orders
+    for (const order of orders) {
+      const proportion = order.total / combinedSubtotal;
+      order.subtotalBeforeCharges = order.total;
+      order.shippingCharges = Math.round(charges.shippingCharges * proportion);
+      order.platformFee = Math.round(charges.platformFee * proportion);
+      order.total = order.subtotalBeforeCharges + order.shippingCharges + order.platformFee;
+      await order.save();
+    }
+
+    // Populate all orders with product details for email
+    const populatedOrders = await Promise.all(
+      orders.map(order => order.populate('items.product_id'))
+    );
+
+    // Collect all items from all orders for customer email
+    const allItems = populatedOrders.flatMap(order => order.items);
+    const totalAmount = orders.reduce((sum, order) => sum + order.total, 0);
+
+    // Queue order confirmation email to customer with ALL items (non-blocking)
     logger.info('[createOrder] Queueing order confirmation email to:', req.user.email);
     try {
-      const populatedOrder = await order.populate('items.product_id');
       const jobId = queueOrderConfirmationEmail(
         req.user.email,
         req.user.name,
-        `#${order._id.toString().slice(-8)}`,
+        `#${orders[0]._id.toString().slice(-8)}${isSplitShipment ? ` (+${orders.length - 1} more)` : ''}`,
         {
-          totalAmount: order.total,
-          items: populatedOrder.items,
-          customerAddress: order.customerAddress,
-          shippingCharges: order.shippingCharges,
-          platformFee: order.platformFee,
-          subtotal: order.subtotalBeforeCharges,
+          totalAmount: totalAmount,
+          items: allItems, // ALL items from ALL split orders
+          customerAddress: orders[0].customerAddress,
+          shippingCharges: charges.shippingCharges,
+          platformFee: charges.platformFee,
+          subtotal: combinedSubtotal,
+          isSplitShipment: isSplitShipment,
+          splitOrderCount: orders.length,
+          splitOrderIds: orders.map(o => `#${o._id.toString().slice(-8)}`),
         }
       );
       logger.info(`[createOrder] ✅ Order confirmation email queued (Job: ${jobId})`);
@@ -68,36 +91,18 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       // Don't fail the order creation if email queueing fails
     }
 
-    // Queue vendor notification if order is assigned (non-blocking)
-    try {
-      if (order.assignedVendorId) {
-        const vendor = await User.findById(order.assignedVendorId).lean();
-        logger.info('[createOrder] Queueing vendor notification to:', vendor?.email);
-        if (vendor) {
-          const populatedOrder = await order.populate('items.product_id');
-          const jobId = queueVendorOrderNotificationEmail(
-            vendor.email,
-            vendor.name,
-            `#${order._id.toString().slice(-8)}`,
-            {
-              customerName: req.user.name,
-              customerAddress: order.customerAddress,
-              customerPincode: order.customerPincode,
-              totalAmount: order.total,
-              items: populatedOrder.items,
-            }
-          );
-          logger.info(`[createOrder] ✅ Vendor notification email queued (Job: ${jobId})`);
-        }
-      }
-    } catch (emailError: any) {
-      logger.error('[createOrder] ❌ Failed to queue vendor notification:', emailError.message);
-    }
+    // Vendor notifications are already sent in OrderRoutingService
 
     res.status(201).json({
       success: true,
-      message: 'Order created successfully',
-      data: { order },
+      message: isSplitShipment 
+        ? `Order created successfully! Your items will arrive in ${orders.length} separate shipments.`
+        : 'Order created successfully',
+      data: { 
+        orders,
+        isSplitShipment,
+        totalAmount,
+      },
     });
   } catch (error: any) {
     next(error);

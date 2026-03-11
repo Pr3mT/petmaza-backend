@@ -53,16 +53,63 @@ Order assigned to RameshShirke (Status: PENDING)
 RameshShirke logs in → Sees order → Can Accept/Reject
 ```
 
-### Scenario 3: Mixed Order (Dog Food + Fish Food)
+### Scenario 3: Mixed Order (Dog Food + Fish Food) - **SPLIT SHIPMENT** ✅
 ```
 Customer orders Dog Food + Fish Food
     ↓
-System checks: Who handles BOTH subcategories?
+System checks: Which fulfiller handles each product?
     ↓
-DiveshDoke: Handles 1/2 (Dog Food only)
-RameshShirke: Handles 1/2 (Fish Food only)
+Dog Food → DiveshDoke handles "Dog Food"
+Fish Food → RameshShirke handles "Fish Food"
     ↓
-Result: Assigned to FIRST MATCH (whoever is found first in database)
+Result: TWO SEPARATE ORDERS created:
+    ↓
+📦 Order 1 → DiveshDoke
+   Products: Dog Food only
+   Status: PENDING
+   Email sent to: diveshdoke@gmail.com
+   isSplitShipment: true
+    ↓
+📦 Order 2 → RameshShirke
+   Products: Fish Food only
+   Status: PENDING
+   Email sent to: rameshshirke@gmail.com
+   isSplitShipment: true
+    ↓
+✅ Each fulfiller receives ONLY their assigned products
+✅ Customer sees both orders in their order history
+✅ Both fulfillers must accept/reject independently
+```
+
+### Scenario 3B: Mixed Order with Multiple Products per Fulfiller
+```
+Customer orders: Fish Toy + Dog Food + Cat Food
+    ↓
+System checks each product's subcategory:
+    ↓
+Fish Toy (Fish Toys & Accessories) → RameshShirke
+Dog Food (Dog Food) → DiveshDoke
+Cat Food (Cat Food) → DiveshDoke
+    ↓
+Result: TWO SEPARATE ORDERS created:
+    ↓
+📦 Order 1 → RameshShirke
+   Products: 
+   - Fish Toy (1 item)
+   Total: ₹X
+   Status: PENDING
+   isSplitShipment: true
+    ↓
+📦 Order 2 → DiveshDoke
+   Products:
+   - Dog Food (1 item)
+   - Cat Food (1 item)
+   Total: ₹Y
+   Status: PENDING
+   isSplitShipment: true
+    ↓
+✅ Fulfiller receives email for ONLY their products
+✅ Order properly grouped by fulfiller capability
 ```
 
 ### Scenario 4: No Fulfiller Matches
@@ -121,6 +168,63 @@ My Shop Manager sees order immediately (auto-accepted)
 5. **Login as My Shop Manager** (myshop@petmaza.com)
 6. **Expected**: Should now see the rejected order (Status: PENDING)
 
+### Test 4: Split Order - Mixed Products (CRITICAL TEST) ✅
+
+1. **Place Mixed Order** (as customer):
+   - Add Fish Toy to cart (handled by Ramesh)
+   - Add Dog Food to cart (handled by Divesh)
+   - Add Cat Food to cart (handled by Divesh)
+   - Complete checkout
+
+2. **Check Backend Logs**:
+   ```
+   [routeNormalOrderToMyShop] Order contains subcategories: ['Fish Toys & Accessories', 'Dog Food', 'Cat Food']
+   [routeNormalOrderToMyShop] Assigned Fish Toy (Fish Toys & Accessories) to RameshShirke
+   [routeNormalOrderToMyShop] Assigned Dog Food (Dog Food) to DiveshDoke
+   [routeNormalOrderToMyShop] Assigned Cat Food (Cat Food) to DiveshDoke
+   [routeNormalOrderToMyShop] Creating order for RameshShirke with 1 items
+   [routeNormalOrderToMyShop] ✅ Order XXX created for RameshShirke (1 items, ₹XX)
+   [routeNormalOrderToMyShop] Creating order for DiveshDoke with 2 items
+   [routeNormalOrderToMyShop] ✅ Order YYY created for DiveshDoke (2 items, ₹YY)
+   [routeNormalOrderToMyShop] ✅ Split order completed: 2 separate orders created
+   ```
+
+3. **Login as RameshShirke**:
+   - Email: `rameshshirke@gmail.com`
+   - Navigate to **Orders** page
+   - **SHOULD SEE**: ONE order containing ONLY Fish Toy
+   - **SHOULD NOT SEE**: Dog Food or Cat Food
+   - Order Status: PENDING
+   - isSplitShipment: true (✅)
+
+4. **Login as DiveshDoke**:
+   - Email: `diveshdoke@gmail.com`
+   - Navigate to **Orders** page
+   - **SHOULD SEE**: ONE order containing Dog Food + Cat Food
+   - **SHOULD NOT SEE**: Fish Toy
+   - Order Status: PENDING
+   - isSplitShipment: true (✅)
+
+5. **Check Emails**:
+   - RameshShirke should receive email with Fish Toy order
+   - DiveshDoke should receive email with Dog Food + Cat Food order
+   - Each email shows ONLY their products
+
+6. **Customer Order History**:
+   - Customer should see TWO separate orders
+   - Both orders show same customer address
+   - Both orders created at same time
+   - Both marked as "Split Shipment"
+
+7. **Verify Split Order Script**:
+   ```powershell
+   cd C:\Users\SAMRUDDHI\Documents\GitHub\petmaza-backend
+   npx ts-node test-split-orders.ts
+   ```
+   - Should show grouped orders by customer
+   - Should display "SPLIT ORDER GROUP" for mixed products
+   - Should show each fulfiller's assigned items
+
 ---
 
 ## ⚠️ Troubleshooting
@@ -177,27 +281,74 @@ My Shop Manager sees order immediately (auto-accepted)
 
 ## 📊 Technical Details
 
-### Order Assignment Logic (OrderRoutingService.ts)
+### Order Assignment Logic - SPLIT ORDERS (OrderRoutingService.ts) ✅
 
+**OLD Logic (Before Fix):**
 ```typescript
-// 1. Get product subcategories from order
-const orderSubcategories = ['Dog Food'];
+// ❌ Assigned ENTIRE order to ONE fulfiller who matched MOST subcategories
+// Problem: Other fulfillers never received their products
+```
 
-// 2. Find all warehouse fulfillers
+**NEW Logic (After Fix):**
+```typescript
+// 1. Get all products with subcategories from order
+const products = await Product.find({ _id: { $in: productIds } });
+const productMap = new Map(products.map(p => [p._id, p]));
+
+// 2. Find all active warehouse fulfillers
 const fulfillers = [DiveshDoke, RameshShirke];
 
-// 3. Calculate match score for each
-- DiveshDoke has ['Dog Food', 'Cat Food']
-  → matchCount = 1 (handles Dog Food) ✅
+// 3. Assign EACH ITEM to correct fulfiller based on subcategory
+Map: fulfiller_id -> items
+{
+  'divesh123': [Dog Food, Cat Food],  // DiveshDoke handles these
+  'ramesh456': [Fish Toy]              // RameshShirke handles this
+}
+
+// 4. Create SEPARATE order for EACH fulfiller
+for (const [fulfillerId, items] of fulfillerItemsMap) {
+  const order = await Order.create({
+    customer_id,
+    items: items,  // ONLY items this fulfiller handles
+    assignedVendorId: fulfillerId,
+    status: 'PENDING',
+    isSplitShipment: true  // Mark as split
+  });
   
-- RameshShirke has [18 others, NOT Dog Food]
-  → matchCount = 0 (doesn't handle Dog Food) ❌
+  // Send email to THIS fulfiller with THEIR products
+  sendEmail(fulfiller.email, order);
+}
 
-// 4. Assign to best match (highest matchCount)
-assignedVendorId = DiveshDoke._id
-status = 'PENDING'
+// ✅ Result: Each fulfiller receives ONLY their assigned products
+```
 
-// 5. Send email notification to DiveshDoke
+**Example: Mixed Order (Fish Toy + Dog Food + Cat Food)**
+```typescript
+Customer places order with 3 products
+    ↓
+System checks each product's subcategory:
+  - Fish Toy → subCategory: "Fish Toys & Accessories" → RameshShirke
+  - Dog Food → subCategory: "Dog Food" → DiveshDoke
+  - Cat Food → subCategory: "Cat Food" → DiveshDoke
+    ↓
+Create Order 1 (for RameshShirke):
+  items: [Fish Toy]
+  total: ₹150
+  assignedVendorId: ramesh._id
+  status: 'PENDING'
+  isSplitShipment: true
+  → Email sent to rameshshirke@gmail.com
+    ↓
+Create Order 2 (for DiveshDoke):
+  items: [Dog Food, Cat Food]
+  total: ₹450
+  assignedVendorId: divesh._id
+  status: 'PENDING'
+  isSplitShipment: true
+  → Email sent to diveshdoke@gmail.com
+    ↓
+✅ Both fulfillers receive their orders independently
+✅ Customer sees 2 separate orders in order history
 ```
 
 ### Fulfiller Dashboard Query (warehouseFulfillerController.ts)
