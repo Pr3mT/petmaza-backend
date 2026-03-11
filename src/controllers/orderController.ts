@@ -47,12 +47,12 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     // Calculate shipping charges and platform fee based on combined total
     const charges = await ShippingService.calculateCharges(combinedSubtotal);
     
-    // Distribute charges proportionally across all orders
+    // Distribute charges EQUALLY across all orders (50-50 split for 2 orders, etc.)
+    // NOT proportionally - each fulfiller gets equal share of fees
     for (const order of orders) {
-      const proportion = order.total / combinedSubtotal;
       order.subtotalBeforeCharges = order.total;
-      order.shippingCharges = Math.round(charges.shippingCharges * proportion);
-      order.platformFee = Math.round(charges.platformFee * proportion);
+      order.shippingCharges = Math.round(charges.shippingCharges / orders.length);
+      order.platformFee = Math.round(charges.platformFee / orders.length);
       order.total = order.subtotalBeforeCharges + order.shippingCharges + order.platformFee;
       await order.save();
     }
