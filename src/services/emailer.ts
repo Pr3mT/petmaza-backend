@@ -212,27 +212,47 @@ export async function sendOrderStatusUpdateEmail(
     confirmed: {
       title: 'Order Confirmed',
       icon: '✓',
-      description: 'Your order has been confirmed and assigned to a vendor.',
+      description: 'Your order has been confirmed.',
     },
-    processing: {
-      title: 'Order Processing',
-      icon: '⚙️',
-      description: 'Your order is being prepared for shipment.',
+    accepted: {
+      title: 'Order Accepted',
+      icon: '✓',
+      description: 'Your order has been accepted and is being prepared.',
+    },
+    packed: {
+      title: 'Order Packed',
+      icon: '📦',
+      description: 'Your order has been packed and is ready for pickup.',
+    },
+    picked_up: {
+      title: 'Order Picked Up',
+      icon: '🚚',
+      description: 'Your order has been picked up by delivery partner.',
+    },
+    in_transit: {
+      title: 'In Transit',
+      icon: '🚚',
+      description: 'Your order is on its way!',
     },
     shipped: {
       title: 'Order Shipped',
       icon: '🚚',
-      description: 'Your order is on its way! Check tracking details below.',
+      description: 'Your order is on its way!',
     },
     delivered: {
       title: 'Order Delivered',
-      icon: '📦',
+      icon: '🎉',
       description: 'Your order has been successfully delivered. Thank you for shopping with us!',
     },
     cancelled: {
       title: 'Order Cancelled',
       icon: '❌',
       description: 'Your order has been cancelled. A refund will be processed shortly.',
+    },
+    rejected: {
+      title: 'Order Update',
+      icon: '⚠️',
+      description: 'There was an issue with your order. Please check your order status.',
     },
   };
 
@@ -256,8 +276,7 @@ export async function sendOrderStatusUpdateEmail(
         <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
           <p><strong>Order ID:</strong> ${orderId}</p>
           <p><strong>Status:</strong> <span style="color: #1976d2; font-weight: bold;">${status.toUpperCase()}</span></p>
-          ${vendorName ? `<p><strong>Assigned Vendor:</strong> ${vendorName}</p>` : ''}
-          <p><strong>Last Updated:</strong> ${new Date().toLocaleString('en-IN')}</p>
+          <p><strong>Last Updated:</strong> ${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</p>
         </div>
         
         <p style="color: #666; font-size: 12px;">

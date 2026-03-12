@@ -140,12 +140,13 @@ export const acceptPrimeOrder = async (
       const customer = populatedOrder.customer_id as any;
       
       if (customer?.email) {
+        const orderId = order._id.toString().slice(-8).toUpperCase();
         await queueOrderStatusUpdateEmail(
           customer.email,
           customer.name,
-          order._id.toString(),
+          orderId,
           'ACCEPTED',
-          'Prime Vendor'
+          undefined // Don't show vendor name in email
         );
       }
     } catch (emailError) {
@@ -178,7 +179,7 @@ export const rejectPrimeOrder = async (
       _id: id,
       assignedVendorId: vendor_id,
       isPrime: true,
-      status: 'PENDING',
+      status: { $in: ['PENDING', 'ASSIGNED'] }, // Accept both PENDING and ASSIGNED status
     });
 
     if (!order) {
@@ -200,23 +201,8 @@ export const rejectPrimeOrder = async (
 
     logger.info(`[PrimeVendor] Order ${id} rejected by vendor ${vendor_id}`);
 
-    // Send email to customer
-    try {
-      const populatedOrder = await order.populate('customer_id');
-      const customer = populatedOrder.customer_id as any;
-      
-      if (customer?.email) {
-        await queueOrderStatusUpdateEmail(
-          customer.email,
-          customer.name,
-          order._id.toString(),
-          'REJECTED',
-          'Prime Vendor'
-        );
-      }
-    } catch (emailError) {
-      logger.error('[PrimeVendor] Failed to send order rejected email:', emailError);
-    }
+    // Send email to customer - No email for rejection
+    // Customer will be notified through order status page
 
     res.status(200).json({
       success: true,
@@ -250,7 +236,7 @@ export const updatePrimeOrderStatus = async (
       return next(new AppError('Order not found', 404));
     }
 
-    const allowedStatuses = ['ACCEPTED', 'PROCESSING', 'SHIPPED', 'DELIVERED'];
+    const allowedStatuses = ['ACCEPTED', 'PROCESSING', 'PACKED', 'PICKED_UP', 'IN_TRANSIT', 'SHIPPED', 'DELIVERED'];
     if (!allowedStatuses.includes(status)) {
       return next(new AppError('Invalid status', 400));
     }
@@ -286,12 +272,13 @@ export const updatePrimeOrderStatus = async (
       const customer = populatedOrder.customer_id as any;
       
       if (customer?.email) {
+        const orderId = order._id.toString().slice(-8).toUpperCase();
         await queueOrderStatusUpdateEmail(
           customer.email,
           customer.name,
-          order._id.toString(),
+          orderId,
           order.status,
-          'Prime Vendor'
+          undefined // Don't show vendor name in email
         );
       }
     } catch (emailError) {
