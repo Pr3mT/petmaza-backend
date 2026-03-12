@@ -70,36 +70,40 @@ export const getWarehouseFulfillerOrders = async (
       );
     }
 
+    logger.info(`[getWarehouseFulfillerOrders] 🔍 Fulfiller ID: ${fulfiller._id}`);
+    logger.info(`[getWarehouseFulfillerOrders] 🔍 Fulfiller Name: ${fulfiller.name}`);
+
     // Fetch orders:
-    // 1. Orders already assigned to this fulfiller (assignedVendorId = fulfiller._id)
-    // 2. Broadcast orders (assignedVendorId = null) with products from assigned subcategories
+    // 1. Orders explicitly assigned to THIS fulfiller (any status)
+    // 2. Broadcast orders (assignedVendorId = null AND status = PENDING) with matching products
+    // IMPORTANT: Once an order is accepted by ANY fulfiller, it should ONLY show to that fulfiller
     const orders = await Order.find({
       $or: [
-        // Orders already assigned to this fulfiller
-        { assignedVendorId: fulfiller._id },
-        // Broadcast orders (competitive) with products from assigned subcategories
+        // Case 1: Orders explicitly assigned to THIS fulfiller (show all statuses)
+        {
+          assignedVendorId: fulfiller._id,
+          status: {
+            $in: ['PENDING', 'ACCEPTED', 'PACKED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED'],
+          },
+        },
+        // Case 2: Broadcast orders (assignedVendorId MUST be null, status MUST be PENDING)
         {
           assignedVendorId: null,
           status: 'PENDING',
           'items.product_id': { $in: subcategoryProductIds },
         },
       ],
-      status: {
-        $in: [
-          'PENDING',
-          'ACCEPTED',
-          'PACKED',
-          'PICKED_UP',
-          'IN_TRANSIT',
-          'DELIVERED',
-        ],
-      },
     })
       .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images subCategory mainCategory')
       .sort({ createdAt: -1 });
 
     logger.info(`[getWarehouseFulfillerOrders] Query returned ${orders.length} orders for ${fulfiller.name}`);
+    
+    // Log each order's details for debugging
+    orders.forEach(order => {
+      logger.info(`[getWarehouseFulfillerOrders] 📦 Order ${order._id.toString().slice(-8)}: status=${order.status}, assignedVendorId=${order.assignedVendorId ? order.assignedVendorId.toString().slice(-8) : 'null'}`);
+    });
 
     // Add metadata to identify broadcast orders
     const ordersWithMetadata = orders.map(order => {
