@@ -266,23 +266,29 @@ export const updatePrimeOrderStatus = async (
 
     logger.info(`[PrimeVendor] Order ${id} status updated to ${status} by vendor ${vendor_id}`);
 
-    // Send email to customer
-    try {
-      const populatedOrder = await order.populate('customer_id');
-      const customer = populatedOrder.customer_id as any;
-      
-      if (customer?.email) {
-        const orderId = order._id.toString().slice(-8).toUpperCase();
-        await queueOrderStatusUpdateEmail(
-          customer.email,
-          customer.name,
-          orderId,
-          order.status,
-          undefined // Don't show vendor name in email
-        );
+    // Send email to customer - ONLY for SHIPPED and DELIVERED
+    // Customer receives only 3 emails: ACCEPTED, SHIPPED, DELIVERED
+    const emailStatuses = ['SHIPPED', 'DELIVERED'];
+    if (emailStatuses.includes(status)) {
+      try {
+        const populatedOrder = await order.populate('customer_id');
+        const customer = populatedOrder.customer_id as any;
+        
+        if (customer?.email) {
+          const orderId = order._id.toString().slice(-8).toUpperCase();
+          await queueOrderStatusUpdateEmail(
+            customer.email,
+            customer.name,
+            orderId,
+            order.status,
+            undefined // Don't show vendor name in email
+          );
+        }
+      } catch (emailError) {
+        logger.error('[PrimeVendor] Failed to send order status update email:', emailError);
       }
-    } catch (emailError) {
-      logger.error('[PrimeVendor] Failed to send order status update email:', emailError);
+    } else {
+      logger.info(`[PrimeVendor] Skipping email for status ${status} (only SHIPPED and DELIVERED trigger emails)`);
     }
 
     res.status(200).json({

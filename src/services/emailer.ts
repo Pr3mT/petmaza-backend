@@ -217,7 +217,7 @@ export async function sendOrderStatusUpdateEmail(
     accepted: {
       title: 'Order Accepted',
       icon: '✓',
-      description: 'Your order has been accepted and is being prepared.',
+      description: 'Great news! Your order has been accepted and is being prepared for delivery.',
     },
     packed: {
       title: 'Order Packed',
@@ -237,12 +237,12 @@ export async function sendOrderStatusUpdateEmail(
     shipped: {
       title: 'Order Shipped',
       icon: '🚚',
-      description: 'Your order is on its way!',
+      description: 'Great news! Your order has been shipped and is on its way to you. Expected delivery within 2-5 business days.',
     },
     delivered: {
       title: 'Order Delivered',
       icon: '🎉',
-      description: 'Your order has been successfully delivered. Thank you for shopping with us!',
+      description: 'Your order has been successfully delivered. Thank you for shopping with Petmaza!',
     },
     cancelled: {
       title: 'Order Cancelled',
@@ -274,7 +274,7 @@ export async function sendOrderStatusUpdateEmail(
         <p>${statusInfo.description}</p>
         
         <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Order ID:</strong> ${orderId}</p>
+          <p><strong>Order ID:</strong> #${orderId}</p>
           <p><strong>Status:</strong> <span style="color: #1976d2; font-weight: bold;">${status.toUpperCase()}</span></p>
           <p><strong>Last Updated:</strong> ${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</p>
         </div>
@@ -292,7 +292,7 @@ export async function sendOrderStatusUpdateEmail(
 
   return sendEmail({
     to: customerEmail,
-    subject: `Order ${statusInfo.title} - ${orderId}`,
+    subject: `Order ${statusInfo.title} - #${orderId}`,
     html,
     trigger: 'order_status_update',
     orderId,
@@ -399,7 +399,7 @@ export async function sendPaymentSuccessEmail(
           <table style="width: 100%; margin-top: 15px;">
             <tr>
               <td style="padding: 8px 0; color: #666; width: 40%;">Order ID:</td>
-              <td style="padding: 8px 0; font-weight: bold; color: #333;">${orderId}</td>
+              <td style="padding: 8px 0; font-weight: bold; color: #333;">#${orderId}</td>
             </tr>
             <tr>
               <td style="padding: 8px 0; color: #666;">Transaction ID:</td>
@@ -499,14 +499,14 @@ export async function sendPaymentSuccessEmail(
 
   return sendEmail({
     to: customerEmail,
-    subject: `Payment Receipt - Order ${orderId}`,
+    subject: `Payment Receipt - Order #${orderId}`,
     html,
     trigger: 'payment_success',
     orderId,
     attachments: pdfBuffer
       ? [
           {
-            filename: `Payment_Receipt_${orderId.replace('#', '')}.pdf`,
+            filename: `Payment_Receipt_${orderId}.pdf`,
             content: pdfBuffer,
             contentType: 'application/pdf',
           },

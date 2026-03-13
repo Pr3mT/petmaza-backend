@@ -183,10 +183,11 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
 
         if (customer?.email) {
           logger.info('[updateOrder] Queueing payment receipt to:', customer.email);
+          const orderId = order._id.toString().slice(-8).toUpperCase();
           const jobId = queuePaymentSuccessEmail(
             customer.email,
             customer.name || 'Customer',
-            `#${order._id.toString().slice(-8)}`,
+            orderId,
             order.total || 0,
             order.payment_id,
             {
