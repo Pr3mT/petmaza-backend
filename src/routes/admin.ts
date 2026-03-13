@@ -16,6 +16,7 @@ import {
   getFulfillers,
   updateFulfiller,
   deleteFulfiller,
+  getVendorBilling,
 } from '../controllers/adminController';
 import {
   getAnalytics,
@@ -65,6 +66,9 @@ router.post('/fulfillers', createFulfiller);
 router.get('/fulfillers', getFulfillers);
 router.put('/fulfillers/:id', updateFulfiller);
 router.delete('/fulfillers/:id', deleteFulfiller);
+
+// Vendor billing route
+router.get('/vendor-billing', getVendorBilling);
 
 export default router;
 

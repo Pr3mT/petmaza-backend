@@ -688,3 +688,137 @@ export const deleteFulfiller = async (req: AuthRequest, res: Response, next: Nex
     next(error);
   }
 };
+
+/**
+ * Get vendor billing data for admin dashboard
+ * Shows orders fulfilled by each vendor type and their revenue/profit
+ */
+export const getVendorBilling = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    // Build date filter
+    const dateFilter: any = {};
+    if (startDate || endDate) {
+      dateFilter.createdAt = {};
+      if (startDate) {
+        dateFilter.createdAt.$gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        dateFilter.createdAt.$lte = end;
+      }
+    }
+
+    // Get all vendors (PRIME, MY_SHOP, WAREHOUSE_FULFILLER)
+    const vendors = await User.find({
+      role: 'vendor',
+      vendorType: { $in: ['PRIME', 'MY_SHOP', 'WAREHOUSE_FULFILLER'] }
+    }).select('name email vendorType isActive');
+
+    // Get all orders fulfilled by vendors (not PENDING status)
+    const orderFilter = {
+      ...dateFilter,
+      status: { $nin: ['PENDING', 'PENDING_BROADCAST', 'CANCELLED', 'REJECTED'] },
+      assignedVendorId: { $exists: true, $ne: null }
+    };
+
+    const orders = await Order.find(orderFilter)
+      .populate('assignedVendorId', 'name email vendorType')
+      .populate('customer_id', 'name email')
+      .sort({ createdAt: -1 });
+
+    // Calculate stats by vendor type
+    const vendorTypeStats: any = {};
+    const vendorStats: any = {};
+
+    // Initialize vendor stats
+    vendors.forEach(vendor => {
+      const vendorId = vendor._id.toString();
+      vendorStats[vendorId] = {
+        _id: vendor._id,
+        name: vendor.name,
+        email: vendor.email,
+        vendorType: vendor.vendorType,
+        isActive: vendor.isActive,
+        totalOrders: 0,
+        totalRevenue: 0,
+        platformProfit: 0,
+      };
+
+      // Initialize vendor type stats
+      if (!vendorTypeStats[vendor.vendorType]) {
+        vendorTypeStats[vendor.vendorType] = {
+          vendorType: vendor.vendorType,
+          totalVendors: 0,
+          totalOrders: 0,
+          totalRevenue: 0,
+          totalProfit: 0,
+        };
+      }
+      vendorTypeStats[vendor.vendorType].totalVendors += 1;
+    });
+
+    // Calculate revenue and profit from orders
+    orders.forEach(order => {
+      const vendor = order.assignedVendorId as any;
+      if (!vendor || !vendor._id) return;
+
+      const vendorId = vendor._id.toString();
+      const vendorType = vendor.vendorType;
+      const orderTotal = order.total || 0;
+
+      // Platform profit calculation:
+      // For PRIME vendors: 10% platform fee
+      // For MY_SHOP: 15% commission
+      // For FULFILLER: Fixed ₹10 per order
+      let platformProfit = 0;
+      if (vendorType === 'PRIME') {
+        platformProfit = orderTotal * 0.10; // 10% platform fee
+      } else if (vendorType === 'MY_SHOP') {
+        platformProfit = orderTotal * 0.15; // 15% commission
+      } else if (vendorType === 'WAREHOUSE_FULFILLER') {
+        platformProfit = 10; // ₹10 per order
+      }
+
+      // Update vendor stats
+      if (vendorStats[vendorId]) {
+        vendorStats[vendorId].totalOrders += 1;
+        vendorStats[vendorId].totalRevenue += orderTotal;
+        vendorStats[vendorId].platformProfit += platformProfit;
+      }
+
+      // Update vendor type stats
+      if (vendorTypeStats[vendorType]) {
+        vendorTypeStats[vendorType].totalOrders += 1;
+        vendorTypeStats[vendorType].totalRevenue += orderTotal;
+        vendorTypeStats[vendorType].totalProfit += platformProfit;
+      }
+    });
+
+    // Convert objects to arrays
+    const byVendorType = Object.values(vendorTypeStats);
+    const vendorList = Object.values(vendorStats).filter((v: any) => v.totalOrders > 0); // Only show vendors with orders
+
+    // Calculate summary
+    const summary = {
+      totalVendors: vendors.length,
+      totalOrders: orders.length,
+      totalRevenue: byVendorType.reduce((sum: number, item: any) => sum + item.totalRevenue, 0),
+      totalProfit: byVendorType.reduce((sum: number, item: any) => sum + item.totalProfit, 0),
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary,
+        byVendorType,
+        vendors: vendorList,
+      },
+    });
+  } catch (error: any) {
+    console.error('[getVendorBilling] Error:', error);
+    next(error);
+  }
+};
