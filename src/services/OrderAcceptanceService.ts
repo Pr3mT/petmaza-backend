@@ -2,6 +2,7 @@ import Order from '../models/Order';
 import VendorProductPricing from '../models/VendorProductPricing';
 import { AppError } from '../middlewares/errorHandler';
 import { SalesService } from './SalesService';
+import logger from '../config/logger';
 
 export class OrderAcceptanceService {
   /**
@@ -399,16 +400,57 @@ export class OrderAcceptanceService {
   // Reject order - vendors can ignore orders, no need to explicitly reject
   // This is kept for backward compatibility but orders remain PENDING for other vendors
   static async rejectOrder(order_id: string, vendor_id: string, reason?: string) {
-    // Orders are now first-come-first-serve, so rejection is not needed
-    // Vendors simply don't accept orders they can't fulfill
-    // This method is kept for API compatibility but doesn't change order status
-    const order = await Order.findById(order_id);
+    const mongoose = (await import('mongoose')).default;
+    const order = await Order.findById(order_id)
+      .populate('customer_id', 'name email');
 
     if (!order) {
       throw new AppError('Order not found', 404);
     }
 
-    // Order remains PENDING for other vendors to accept
+    // Check if this vendor is assigned to the order
+    const vendorObjectId = new mongoose.Types.ObjectId(vendor_id);
+    const assignedVendorId = order.assignedVendorId?.toString();
+    
+    if (assignedVendorId !== vendor_id) {
+      throw new AppError('You are not assigned to this order', 403);
+    }
+
+    // Update order status to REJECTED
+    order.status = 'REJECTED';
+    order.rejectionReason = reason || 'Vendor rejected the order';
+    await order.save();
+
+    logger.info(`[OrderAcceptanceService] Order ${order_id} rejected by vendor ${vendor_id}`);
+
+    // Send rejection email with refund notification to customer
+    try {
+      const { queueOrderRejectionEmail } = await import('./emailer');
+      const orderId = order._id.toString().slice(-8).toUpperCase();
+      
+      const customer = order.customer_id as any;
+      const customerEmail = customer?.email;
+      const customerName = customer?.name;
+      
+      logger.info(`[OrderAcceptanceService] Customer data - Email: ${customerEmail}, Name: ${customerName}`);
+      
+      if (customerEmail && customerName) {
+        queueOrderRejectionEmail(
+          customerEmail,
+          customerName,
+          orderId,
+          reason || 'Vendor rejected the order',
+          order.total || 0
+        );
+        logger.info(`[OrderAcceptanceService] Rejection email queued successfully for order ${orderId} to ${customerEmail}`);
+      } else {
+        logger.error(`[OrderAcceptanceService] Cannot send rejection email - Missing customer data. Email: ${customerEmail}, Name: ${customerName}`);
+      }
+    } catch (emailError: any) {
+      logger.error(`[OrderAcceptanceService] Error sending rejection email: ${emailError.message}`);
+      // Don't fail the rejection if email fails
+    }
+
     return order;
   }
 

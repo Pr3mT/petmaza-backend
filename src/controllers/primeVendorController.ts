@@ -180,7 +180,7 @@ export const rejectPrimeOrder = async (
       assignedVendorId: vendor_id,
       isPrime: true,
       status: { $in: ['PENDING', 'ASSIGNED'] }, // Accept both PENDING and ASSIGNED status
-    });
+    }).populate('customer_id', 'name email');
 
     if (!order) {
       return next(new AppError('Order not found or already processed', 404));
@@ -201,8 +201,34 @@ export const rejectPrimeOrder = async (
 
     logger.info(`[PrimeVendor] Order ${id} rejected by vendor ${vendor_id}`);
 
-    // Send email to customer - No email for rejection
-    // Customer will be notified through order status page
+    // Send rejection email with refund notification to customer
+    try {
+      const { queueOrderRejectionEmail } = await import('../services/emailer');
+      const orderId = order._id.toString().slice(-8).toUpperCase();
+      
+      // Check if customer_id is populated (has email property)
+      const customer = order.customer_id as any;
+      const customerEmail = customer?.email;
+      const customerName = customer?.name;
+      
+      logger.info(`[PrimeVendor] Customer data - Email: ${customerEmail}, Name: ${customerName}`);
+      
+      if (customerEmail && customerName) {
+        queueOrderRejectionEmail(
+          customerEmail,
+          customerName,
+          orderId,
+          reason || 'Vendor rejected the order',
+          order.total || 0
+        );
+        logger.info(`[PrimeVendor] Rejection email queued successfully for order ${orderId} to ${customerEmail}`);
+      } else {
+        logger.error(`[PrimeVendor] Cannot send rejection email - Missing customer data. Email: ${customerEmail}, Name: ${customerName}`);
+      }
+    } catch (emailError: any) {
+      logger.error(`[PrimeVendor] Error sending rejection email: ${emailError.message}`);
+      // Don't fail the rejection if email fails
+    }
 
     res.status(200).json({
       success: true,

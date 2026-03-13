@@ -300,6 +300,82 @@ export async function sendOrderStatusUpdateEmail(
 }
 
 /**
+ * Send order rejection with refund notification email
+ */
+export async function sendOrderRejectionEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  reason: string,
+  amount: number
+) {
+  logger.info(`[sendOrderRejectionEmail] Starting to send rejection email to ${customerEmail} for order ${orderId}`);
+  
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
+        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
+      </div>
+      
+      <div style="padding: 20px;">
+        <div style="background-color: #fff3cd; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0; border-left: 4px solid #ff9800;">
+          <h2 style="margin: 0; font-size: 36px;">⚠️</h2>
+          <h2 style="margin: 10px 0 0 0; color: #e65100;">Order Rejected - Refund Initiated</h2>
+        </div>
+        
+        <p>Hi ${customerName},</p>
+        <p>We regret to inform you that your order has been rejected by the vendor due to the following reason:</p>
+        
+        <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #f44336;">
+          <p style="margin: 0; color: #c62828;"><strong>Reason:</strong> ${reason}</p>
+        </div>
+        
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <p style="margin: 5px 0;"><strong>Order ID:</strong> #${orderId}</p>
+          <p style="margin: 5px 0;"><strong>Order Amount:</strong> ₹${amount.toFixed(2)}</p>
+          <p style="margin: 5px 0;"><strong>Refund Status:</strong> <span style="color: #2e7d32; font-weight: bold;">Initiated</span></p>
+        </div>
+        
+        <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #4caf50;">
+          <p style="margin: 5px 0; color: #2e7d32;"><strong>💰 Refund Information:</strong></p>
+          <p style="margin: 5px 0;">Your payment of <strong>₹${amount.toFixed(2)}</strong> will be refunded to your original payment method within <strong>3-4 business days</strong>.</p>
+          <p style="margin: 5px 0; font-size: 12px; color: #666;">Please note that the exact time may vary depending on your bank or payment provider.</p>
+        </div>
+        
+        <p style="margin-top: 20px;">We apologize for the inconvenience caused. You can browse similar products and place a new order anytime.</p>
+        
+        <p style="text-align: center; margin: 30px 0;">
+          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/products" style="display: inline-block; background-color: #ffd700; color: #333; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">Browse Products</a>
+        </p>
+        
+        <p style="color: #666; font-size: 12px;">
+          If you have any questions about your refund, please contact our support team at <a href="mailto:support@petmaza.com" style="color: #1976d2;">support@petmaza.com</a>
+        </p>
+      </div>
+      
+      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
+        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
+      </div>
+    </div>
+  `;
+
+  try {
+    const result = await sendEmail({
+      to: customerEmail,
+      subject: `Order Rejected - Refund Initiated - #${orderId}`,
+      html,
+      trigger: 'order_rejection_refund',
+      orderId,
+    });
+    logger.info(`[sendOrderRejectionEmail] Email sent successfully to ${customerEmail} for order ${orderId}, MessageId: ${result.messageId}`);
+    return result;
+  } catch (error: any) {
+    logger.error(`[sendOrderRejectionEmail] Failed to send email to ${customerEmail} for order ${orderId}: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
  * Send payment success email
  */
 export async function sendPaymentSuccessEmail(
@@ -1369,6 +1445,28 @@ export function queueOrderAcceptedEmail(
 ): string {
   return emailQueue.add(async () => {
     await sendOrderAcceptedEmail(customerEmail, customerName, orderId, vendorName, estimatedDelivery);
+  });
+}
+
+/**
+ * Queue order rejection with refund email (non-blocking)
+ */
+export function queueOrderRejectionEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  reason: string,
+  amount: number
+): string {
+  logger.info(`[EmailQueue] Adding rejection email to queue for ${customerEmail}, Order: ${orderId}`);
+  return emailQueue.add(async () => {
+    try {
+      await sendOrderRejectionEmail(customerEmail, customerName, orderId, reason, amount);
+      logger.info(`[EmailQueue] Rejection email sent successfully to ${customerEmail}, Order: ${orderId}`);
+    } catch (error: any) {
+      logger.error(`[EmailQueue] Failed to send rejection email to ${customerEmail}, Order: ${orderId}: ${error.message}`);
+      throw error;
+    }
   });
 }
 
