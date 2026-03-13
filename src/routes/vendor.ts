@@ -2,7 +2,7 @@ import express from 'express';
 import {
   getVendorProducts,
   getAvailableProducts,
-  updateVendorProductStock,
+  // updateVendorProductStock, // DEPRECATED - using isActive toggle only
   updateVendorProductStatus,
   getVendorStats,
 } from '../controllers/vendorController';
@@ -17,7 +17,8 @@ router.use(checkRole('vendor'));
 
 router.get('/products/available', getAvailableProducts);
 router.get('/products/my', getVendorProducts);
-router.put('/products/my/:id/stock', updateVendorProductStock); // Update stock quantity
+// Stock management removed - using isActive toggle only
+// router.put('/products/my/:id/stock', updateVendorProductStock); // DEPRECATED
 router.put('/products/my/:id/status', updateVendorProductStatus); // Update availability status
 router.get('/orders', getVendorOrders); // Get vendor's orders
 router.get('/stats', getVendorStats);

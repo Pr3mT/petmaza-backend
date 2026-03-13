@@ -257,6 +257,11 @@ export const getAvailableProducts = async (req: AuthRequest, res: Response, next
   }
 };
 
+/**
+ * @deprecated This endpoint is no longer used - Using isActive toggle only
+ * Stock quantity management has been removed from the vendor interface
+ * Keeping this function for backward compatibility only
+ */
 // Update stock for assigned product (vendors can only update availableStock)
 export const updateVendorProductStock = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

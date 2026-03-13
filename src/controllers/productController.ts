@@ -9,13 +9,16 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
   try {
     const user = req.user;
     
-    // Check permissions: Admin, MY_SHOP vendor, or PRIME vendor
-    if (user.role !== 'admin' && user.vendorType !== 'MY_SHOP' && user.vendorType !== 'PRIME') {
-      return next(new AppError('Only Admin, MY_SHOP, and PRIME vendors can create products', 403));
+    // Check permissions: Admin or any vendor type (MY_SHOP, PRIME, WAREHOUSE_FULFILLER)
+    if (user.role !== 'admin' && !['MY_SHOP', 'PRIME', 'WAREHOUSE_FULFILLER'].includes(user.vendorType)) {
+      return next(new AppError('Only Admin and vendors can create products', 403));
     }
     
     // For PRIME vendors, auto-set isPrime and primeVendor_id
-    let productData = { ...req.body };
+    let productData = { 
+      ...req.body,
+      addedBy: user._id // Track who created the product
+    };
     if (user.vendorType === 'PRIME') {
       productData.isPrime = true;
       productData.primeVendor_id = user._id;
@@ -51,64 +54,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
       });
     }
     
-    // If MY_SHOP vendor created the product, auto-create VendorProductPricing entry
-    if (user.vendorType === 'MY_SHOP') {
-      const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
-      
-      // For variant products, use the first variant's pricing or average
-      let purchasePrice = req.body.purchasePrice;
-      let purchasePercentage = req.body.purchasePercentage || 60;
-      let initialStock = req.body.initialStock || 0;
-      
-      if (product.hasVariants && product.variants && product.variants.length > 0) {
-        // Use first variant's pricing as default
-        const firstVariant = product.variants[0];
-        purchasePrice = firstVariant.purchasePrice;
-        purchasePercentage = firstVariant.purchasePercentage || 60;
-        
-        // Create variantStock array with initial stock from variants
-        const variantStock = product.variants.map((variant: any, index: number) => {
-          const variantData = req.body.variants[index];
-          return {
-            weight: variant.weight,
-            unit: variant.unit,
-            displayWeight: variant.displayWeight,
-            availableStock: variantData?.initialStock || 0,
-            totalSoldWebsite: 0,
-            totalSoldStore: 0,
-            isActive: variant.isActive || true,
-          };
-        });
-        
-        const vendorPricing = await VendorProductPricing.create({
-          vendor_id: user._id,
-          product_id: product._id,
-          purchasePrice: purchasePrice,
-          purchasePercentage: purchasePercentage,
-          availableStock: 0, // Not used for variant products
-          totalSoldWebsite: 0,
-          totalSoldStore: 0,
-          isActive: req.body.isActive !== undefined ? req.body.isActive : true,
-          variantStock: variantStock,
-        });
-      } else {
-        // Single product (non-variant)
-        if (!purchasePrice && product.mrp) {
-          purchasePrice = product.mrp * (purchasePercentage / 100);
-        }
-        
-        await VendorProductPricing.create({
-          vendor_id: user._id,
-          product_id: product._id,
-          purchasePrice: purchasePrice,
-          purchasePercentage: purchasePercentage,
-          availableStock: initialStock,
-          totalSoldWebsite: 0,
-          totalSoldStore: 0,
-          isActive: req.body.isActive !== undefined ? req.body.isActive : true,
-        });
-      }
-    }
+    // VendorProductPricing removed - all data now in Products collection
     
     res.status(201).json({
       success: true,
@@ -177,41 +123,26 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
   try {
     const user = req.user;
     
-    // Check permissions: Admin can update any, MY_SHOP can update their own
-    if (user.role !== 'admin' && user.vendorType !== 'MY_SHOP') {
-      return next(new AppError('Only Admin and MY_SHOP vendors can update products', 403));
+    // Check permissions: Admin can update any, vendors can update their own
+    if (user.role !== 'admin' && user.vendorType !== 'MY_SHOP' && user.vendorType !== 'WAREHOUSE_FULFILLER') {
+      return next(new AppError('Only Admin and vendors can update products', 403));
     }
     
-    // If MY_SHOP vendor, verify they own this product
-    if (user.vendorType === 'MY_SHOP') {
-      const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
-      const vendorProduct = await VendorProductPricing.findOne({
-        vendor_id: user._id,
-        product_id: req.params.id,
-      });
+    // If vendor, verify they own this product (check addedBy field)
+    if (user.role === 'vendor') {
+      const existingProduct = await Product.findById(req.params.id);
+      if (!existingProduct) {
+        return next(new AppError('Product not found', 404));
+      }
       
-      if (!vendorProduct) {
+      if (existingProduct.addedBy?.toString() !== user._id.toString()) {
         return next(new AppError('You can only update products you created', 403));
       }
     }
     
     const product = await ProductService.updateProduct(req.params.id, req.body);
     
-    // If MY_SHOP vendor and updating stock/pricing fields, update VendorProductPricing
-    if (user.vendorType === 'MY_SHOP' && (req.body.availableStock !== undefined || req.body.purchasePrice !== undefined)) {
-      const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
-      const updateData: any = {};
-      
-      if (req.body.availableStock !== undefined) updateData.availableStock = req.body.availableStock;
-      if (req.body.purchasePrice !== undefined) updateData.purchasePrice = req.body.purchasePrice;
-      if (req.body.isActive !== undefined) updateData.isActive = req.body.isActive;
-      
-      await VendorProductPricing.findOneAndUpdate(
-        { vendor_id: user._id, product_id: req.params.id },
-        updateData,
-        { new: true }
-      );
-    }
+    // VendorProductPricing removed - all data now in Products collection
     
     res.status(200).json({
       success: true,

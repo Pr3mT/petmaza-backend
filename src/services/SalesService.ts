@@ -1,11 +1,11 @@
 import SalesHistory from '../models/SalesHistory';
-import VendorProductPricing from '../models/VendorProductPricing';
+import Product from '../models/Product';
 import { AppError } from '../middlewares/errorHandler';
 
 export class SalesService {
   /**
    * Record a sale (website or store)
-   * Automatically updates stock and sales counters
+   * Automatically updates sales counters in Products collection
    */
   static async recordSale(params: {
     vendor_id: string;
@@ -30,27 +30,19 @@ export class SalesService {
       selectedVariant,
     } = params;
 
-    // Get vendor product pricing
-    const pricing = await VendorProductPricing.findOne({
-      vendor_id,
-      product_id,
-      isActive: true,
-    });
+    // Get product
+    const product = await Product.findById(product_id);
 
-    if (!pricing) {
-      throw new AppError('Product not found in vendor inventory', 404);
+    if (!product) {
+      throw new AppError('Product not found', 404);
     }
 
-    // Check if sufficient stock available
-    if (pricing.availableStock < quantity) {
-      throw new AppError(
-        `Insufficient stock. Available: ${pricing.availableStock}, Required: ${quantity}`,
-        400
-      );
+    if (!product.isActive) {
+      throw new AppError('Product is not active', 400);
     }
 
     // Calculate prices
-    const purchasePrice = pricing.purchasePrice;
+    const purchasePrice = product.hasVariants ? 0 : (product.purchasePrice || 0);
     const totalPurchasePrice = purchasePrice * quantity;
 
     let totalSellingPrice: number | undefined;
@@ -61,7 +53,7 @@ export class SalesService {
       profit = totalSellingPrice - totalPurchasePrice;
     }
 
-    // Create sales history record
+    // Create sales history record for vendor-wise reporting
     const sale = await SalesHistory.create({
       vendor_id,
       product_id,
@@ -78,42 +70,41 @@ export class SalesService {
       saleDate: new Date(),
     });
 
-    // Update inventory and sales counters
-    if (selectedVariant && selectedVariant.weight && selectedVariant.unit) {
-      // Update variant-specific stock
-      const variantIndex = pricing.variantStock?.findIndex(
+    // Update product sales counters
+    if (selectedVariant && selectedVariant.weight && selectedVariant.unit && product.hasVariants) {
+      // Update variant-specific sales counters
+      const variantIndex = product.variants?.findIndex(
         (v: any) => v.weight === selectedVariant.weight && v.unit === selectedVariant.unit
       );
 
-      if (variantIndex !== undefined && variantIndex >= 0 && pricing.variantStock) {
-        // Check if variant has sufficient stock
-        const variantStock = pricing.variantStock[variantIndex];
-        if (variantStock.availableStock < quantity) {
-          throw new AppError(
-            `Insufficient variant stock. Available: ${variantStock.availableStock}, Required: ${quantity}`,
-            400
-          );
+      if (variantIndex !== undefined && variantIndex >= 0 && product.variants) {
+        // Update sales counter for this variant
+        if (saleType === 'WEBSITE') {
+          product.variants[variantIndex].totalSoldWebsite = (product.variants[variantIndex].totalSoldWebsite || 0) + quantity;
+        } else {
+          product.variants[variantIndex].totalSoldStore = (product.variants[variantIndex].totalSoldStore || 0) + quantity;
+        }
+        product.markModified('variants');
+        await product.save();
+      } else {
+        // Variant not found in variants array - update general counters instead
+        console.log(`Variant ${selectedVariant.weight}${selectedVariant.unit} not in variants, updating general counters`);
+        const updateFields: any = {
+          $inc: {},
+        };
+
+        if (saleType === 'WEBSITE') {
+          updateFields.$inc.totalSoldWebsite = quantity;
+        } else {
+          updateFields.$inc.totalSoldStore = quantity;
         }
 
-        // Update variant stock
-        pricing.variantStock[variantIndex].availableStock -= quantity;
-        if (saleType === 'WEBSITE') {
-          pricing.variantStock[variantIndex].totalSoldWebsite += quantity;
-        } else {
-          pricing.variantStock[variantIndex].totalSoldStore += quantity;
-        }
-        pricing.markModified('variantStock');
-        await pricing.save();
-      } else {
-        console.error(`Variant ${selectedVariant.weight}${selectedVariant.unit} not found in pricing`);
-        throw new AppError('Variant not found in inventory', 404);
+        await Product.findByIdAndUpdate(product._id, updateFields);
       }
     } else {
-      // Update general product stock (non-variant or legacy)
+      // Update general product sales counters
       const updateFields: any = {
-        $inc: {
-          availableStock: -quantity,
-        },
+        $inc: {},
       };
 
       if (saleType === 'WEBSITE') {
@@ -122,7 +113,7 @@ export class SalesService {
         updateFields.$inc.totalSoldStore = quantity;
       }
 
-      await VendorProductPricing.findByIdAndUpdate(pricing._id, updateFields);
+      await Product.findByIdAndUpdate(product._id, updateFields);
     }
 
     return sale;
@@ -130,7 +121,7 @@ export class SalesService {
 
   /**
    * Reverse a sale (refund/cancellation)
-   * Restores stock and updates sales counters
+   * Restores sales counters in Products collection
    */
   static async reverseSale(params: {
     vendor_id: string;
@@ -141,18 +132,14 @@ export class SalesService {
   }) {
     const { vendor_id, product_id, quantity, order_id, selectedVariant } = params;
 
-    // Get vendor product pricing
-    const pricing = await VendorProductPricing.findOne({
-      vendor_id,
-      product_id,
-      isActive: true,
-    });
+    // Get product
+    const product = await Product.findById(product_id);
 
-    if (!pricing) {
-      throw new AppError('Product not found in vendor inventory', 404);
+    if (!product) {
+      throw new AppError('Product not found', 404);
     }
 
-    // Mark the sale record as reversed
+    // Mark the sale record as reversed in SalesHistory
     if (order_id) {
       await SalesHistory.updateMany(
         {
@@ -170,24 +157,23 @@ export class SalesService {
       );
     }
 
-    // Restore inventory
-    if (selectedVariant && selectedVariant.weight && selectedVariant.unit) {
-      // Restore variant-specific stock
-      const variantIndex = pricing.variantStock?.findIndex(
+    // Reverse sales counters in Product
+    if (selectedVariant && selectedVariant.weight && selectedVariant.unit && product.hasVariants) {
+      // Reverse variant-specific sales counter
+      const variantIndex = product.variants?.findIndex(
         (v: any) => v.weight === selectedVariant.weight && v.unit === selectedVariant.unit
       );
 
-      if (variantIndex !== undefined && variantIndex >= 0 && pricing.variantStock) {
-        pricing.variantStock[variantIndex].availableStock += quantity;
-        pricing.variantStock[variantIndex].totalSoldWebsite -= quantity;
-        pricing.markModified('variantStock');
-        await pricing.save();
+      if (variantIndex !== undefined && variantIndex >= 0 && product.variants) {
+        // Reverse sales counter for this variant
+        product.variants[variantIndex].totalSoldWebsite = Math.max(0, (product.variants[variantIndex].totalSoldWebsite || 0) - quantity);
+        product.markModified('variants');
+        await product.save();
       }
     } else {
-      // Restore general product stock
-      await VendorProductPricing.findByIdAndUpdate(pricing._id, {
+      // Reverse general product sales counter
+      await Product.findByIdAndUpdate(product._id, {
         $inc: {
-          availableStock: quantity,
           totalSoldWebsite: -quantity,
         },
       });

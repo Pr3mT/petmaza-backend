@@ -82,7 +82,7 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
       return next(new AppError(`Order is already ${order.status}`, 400));
     }
 
-    // Record sales and reduce stock when MY_SHOP accepts
+    // Record sales when MY_SHOP accepts (all products in Products collection)
     const { SalesService } = await import('../services/SalesService');
 
     for (const item of order.items) {
@@ -97,9 +97,9 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
           sellingPrice: item.sellingPrice,
           selectedVariant: item.selectedVariant,
         });
-      } catch (error) {
+      } catch (error: any) {
+        // Log error but don't fail order acceptance
         console.error(`Failed to record sale for product ${item.product_id}:`, error);
-        return next(new AppError('Failed to process order items. Please check stock availability.', 400));
       }
     }
 

@@ -30,6 +30,8 @@ export interface IProductVariant {
   purchasePercentage: number;
   purchasePrice: number;
   isActive: boolean;
+  totalSoldWebsite?: number;
+  totalSoldStore?: number;
 }
 
 export interface IProduct extends Document {
@@ -54,6 +56,9 @@ export interface IProduct extends Document {
   primeVendor_id?: Types.ObjectId | string; // Prime vendor who handles this product
   images: string[];
   isActive: boolean;
+  addedBy?: Types.ObjectId | string; // User who created the product
+  totalSoldWebsite?: number; // Total units sold via website
+  totalSoldStore?: number; // Total units sold in physical store
   inStock?: boolean;
   createdAt: Date;
   updatedAt: Date;

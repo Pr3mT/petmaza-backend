@@ -59,6 +59,8 @@ const productSchema = new Schema<IProduct>(
       purchasePercentage: { type: Number, min: 0, max: 100 },
       purchasePrice: { type: Number, min: 0 },
       isActive: { type: Boolean, default: true },
+      totalSoldWebsite: { type: Number, default: 0, min: 0 },
+      totalSoldStore: { type: Number, default: 0, min: 0 },
     }],
     mrp: {
       type: Number,
@@ -115,6 +117,21 @@ const productSchema = new Schema<IProduct>(
     isActive: {
       type: Boolean,
       default: true,
+    },
+    addedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: false,
+    },
+    totalSoldWebsite: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    totalSoldStore: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
   },
   {

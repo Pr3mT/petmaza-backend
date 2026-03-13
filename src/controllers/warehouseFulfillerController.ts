@@ -245,14 +245,47 @@ export const rejectAndReassign = async (req: AuthRequest, res: Response, next: N
       return next(new AppError('Access denied. Only warehouse fulfillers can reject orders.', 403));
     }
 
-    const order = await Order.findById(orderId);
+    // Get fulfiller's assigned subcategories
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    const vendorDetails = await VendorDetails.findOne({ vendor_id: fulfiller._id });
+
+    if (!vendorDetails || !vendorDetails.assignedSubcategories || vendorDetails.assignedSubcategories.length === 0) {
+      return next(new AppError('You have no assigned subcategories. Please contact admin.', 403));
+    }
+
+    const assignedSubcategories = vendorDetails.assignedSubcategories;
+
+    // Find order and populate products
+    const order = await Order.findById(orderId).populate('items.product_id', 'subCategory');
 
     if (!order) {
       return next(new AppError('Order not found', 404));
     }
 
-    if (order.assignedVendorId?.toString() !== fulfiller._id.toString()) {
+    // Authorization: Allow rejection if EITHER:
+    // 1. Order is assigned to this fulfiller, OR
+    // 2. Order is a broadcast order (assignedVendorId = null) with matching products
+    const isAssignedToFulfiller = order.assignedVendorId?.toString() === fulfiller._id.toString();
+    const isBroadcastOrder = order.assignedVendorId === null;
+    
+    if (!isAssignedToFulfiller && !isBroadcastOrder) {
+      // Order is assigned to someone else
       return next(new AppError('This order is not assigned to you', 403));
+    }
+
+    // If broadcast order, verify it contains products from assigned subcategories
+    if (isBroadcastOrder) {
+      const hasMatchingProducts = order.items.some(item => {
+        const product = item.product_id as any;
+        if (product && product.subCategory) {
+          return assignedSubcategories.includes(product.subCategory);
+        }
+        return false;
+      });
+
+      if (!hasMatchingProducts) {
+        return next(new AppError('This order does not contain products from your assigned categories', 403));
+      }
     }
 
     if (!['PENDING', 'ACCEPTED'].includes(order.status)) {
