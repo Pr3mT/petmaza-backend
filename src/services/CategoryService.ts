@@ -95,5 +95,21 @@ export class CategoryService {
 
     return category;
   }
+
+  // Get only subcategories (categories with parentCategoryId)
+  static async getSubcategories(includeInactive = false) {
+    const query: any = {
+      parentCategoryId: { $ne: null }, // Only get categories that have a parent
+    };
+    if (!includeInactive) {
+      query.isActive = true;
+    }
+
+    const subcategories = await Category.find(query)
+      .populate('parentCategoryId', 'name')
+      .sort({ name: 1 });
+    
+    return subcategories;
+  }
 }
 

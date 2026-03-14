@@ -1,22 +1,41 @@
 import { Request, Response, NextFunction } from 'express';
+import { AuthRequest } from './auth';
+
+// Global cache map for sharing across middleware instances
+const globalCache = new Map<string, { data: any; timestamp: number }>();
+
+// Clean expired cache entries every minute
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of globalCache.entries()) {
+    // Remove entries older than 10 minutes regardless of duration
+    if (now - value.timestamp > 600000) {
+      globalCache.delete(key);
+    }
+  }
+}, 60000);
+
+/**
+ * Clear cache for a specific URL pattern
+ */
+export const clearCache = (pattern?: string) => {
+  if (!pattern) {
+    globalCache.clear();
+    return;
+  }
+  
+  for (const key of globalCache.keys()) {
+    if (key.includes(pattern)) {
+      globalCache.delete(key);
+    }
+  }
+};
 
 /**
  * Response caching middleware for frequently accessed endpoints
  * Caches GET requests for a specified duration
  */
 export const cacheResponse = (durationMs: number = 60000) => {
-  const cache = new Map<string, { data: any; timestamp: number }>();
-  
-  // Clean expired cache entries every minute
-  setInterval(() => {
-    const now = Date.now();
-    for (const [key, value] of cache.entries()) {
-      if (now - value.timestamp > durationMs) {
-        cache.delete(key);
-      }
-    }
-  }, 60000);
-
   return (req: Request, res: Response, next: NextFunction) => {
     // Only cache GET requests
     if (req.method !== 'GET') {
@@ -24,7 +43,7 @@ export const cacheResponse = (durationMs: number = 60000) => {
     }
 
     const key = `${req.originalUrl || req.url}`;
-    const cached = cache.get(key);
+    const cached = globalCache.get(key);
 
     if (cached && Date.now() - cached.timestamp < durationMs) {
       // Return cached response
@@ -36,7 +55,47 @@ export const cacheResponse = (durationMs: number = 60000) => {
 
     // Override json method to cache response
     res.json = function (data: any) {
-      cache.set(key, { data, timestamp: Date.now() });
+      globalCache.set(key, { data, timestamp: Date.now() });
+      return originalJson(data);
+    };
+
+    next();
+  };
+};
+
+/**
+ * Conditional caching middleware - caches for customers/public, but NOT for admins
+ * This ensures admins always get real-time data while customers benefit from caching
+ */
+export const cacheForCustomersOnly = (durationMs: number = 60000) => {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    // Only cache GET requests
+    if (req.method !== 'GET') {
+      return next();
+    }
+
+    // Check if user is admin - if yes, skip caching entirely
+    const isAdmin = req.user && req.user.role === 'admin';
+    if (isAdmin) {
+      // Admin users always get fresh data - don't cache and don't return cached data
+      return next();
+    }
+
+    // For customers/public, apply caching
+    const key = `${req.originalUrl || req.url}`.split('?')[0]; // Remove query params for cache key
+    const cached = globalCache.get(key);
+
+    if (cached && Date.now() - cached.timestamp < durationMs) {
+      // Return cached response
+      return res.json(cached.data);
+    }
+
+    // Store original json method
+    const originalJson = res.json.bind(res);
+
+    // Override json method to cache response
+    res.json = function (data: any) {
+      globalCache.set(key, { data, timestamp: Date.now() });
       return originalJson(data);
     };
 

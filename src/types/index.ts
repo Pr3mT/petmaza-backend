@@ -241,7 +241,7 @@ export interface ICategory extends Document {
   name: string;
   description?: string;
   image?: string;
-  parentCategoryId?: string; // For nested categories
+  parentCategoryId?: Types.ObjectId | string | null; // For nested categories
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -251,6 +251,7 @@ export interface IBrand extends Document {
   name: string;
   description?: string;
   image?: string;
+  subcategories: (Types.ObjectId | string)[];
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;

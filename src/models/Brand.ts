@@ -16,6 +16,10 @@ const brandSchema = new Schema<IBrand>(
     image: {
       type: String,
     },
+    subcategories: [{
+      type: Schema.Types.ObjectId,
+      ref: 'Category',
+    }],
     isActive: {
       type: Boolean,
       default: true,
@@ -30,6 +34,7 @@ const brandSchema = new Schema<IBrand>(
 brandSchema.index({ name: 1 }, { unique: true }); // Unique index on name
 brandSchema.index({ isActive: 1 });
 brandSchema.index({ isActive: 1, name: 1 }); // Compound index
+brandSchema.index({ subcategories: 1 }); // Index for subcategory filtering
 
 const Brand = mongoose.model<IBrand>('Brand', brandSchema);
 

@@ -66,3 +66,16 @@ export const deleteCategory = async (req: Request, res: Response, next: NextFunc
   }
 };
 
+export const getSubcategories = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const includeInactive = req.query.includeInactive === 'true';
+    const subcategories = await CategoryService.getSubcategories(includeInactive);
+    res.status(200).json({
+      success: true,
+      data: { subcategories },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+

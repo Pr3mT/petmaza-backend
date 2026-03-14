@@ -8,18 +8,18 @@ import {
   getPrimeListingsForProduct,
   getPrimeProductsByCategory,
 } from '../controllers/productController';
-import { verifyToken, checkRole } from '../middlewares/auth';
-import { cacheResponse } from '../middlewares/cache';
+import { verifyToken, checkRole, optionalAuth } from '../middlewares/auth';
+import { cacheResponse, cacheForCustomersOnly } from '../middlewares/cache';
 
 const router = express.Router();
 
-// Public routes with 2-minute caching for products (shorter due to frequent updates)
-router.get('/', cacheResponse(120000), getProducts);
-router.get('/:id', cacheResponse(120000), getProduct);
+// Public routes - Cache for customers/public, but NOT for admins (admins need real-time data)
+router.get('/', optionalAuth, cacheForCustomersOnly(120000), getProducts); // 2 min cache for customers only
+router.get('/:id', optionalAuth, cacheForCustomersOnly(120000), getProduct); // 2 min cache for customers only
 
-// Prime product routes (public)
-router.get('/prime/category', cacheResponse(120000), getPrimeProductsByCategory);
-router.get('/:productId/prime-listings', cacheResponse(120000), getPrimeListingsForProduct);
+// Prime product routes (public) - Cache for customers only
+router.get('/prime/category', optionalAuth, cacheForCustomersOnly(120000), getPrimeProductsByCategory);
+router.get('/:productId/prime-listings', optionalAuth, cacheForCustomersOnly(120000), getPrimeListingsForProduct);
 
 // Protected routes - Admin and MY_SHOP vendors can create/manage products
 router.post('/', verifyToken, createProduct); // MY_SHOP vendors can create products

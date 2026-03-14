@@ -99,6 +99,60 @@ export const checkPrimeVendor = (req: AuthRequest, res: Response, next: NextFunc
 
 // Alias for verifyToken
 export const authenticate = verifyToken;
+
+// Optional authentication - doesn't fail if no token, but populates req.user if token exists
+export const optionalAuth = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    let token: string | undefined;
+
+    // Check for token in cookies first
+    if (req.cookies && req.cookies.token) {
+      token = req.cookies.token;
+    } 
+    // Fallback to Authorization header
+    else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    // If no token, continue without authentication
+    if (!token) {
+      return next();
+    }
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+      
+      // Try to get user from cache first
+      let user = userCache.get(decoded.id);
+      
+      if (!user) {
+        // Cache miss - fetch from database
+        user = await User.findById(decoded.id).select('-password').lean();
+        
+        if (user) {
+          // Store in cache for future requests
+          userCache.set(decoded.id, user);
+        }
+      }
+
+      if (user) {
+        req.user = user;
+      }
+    } catch (error) {
+      // Invalid token, but continue without authentication
+      // (don't throw error, just skip authentication)
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+export const authenticate = verifyToken;
 export const protect = verifyToken; // Common alias
 
 // Alias for checkRole

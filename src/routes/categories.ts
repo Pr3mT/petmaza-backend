@@ -3,6 +3,7 @@ import {
   createCategory,
   getAllCategories,
   getCategoryById,
+  getSubcategories,
   updateCategory,
   deleteCategory,
 } from '../controllers/categoryController';
@@ -13,6 +14,7 @@ const router = express.Router();
 
 // Public routes with 5-minute caching
 router.get('/', cacheResponse(300000), getAllCategories);
+router.get('/subcategories', cacheResponse(300000), getSubcategories);
 router.get('/:id', cacheResponse(300000), getCategoryById);
 
 // Admin and MY_SHOP vendor can create
