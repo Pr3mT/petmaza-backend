@@ -7,6 +7,8 @@ import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import path from 'path';
 import { createServer } from 'http';
+import https from 'https';
+import http from 'http';
 import { Server } from 'socket.io';
 import logger from './config/logger';
 import { errorHandler } from './middlewares/errorHandler';
@@ -242,7 +244,60 @@ const startServer = async () => {
   }
 };
 
+// ─── Keep-Alive Cron for Render Free Instance ────────────────────────────────
+// Render free tier spins down after 15 min of inactivity.
+// Each ping is scheduled at a random interval between 10–14 minutes
+// to avoid predictable patterns while staying under the 15-min threshold.
+const startKeepAliveCron = () => {
+  const RENDER_URL = "https://petmaza-backend.onrender.com"; // Replace with your actual Render URL
+
+  if (!RENDER_URL) {
+    logger.warn('Keep-alive cron: RENDER_EXTERNAL_URL not set, skipping self-ping.');
+    return;
+  }
+
+  // Returns a random integer between min and max (inclusive), in milliseconds
+  const randomIntervalMs = (minMinutes: number, maxMinutes: number): number => {
+    const minMs = minMinutes * 60 * 1000;
+    const maxMs = maxMinutes * 60 * 1000;
+    return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  };
+
+  const pingServer = () => {
+    const url = `${RENDER_URL}/health`;
+    const client = url.startsWith('https') ? https : http;
+
+    const req = client.get(url, (res) => {
+      const nextMs = randomIntervalMs(10, 14);
+      logger.info(`Keep-alive ping → ${url} | Status: ${res.statusCode} | Next ping in ${Math.round(nextMs / 60000)} min`);
+      res.resume(); // Consume response data to free up memory
+      setTimeout(pingServer, nextMs); // Schedule next ping at a new random interval
+    });
+
+    req.on('error', (err) => {
+      logger.error(`Keep-alive ping failed: ${err.message}`);
+      // Retry after a random interval even on failure
+      setTimeout(pingServer, randomIntervalMs(10, 14));
+    });
+
+    req.setTimeout(10000, () => {
+      req.destroy();
+      logger.warn('Keep-alive ping timed out after 10s');
+    });
+  };
+
+  // Delay the first ping by 30s to ensure the server is fully up
+  const initialDelay = 30000;
+  setTimeout(() => {
+    const firstInterval = randomIntervalMs(10, 14);
+    logger.info(`Keep-alive cron started — first ping in ${Math.round(firstInterval / 60000)} min (random 10–14 min intervals)`);
+    setTimeout(pingServer, firstInterval);
+  }, initialDelay);
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
 startServer();
+startKeepAliveCron();
 
 export { io };
 
