@@ -4,6 +4,7 @@ import { AppError } from '../middlewares/errorHandler';
 export class HeroBannerService {
   // Create hero banner
   static async createBanner(data: {
+    bannerType?: 'text' | 'image';
     title: string;
     subtitle: string;
     description?: string;
@@ -13,7 +14,9 @@ export class HeroBannerService {
     bgColor: string;
     accentColor: string;
     image: string;
+    mobileImage?: string;
     displayOrder?: number;
+    isActive?: boolean;
   }) {
     const banner = await HeroBanner.create(data);
     return banner;

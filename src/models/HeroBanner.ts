@@ -11,6 +11,7 @@ export interface IHeroBanner extends Document {
   bgColor: string;
   accentColor: string;
   image: string; // Emoji or image URL (for text type) or full carousel image URL (for image type)
+  mobileImage?: string; // Optional mobile-specific image for 'image' type banners
   isActive: boolean;
   displayOrder: number;
   createdAt: Date;
@@ -74,6 +75,12 @@ const heroBannerSchema = new Schema<IHeroBanner>(
       required: [true, 'Image/emoji is required'],
       default: '🐾',
     },
+    mobileImage: {
+      type: String,
+      required: false,
+      default: '',
+      trim: true,
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -85,6 +92,8 @@ const heroBannerSchema = new Schema<IHeroBanner>(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: false },
+    toObject: { virtuals: false },
   }
 );
 
