@@ -711,40 +711,105 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
       }
     }
 
-    // Get all vendors (PRIME, MY_SHOP, WAREHOUSE_FULFILLER)
+    // Get all vendors with their details
     const vendors = await User.find({
       role: 'vendor',
       vendorType: { $in: ['PRIME', 'MY_SHOP', 'WAREHOUSE_FULFILLER'] }
-    }).select('name email vendorType isActive');
+    }).select('name email vendorType isApproved phone address pincodesServed').lean();
 
-    // Get all orders fulfilled by vendors (not PENDING status)
+    // Import VendorDetails model
+    const VendorDetails = require('../models/VendorDetails').default;
+
+    // Get vendor details for each vendor
+    const vendorDetailsMap: any = {};
+    for (const vendor of vendors) {
+      const details = await VendorDetails.findOne({ vendor_id: vendor._id })
+        .populate('brandsHandled', 'name')
+        .lean();
+      if (details) {
+        vendorDetailsMap[vendor._id.toString()] = details;
+      }
+    }
+
+    console.log('[getVendorBilling] Total vendors found:', vendors.length);
+    console.log('[getVendorBilling] Vendor types:', vendors.map(v => v.vendorType));
+
+    // Get all orders assigned to or fulfilled by vendors
+    // Include: PENDING (with vendor), ASSIGNED, ACCEPTED, PACKED, PICKED_UP, IN_TRANSIT, DELIVERED
+    // This shows orders that have been assigned to vendors (either auto-assigned or accepted)
     const orderFilter = {
       ...dateFilter,
-      status: { $nin: ['PENDING', 'PENDING_BROADCAST', 'CANCELLED', 'REJECTED'] },
-      assignedVendorId: { $exists: true, $ne: null }
+      assignedVendorId: { $exists: true, $ne: null },
+      status: { $nin: ['CANCELLED', 'REJECTED'] } // Exclude only cancelled/rejected
     };
 
     const orders = await Order.find(orderFilter)
       .populate('assignedVendorId', 'name email vendorType')
       .populate('customer_id', 'name email')
-      .sort({ createdAt: -1 });
+      .populate('items.product_id', 'name category brand')
+      .populate('items.primeProduct_id', 'name brand')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    console.log('[getVendorBilling] Total orders found:', orders.length);
+    console.log('[getVendorBilling] Order filter:', JSON.stringify(orderFilter));
+    if (orders.length > 0) {
+      console.log('[getVendorBilling] First order status:', orders[0].status);
+      console.log('[getVendorBilling] First order has assignedVendorId:', !!orders[0].assignedVendorId);
+    } else {
+      // Debug: Check what orders exist in total
+      const totalOrders = await Order.countDocuments(dateFilter);
+      const ordersWithVendor = await Order.countDocuments({ 
+        ...dateFilter, 
+        assignedVendorId: { $exists: true, $ne: null } 
+      });
+      console.log('[getVendorBilling] DEBUG - Total orders in DB:', totalOrders);
+      console.log('[getVendorBilling] DEBUG - Orders with assignedVendorId:', ordersWithVendor);
+      
+      // Check status distribution
+      const statusCounts = await Order.aggregate([
+        { $match: dateFilter },
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]);
+      console.log('[getVendorBilling] DEBUG - Order status distribution:', statusCounts);
+    }
 
     // Calculate stats by vendor type
     const vendorTypeStats: any = {};
     const vendorStats: any = {};
+    const detailedOrders: any[] = [];
+    const orderStatusByType: any = {};
 
-    // Initialize vendor stats
+    // Initialize vendor stats with details
     vendors.forEach(vendor => {
       const vendorId = vendor._id.toString();
+      const details = vendorDetailsMap[vendorId];
+      
       vendorStats[vendorId] = {
         _id: vendor._id,
         name: vendor.name,
         email: vendor.email,
+        phone: vendor.phone,
         vendorType: vendor.vendorType,
-        isActive: vendor.isActive,
+        isApproved: vendor.isApproved,
         totalOrders: 0,
         totalRevenue: 0,
         platformProfit: 0,
+        ordersByStatus: {},
+        commissionRate: vendor.vendorType === 'PRIME' ? '10%' : vendor.vendorType === 'MY_SHOP' ? '15%' : '₹10/order',
+        // Add vendor details
+        shopName: details?.shopName || 'N/A',
+        businessType: details?.businessType || 'N/A',
+        serviceablePincodes: details?.serviceablePincodes || vendor.pincodesServed || [],
+        pickupAddress: details?.pickupAddress || vendor.address || null,
+        brandsHandled: details?.brandsHandled || [],
+        assignedSubcategories: details?.assignedSubcategories || [],
+        rating: details?.rating || 0,
+        completedOrders: details?.completedOrders || 0,
+        totalPrimeProducts: details?.totalPrimeProducts || 0,
+        activePrimeProducts: details?.activePrimeProducts || 0,
+        yearsInBusiness: details?.yearsInBusiness || 0,
+        averageDeliveryTime: details?.averageDeliveryTime || 'N/A',
       };
 
       // Initialize vendor type stats
@@ -755,9 +820,15 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
           totalOrders: 0,
           totalRevenue: 0,
           totalProfit: 0,
+          ordersByStatus: {},
         };
       }
       vendorTypeStats[vendor.vendorType].totalVendors += 1;
+
+      // Initialize order status by type
+      if (!orderStatusByType[vendor.vendorType]) {
+        orderStatusByType[vendor.vendorType] = {};
+      }
     });
 
     // Calculate revenue and profit from orders
@@ -768,6 +839,7 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
       const vendorId = vendor._id.toString();
       const vendorType = vendor.vendorType;
       const orderTotal = order.total || 0;
+      const orderStatus = order.status;
 
       // Platform profit calculation:
       // For PRIME vendors: 10% platform fee
@@ -787,6 +859,12 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
         vendorStats[vendorId].totalOrders += 1;
         vendorStats[vendorId].totalRevenue += orderTotal;
         vendorStats[vendorId].platformProfit += platformProfit;
+        
+        // Track orders by status
+        if (!vendorStats[vendorId].ordersByStatus[orderStatus]) {
+          vendorStats[vendorId].ordersByStatus[orderStatus] = 0;
+        }
+        vendorStats[vendorId].ordersByStatus[orderStatus] += 1;
       }
 
       // Update vendor type stats
@@ -794,12 +872,48 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
         vendorTypeStats[vendorType].totalOrders += 1;
         vendorTypeStats[vendorType].totalRevenue += orderTotal;
         vendorTypeStats[vendorType].totalProfit += platformProfit;
+
+        // Track orders by status for vendor type
+        if (!vendorTypeStats[vendorType].ordersByStatus[orderStatus]) {
+          vendorTypeStats[vendorType].ordersByStatus[orderStatus] = 0;
+        }
+        vendorTypeStats[vendorType].ordersByStatus[orderStatus] += 1;
       }
+
+      // Add to detailed orders for CSV export
+      const customer = order.customer_id as any;
+      
+      // Extract product names from items
+      let productNames = 'N/A';
+      if (order.items && Array.isArray(order.items)) {
+        productNames = order.items
+          .map((item: any) => {
+            const product = item.product_id || item.primeProduct_id;
+            return product?.name || 'Unknown Product';
+          })
+          .filter((name: string) => name !== 'Unknown Product')
+          .join(', ') || 'N/A';
+      }
+      
+      detailedOrders.push({
+        orderId: order.order_id || order._id,
+        orderDate: order.createdAt,
+        vendorName: vendor.name,
+        vendorEmail: vendor.email,
+        vendorType: vendorType,
+        customerName: customer?.name || 'N/A',
+        customerEmail: customer?.email || 'N/A',
+        products: productNames,
+        orderStatus: orderStatus,
+        orderTotal: orderTotal,
+        platformProfit: platformProfit,
+        paymentStatus: order.payment_status || 'N/A',
+      });
     });
 
     // Convert objects to arrays
     const byVendorType = Object.values(vendorTypeStats);
-    const vendorList = Object.values(vendorStats).filter((v: any) => v.totalOrders > 0); // Only show vendors with orders
+    const vendorList = Object.values(vendorStats); // Show all vendors, not just those with orders
 
     // Calculate summary
     const summary = {
@@ -807,6 +921,8 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
       totalOrders: orders.length,
       totalRevenue: byVendorType.reduce((sum: number, item: any) => sum + item.totalRevenue, 0),
       totalProfit: byVendorType.reduce((sum: number, item: any) => sum + item.totalProfit, 0),
+      pendingSettlement: byVendorType.reduce((sum: number, item: any) => sum + item.totalRevenue - item.totalProfit, 0),
+      averageOrderValue: orders.length > 0 ? byVendorType.reduce((sum: number, item: any) => sum + item.totalRevenue, 0) / orders.length : 0,
     };
 
     res.status(200).json({
@@ -815,6 +931,7 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
         summary,
         byVendorType,
         vendors: vendorList,
+        detailedOrders, // For CSV export
       },
     });
   } catch (error: any) {
