@@ -67,6 +67,13 @@ export class BrandService {
     const brands = await Brand.find(query)
       .populate('subcategories', 'name description image')
       .sort({ name: 1 });
+    
+    console.log(`BrandService.getAllBrands - Found ${brands.length} brands`);
+    if (brands.length > 0) {
+      console.log('First brand subcategories:', brands[0].subcategories);
+      console.log('First brand subcategories length:', brands[0].subcategories?.length);
+    }
+    
     return brands;
   }
 
