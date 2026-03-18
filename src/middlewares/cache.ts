@@ -81,8 +81,8 @@ export const cacheForCustomersOnly = (durationMs: number = 60000) => {
       return next();
     }
 
-    // For customers/public, apply caching
-    const key = `${req.originalUrl || req.url}`.split('?')[0]; // Remove query params for cache key
+    // For customers/public, apply caching (include query params so filtered results are cached separately)
+    const key = req.originalUrl || req.url;
     const cached = globalCache.get(key);
 
     if (cached && Date.now() - cached.timestamp < durationMs) {

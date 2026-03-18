@@ -29,22 +29,19 @@ export class BrandService {
         throw new AppError(`Invalid subcategory IDs: ${invalidIds.join(', ')}`, 400);
       }
       
-      // Check if all subcategories exist in DB and are actually subcategories (have parentCategoryId)
+      // Check if all categories exist in DB and are active (no parentCategoryId restriction)
       const categories = await Category.find({
         _id: { $in: data.subcategories },
-        parentCategoryId: { $ne: null }, // Must be a subcategory (has parent)
         isActive: true
       });
       
       if (categories.length !== data.subcategories.length) {
         const foundIds = categories.map(c => c._id.toString());
         const notFound = data.subcategories.filter(id => !foundIds.includes(id));
-        throw new AppError(`Subcategories not found or inactive: ${notFound.join(', ')}`, 400);
+        throw new AppError(`Categories not found or inactive: ${notFound.join(', ')}`, 400);
       }
       
-      console.log(`All ${categories.length} subcategories validated successfully`);
-    } else {
-      console.warn('No subcategories provided or empty array');
+      console.log(`All ${categories.length} categories validated successfully`);
     }
 
     const brand = await Brand.create(data);
@@ -107,33 +104,28 @@ export class BrandService {
     }
 
     // Validate subcategories if provided (must be valid ObjectIds and exist in DB)
-    if (data.subcategories !== undefined) {
-      if (data.subcategories.length > 0) {
-        console.log('Validating subcategory IDs:', data.subcategories);
-        
-        // Check if all are valid ObjectIds
-        const invalidIds = data.subcategories.filter(id => !mongoose.Types.ObjectId.isValid(id));
-        if (invalidIds.length > 0) {
-          throw new AppError(`Invalid subcategory IDs: ${invalidIds.join(', ')}`, 400);
-        }
-        
-        // Check if all subcategories exist in DB and are actually subcategories
-        const categories = await Category.find({
-          _id: { $in: data.subcategories },
-          parentCategoryId: { $ne: null },
-          isActive: true
-        });
-        
-        if (categories.length !== data.subcategories.length) {
-          const foundIds = categories.map(c => c._id.toString());
-          const notFound = data.subcategories.filter(id => !foundIds.includes(id));
-          throw new AppError(`Subcategories not found or inactive: ${notFound.join(', ')}`, 400);
-        }
-        
-        console.log(`All ${categories.length} subcategories validated successfully`);
-      } else {
-        console.warn('Empty subcategories array provided');
+    if (data.subcategories !== undefined && data.subcategories.length > 0) {
+      console.log('Validating subcategory IDs:', data.subcategories);
+      
+      // Check if all are valid ObjectIds
+      const invalidIds = data.subcategories.filter(id => !mongoose.Types.ObjectId.isValid(id));
+      if (invalidIds.length > 0) {
+        throw new AppError(`Invalid subcategory IDs: ${invalidIds.join(', ')}`, 400);
       }
+      
+      // Check if all categories exist in DB and are active (no parentCategoryId restriction)
+      const categories = await Category.find({
+        _id: { $in: data.subcategories },
+        isActive: true
+      });
+      
+      if (categories.length !== data.subcategories.length) {
+        const foundIds = categories.map(c => c._id.toString());
+        const notFound = data.subcategories.filter(id => !foundIds.includes(id));
+        throw new AppError(`Categories not found or inactive: ${notFound.join(', ')}`, 400);
+      }
+      
+      console.log(`All ${categories.length} categories validated successfully`);
     }
 
     const brand = await Brand.findByIdAndUpdate(id, data, {

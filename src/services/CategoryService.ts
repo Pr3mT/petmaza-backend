@@ -96,11 +96,9 @@ export class CategoryService {
     return category;
   }
 
-  // Get only subcategories (categories with parentCategoryId)
+  // Get subcategories - returns all active categories so admin can assign any to a brand
   static async getSubcategories(includeInactive = false) {
-    const query: any = {
-      parentCategoryId: { $ne: null }, // Only get categories that have a parent
-    };
+    const query: any = {};
     if (!includeInactive) {
       query.isActive = true;
     }
