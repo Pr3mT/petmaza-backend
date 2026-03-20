@@ -219,6 +219,20 @@ const orderSchema = new Schema<IOrder>(
     deliveredAt: {
       type: Date,
     },
+    marketCollectionCompletedAt: {
+      type: Date,
+    },
+    marketCollectionData: {
+      totalItems: { type: Number },
+      collectedItems: { type: Number },
+      items: [{
+        productId: { type: String },
+        productName: { type: String },
+        quantity: { type: Number },
+      }],
+      windowStart: { type: String },
+      windowEnd: { type: String },
+    },
   },
   {
     timestamps: true,

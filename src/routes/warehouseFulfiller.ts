@@ -10,6 +10,9 @@ router.use(protect);
 // Get assigned orders
 router.get('/orders', warehouseFulfillerController.getWarehouseFulfillerOrders);
 
+// Save market collection data
+router.post('/market-collection', warehouseFulfillerController.saveMarketCollection);
+
 // Accept order
 router.post('/orders/:orderId/accept', warehouseFulfillerController.acceptOrder);
 

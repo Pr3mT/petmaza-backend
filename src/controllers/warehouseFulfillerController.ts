@@ -612,3 +612,75 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
     next(error);
   }
 };
+
+/**
+ * Save market collection data
+ * Records when fulfiller completes market shopping for their orders
+ */
+export const saveMarketCollection = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const fulfiller = req.user;
+
+    if (fulfiller.vendorType !== 'WAREHOUSE_FULFILLER') {
+      return next(new AppError('Access denied. Only warehouse fulfillers can save market collections.', 403));
+    }
+
+    const {
+      completedAt,
+      windowStart,
+      windowEnd,
+      totalItems,
+      collectedItems,
+      items,
+      orderIds,
+    } = req.body;
+
+    logger.info(`[saveMarketCollection] Fulfiller ${fulfiller.name} saved market collection:`, {
+      totalItems,
+      collectedItems,
+      orderCount: orderIds?.length || 0,
+    });
+
+    // Update orders with market collection timestamp
+    if (orderIds && orderIds.length > 0) {
+      await Order.updateMany(
+        {
+          _id: { $in: orderIds },
+          assignedVendorId: fulfiller._id,
+        },
+        {
+          $set: {
+            marketCollectionCompletedAt: completedAt,
+            marketCollectionData: {
+              totalItems,
+              collectedItems,
+              items,
+              windowStart,
+              windowEnd,
+            },
+          },
+        }
+      );
+
+      logger.info(`[saveMarketCollection] Updated ${orderIds.length} orders with collection data`);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Market collection saved successfully',
+      data: {
+        completedAt,
+        totalItems,
+        collectedItems,
+        ordersUpdated: orderIds?.length || 0,
+      },
+    });
+  } catch (error: any) {
+    logger.error('[saveMarketCollection] Error:', error);
+    next(error);
+  }
+};
