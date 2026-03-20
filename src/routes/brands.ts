@@ -19,8 +19,8 @@ router.get('/', optionalAuth, cacheForCustomersOnly(300000), getAllBrands); // 5
 router.get('/subcategories', cacheResponse(300000), getSubcategories); // 5 min cache for all
 router.get('/:id', optionalAuth, cacheForCustomersOnly(300000), getBrandById); // 5 min cache for customers only
 
-// Admin and MY_SHOP vendor can create
-router.post('/', verifyToken, checkMyShopVendor, createBrand);
+// Admin and all vendors (PRIME & MY_SHOP) can create brands
+router.post('/', verifyToken, checkRole('admin', 'vendor'), createBrand);
 
 // Admin only routes for update/delete (support both PUT and PATCH)
 router.put('/:id', verifyToken, checkRole('admin'), updateBrand);

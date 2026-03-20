@@ -2,8 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import { ProductService } from '../services/ProductService';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
+import Product from '../models/Product';
 import PrimeProduct from '../models/PrimeProduct';
 import VendorDetails from '../models/VendorDetails';
+import { clearCache } from '../middlewares/cache';
 
 export const createProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -53,6 +55,9 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
           : undefined,
       });
     }
+    
+    // Clear product cache so customers see the new product immediately
+    clearCache('/products');
     
     // VendorProductPricing removed - all data now in Products collection
     
@@ -142,6 +147,9 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
     
     const product = await ProductService.updateProduct(req.params.id, req.body);
     
+    // Clear product cache so customers see the updated product immediately
+    clearCache('/products');
+    
     // VendorProductPricing removed - all data now in Products collection
     
     res.status(200).json({
@@ -157,6 +165,10 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
 export const deleteProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const product = await ProductService.deleteProduct(req.params.id);
+    
+    // Clear product cache so customers don't see the deleted product
+    clearCache('/products');
+    
     res.status(200).json({
       success: true,
       message: 'Product deleted successfully',
