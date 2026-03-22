@@ -36,16 +36,14 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
         product_id: product._id,
         vendorMRP: product.mrp || (product.variants && product.variants.length > 0 ? product.variants[0].mrp : 0),
         vendorPrice: product.sellingPrice || (product.variants && product.variants.length > 0 ? product.variants[0].sellingPrice : 0),
-        stock: product.initialStock || 0,
+        stock: 0,
         minOrderQuantity: 1,
         maxOrderQuantity: 100,
         deliveryTime: '3-5 business days',
         isActive: true,
         isAvailable: true,
         // Use first variant if product has variants
-        variant_id: product.hasVariants && product.variants && product.variants.length > 0 
-          ? product.variants[0]._id 
-          : undefined,
+        variant_id: undefined,
         selectedVariant: product.hasVariants && product.variants && product.variants.length > 0
           ? {
               weight: product.variants[0].weight,
@@ -71,7 +69,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
   }
 };
 
-export const getProducts = async (req: Request, res: Response, next: NextFunction) => {
+export const getProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { category_id, brand_id, isPrime, pincode, search, mainCategory, subCategory, page, limit } = req.query;
 
@@ -93,6 +91,26 @@ export const getProducts = async (req: Request, res: Response, next: NextFunctio
     if (subCategory) filters.subCategory = subCategory as string;
     if (page) filters.page = parseInt(page as string);
     if (limit) filters.limit = parseInt(limit as string);
+
+    // Debug logging
+    console.log('🔍 getProducts - User Info:', {
+      hasUser: !!req.user,
+      userRole: req.user?.role,
+      userEmail: req.user?.email,
+      isAdmin: req.user && req.user.role === 'admin'
+    });
+
+    // Admin users can see all products (active and inactive)
+    // Customers only see active products
+    if (req.user && req.user.role === 'admin') {
+      // Don't filter by isActive for admin - show all products
+      filters.isActive = undefined;
+      console.log('✅ Admin detected - showing all products (active + inactive)');
+    } else {
+      // For customers and non-logged-in users, only show active products
+      filters.isActive = true;
+      console.log('👤 Customer/public - showing only active products');
+    }
 
     const products = await ProductService.getAllProducts(filters);
     res.status(200).json({
@@ -260,8 +278,9 @@ export const getPrimeProductsByCategory = async (req: Request, res: Response, ne
     }
 
     // Find products matching category
-    const products = await ProductService.getProducts({ 
-      filter: productFilter 
+    const products = await ProductService.getAllProducts({ 
+      mainCategory: productFilter.category,
+      subCategory: productFilter.subcategory
     });
 
     const productIds = products.map((p: any) => p._id);

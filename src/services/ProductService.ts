@@ -89,11 +89,12 @@ export class ProductService {
       query.isPrime = filters.isPrime;
     }
 
+    // Only filter by isActive if explicitly set
+    // Admin users can pass undefined to see all products (active and inactive)
     if (filters.isActive !== undefined) {
       query.isActive = filters.isActive;
-    } else {
-      query.isActive = true;
     }
+    // If filters.isActive is undefined, don't add any filter - show all products
 
     // Add search functionality
     if (filters.search) {
