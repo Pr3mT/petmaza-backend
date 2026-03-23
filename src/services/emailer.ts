@@ -1538,3 +1538,86 @@ export function queueOrderTakenNotificationEmail(data: {
     );
   });
 }
+
+/**
+ * Send product available notification email
+ */
+export async function sendProductAvailableEmail(data: {
+  email: string;
+  name: string;
+  productName: string;
+  productId: string;
+  productImage?: string;
+}) {
+  const { email, name, productName, productId, productImage } = data;
+  
+  const productUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/products/${productId}`;
+  
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
+        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
+      </div>
+      
+      <div style="padding: 20px;">
+        <h2 style="color: #28a745;">🎉 Great News!</h2>
+        <p>Hi ${name},</p>
+        
+        <p>The product you were waiting for is now back in stock!</p>
+        
+        ${productImage ? `
+        <div style="text-align: center; margin: 20px 0;">
+          <img src="${productImage}" alt="${productName}" style="max-width: 200px; height: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+        </div>
+        ` : ''}
+        
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3 style="margin-top: 0; color: #333;">${productName}</h3>
+          <p style="color: #28a745; font-weight: bold; font-size: 18px; margin: 10px 0;">✅ Now Available</p>
+        </div>
+        
+        <p>Hurry up and grab it before it's gone again!</p>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${productUrl}" style="display: inline-block; background-color: #ffd700; color: #333; padding: 15px 40px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 16px;">
+            🛒 Shop Now
+          </a>
+        </div>
+        
+        <p style="color: #666; font-size: 14px; margin-top: 30px;">
+          This is a one-time notification. If you didn't register for this notification, you can safely ignore this email.
+        </p>
+        
+        <p style="color: #666; font-size: 12px;">
+          If you have any questions, please contact our support team at support@petmaza.com
+        </p>
+      </div>
+      
+      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
+        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
+      </div>
+    </div>
+  `;
+
+  return sendEmail({
+    to: email,
+    subject: `🎉 ${productName} is Back in Stock!`,
+    html,
+    trigger: 'product_available',
+  });
+}
+
+/**
+ * Queue product available notification email (non-blocking)
+ */
+export function queueProductAvailableEmail(data: {
+  email: string;
+  name: string;
+  productName: string;
+  productId: string;
+  productImage?: string;
+}): string {
+  return emailQueue.add(async () => {
+    await sendProductAvailableEmail(data);
+  });
+}

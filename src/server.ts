@@ -154,9 +154,11 @@ import recommendationRoutes from './routes/recommendations';
 import searchRoutes from './routes/search';
 import debugRoutes from './routes/debug';
 import shippingRoutes from './routes/shipping';
+import productNotificationRoutes from './routes/productNotifications';
 
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/product-notifications', productNotificationRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/vendor', vendorRoutes);

@@ -66,6 +66,7 @@ export const cacheResponse = (durationMs: number = 60000) => {
 /**
  * Conditional caching middleware - caches for customers/public, but NOT for admins
  * This ensures admins always get real-time data while customers benefit from caching
+ * Cache keys include user authentication state to prevent serving wrong data after login
  */
 export const cacheForCustomersOnly = (durationMs: number = 60000) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -81,8 +82,10 @@ export const cacheForCustomersOnly = (durationMs: number = 60000) => {
       return next();
     }
 
-    // For customers/public, apply caching (include query params so filtered results are cached separately)
-    const key = req.originalUrl || req.url;
+    // Include user auth state in cache key to prevent serving cached data from different auth state
+    // This ensures logged-in users don't get cached data from when they weren't logged in
+    const authState = req.user ? `auth:${req.user.role}:${req.user._id}` : 'public';
+    const key = `${authState}:${req.originalUrl || req.url}`;
     const cached = globalCache.get(key);
 
     if (cached && Date.now() - cached.timestamp < durationMs) {

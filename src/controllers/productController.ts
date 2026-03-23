@@ -6,6 +6,7 @@ import Product from '../models/Product';
 import PrimeProduct from '../models/PrimeProduct';
 import VendorDetails from '../models/VendorDetails';
 import { clearCache } from '../middlewares/cache';
+import { notifyWaitingCustomers } from './productNotificationController';
 
 export const createProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -163,7 +164,22 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
       }
     }
     
+    // Get the existing product to check if status changed
+    const existingProduct = await Product.findById(req.params.id);
+    const wasInactive = existingProduct && !existingProduct.isActive;
+    
     const product = await ProductService.updateProduct(req.params.id, req.body);
+    
+    // If product was inactive and now is active, notify waiting customers
+    if (wasInactive && product.isActive) {
+      console.log('🔔 Product became active - checking for waiting customers');
+      // Run notification in background (don't await)
+      notifyWaitingCustomers(
+        product._id.toString(),
+        product.name,
+        product.images && product.images.length > 0 ? product.images[0] : undefined
+      ).catch(err => console.error('Error notifying customers:', err));
+    }
     
     // Clear product cache so customers see the updated product immediately
     clearCache('/products');

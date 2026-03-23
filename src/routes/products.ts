@@ -14,12 +14,13 @@ import { cacheResponse, cacheForCustomersOnly } from '../middlewares/cache';
 const router = express.Router();
 
 // Public routes - Cache for customers/public, but NOT for admins (admins need real-time data)
-router.get('/', optionalAuth, cacheForCustomersOnly(120000), getProducts); // 2 min cache for customers only
-router.get('/:id', optionalAuth, cacheForCustomersOnly(120000), getProduct); // 2 min cache for customers only
+// Short cache duration (30s) ensures new products appear quickly after creation
+router.get('/', optionalAuth, cacheForCustomersOnly(30000), getProducts); // 30 sec cache for customers only
+router.get('/:id', optionalAuth, cacheForCustomersOnly(30000), getProduct); // 30 sec cache for customers only
 
 // Prime product routes (public) - Cache for customers only
-router.get('/prime/category', optionalAuth, cacheForCustomersOnly(120000), getPrimeProductsByCategory);
-router.get('/:productId/prime-listings', optionalAuth, cacheForCustomersOnly(120000), getPrimeListingsForProduct);
+router.get('/prime/category', optionalAuth, cacheForCustomersOnly(30000), getPrimeProductsByCategory);
+router.get('/:productId/prime-listings', optionalAuth, cacheForCustomersOnly(30000), getPrimeListingsForProduct);
 
 // Protected routes - Admin and MY_SHOP vendors can create/manage products
 router.post('/', verifyToken, createProduct); // MY_SHOP vendors can create products
