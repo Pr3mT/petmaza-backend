@@ -4,6 +4,9 @@ export interface IUser extends Document {
   name: string;
   email: string;
   password: string;
+  googleId?: string;
+  profilePicture?: string;
+  isEmailVerified: boolean;
   role: 'admin' | 'vendor' | 'customer';
   vendorType?: 'PRIME' | 'MY_SHOP' | 'WAREHOUSE_FULFILLER';
   pincodesServed?: string[];

@@ -5,6 +5,7 @@ import { generateToken } from '../utils/jwt';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import { sendVerificationEmail, sendVerificationSuccessEmail } from '../services/emailer';
+import { OAuth2Client } from 'google-auth-library';
 
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -140,6 +141,88 @@ export const logout = async (req: Request, res: Response) => {
     success: true,
     message: 'Logged out successfully',
   });
+};
+
+/**
+ * Google OAuth Sign-In
+ * Verify Google ID token and create/login user
+ */
+export const googleAuth = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { credential } = req.body;
+
+    if (!credential) {
+      return next(new AppError('Google credential is required', 400));
+    }
+
+    // Initialize Google OAuth client
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+    // Verify the Google token
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+
+    if (!payload || !payload.email) {
+      return next(new AppError('Invalid Google token', 400));
+    }
+
+    const { email, name, picture, sub: googleId, email_verified } = payload;
+
+    // Check if user exists
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // User exists - login
+      // Update Google ID if not set
+      if (!user.googleId) {
+        user.googleId = googleId;
+        user.profilePicture = picture;
+        await user.save();
+      }
+    } else {
+      // Create new user with Google account
+      user = await User.create({
+        name: name || email.split('@')[0],
+        email,
+        googleId,
+        profilePicture: picture,
+        role: 'customer',
+        isEmailVerified: email_verified || false,
+        password: Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8), // Random password for Google users
+      });
+    }
+
+    // Generate JWT token
+    const token = generateToken(user._id.toString());
+
+    // Set cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    // Remove password from response
+    const userObj = user.toObject() as any;
+    delete userObj.password;
+
+    res.status(200).json({
+      success: true,
+      message: user.googleId === googleId ? 'Login successful' : 'Account created successfully',
+      data: {
+        user: userObj,
+        token,
+      },
+    });
+  } catch (error: any) {
+    console.error('Google Auth Error:', error);
+    next(new AppError('Google authentication failed', 401));
+  }
 };
 
 export const getMe = async (req: AuthRequest, res: Response, next: NextFunction) => {

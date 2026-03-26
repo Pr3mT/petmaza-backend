@@ -22,6 +22,18 @@ const userSchema = new Schema<IUser>(
       minlength: 6,
       select: false,
     },
+    googleId: {
+      type: String,
+      sparse: true,
+      unique: true,
+    },
+    profilePicture: {
+      type: String,
+    },
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
     role: {
       type: String,
       enum: ['admin', 'vendor', 'customer'],
