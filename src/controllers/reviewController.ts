@@ -9,22 +9,37 @@ export const createReview = async (req: Request, res: Response) => {
     const { product_id, order_id, rating, title, comment, images } = req.body;
     const customer_id = (req as any).user.id;
 
+    console.log('Creating review:', { product_id, order_id, rating, title, customer_id });
+
     // Verify order exists and belongs to customer
-    const order = await Order.findOne({ _id: order_id, customer_id, status: 'DELIVERED' });
+    const order = await Order.findOne({ _id: order_id, status: 'DELIVERED' });
     if (!order) {
+      console.log('Order not found or not delivered:', order_id);
       return res.status(400).json({ message: 'Invalid order or order not delivered yet' });
     }
 
+    // Check if order belongs to customer
+    const orderCustomerId = order.customer_id || order.user_id;
+    if (orderCustomerId?.toString() !== customer_id.toString()) {
+      console.log('Order does not belong to customer');
+      return res.status(400).json({ message: 'This order does not belong to you' });
+    }
+
     // Verify product is in the order
-    const productInOrder = order.items.some(item => item.product_id.toString() === product_id);
+    const productInOrder = order.items.some(item => {
+      const itemProductId = item.product_id?._id ? item.product_id._id.toString() : item.product_id?.toString();
+      return itemProductId === product_id.toString();
+    });
+    
     if (!productInOrder) {
+      console.log('Product not in order. Order items:', order.items.map(i => i.product_id));
       return res.status(400).json({ message: 'Product not found in this order' });
     }
 
     // Check if review already exists
     const existingReview = await Review.findOne({ product_id, order_id, customer_id });
     if (existingReview) {
-      return res.status(400).json({ message: 'You have already reviewed this product' });
+      return res.status(400).json({ message: 'You have already reviewed this product for this order' });
     }
 
     const review = await Review.create({
@@ -36,17 +51,21 @@ export const createReview = async (req: Request, res: Response) => {
       comment,
       images: images || [],
       isVerifiedPurchase: true,
+      status: 'approved', // Auto-approve
     });
 
     await review.populate('customer_id', 'name');
 
+    console.log('Review created successfully:', review._id);
+
     res.status(201).json({
+      success: true,
       message: 'Review created successfully',
       review,
     });
   } catch (error: any) {
     console.error('Create review error:', error);
-    res.status(500).json({ message: 'Failed to create review', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to create review', error: error.message });
   }
 };
 
@@ -70,7 +89,7 @@ export const getProductReviews = async (req: Request, res: Response) => {
     const total = await Review.countDocuments(filter);
 
     // Calculate rating statistics
-    const stats = await Review.aggregate([
+    const statsResult = await Review.aggregate([
       { $match: { product_id: productId, status: 'approved' } },
       {
         $group: {
@@ -86,6 +105,16 @@ export const getProductReviews = async (req: Request, res: Response) => {
       },
     ]);
 
+    const statsData = statsResult[0] || {
+      averageRating: 0,
+      totalReviews: 0,
+      rating5: 0,
+      rating4: 0,
+      rating3: 0,
+      rating2: 0,
+      rating1: 0,
+    };
+
     res.status(200).json({
       reviews,
       pagination: {
@@ -93,14 +122,16 @@ export const getProductReviews = async (req: Request, res: Response) => {
         page: Number(page),
         pages: Math.ceil(total / Number(limit)),
       },
-      statistics: stats[0] || {
-        averageRating: 0,
-        totalReviews: 0,
-        rating5: 0,
-        rating4: 0,
-        rating3: 0,
-        rating2: 0,
-        rating1: 0,
+      stats: {
+        averageRating: statsData.averageRating,
+        totalReviews: statsData.totalReviews,
+        ratingDistribution: {
+          5: statsData.rating5,
+          4: statsData.rating4,
+          3: statsData.rating3,
+          2: statsData.rating2,
+          1: statsData.rating1,
+        },
       },
     });
   } catch (error: any) {

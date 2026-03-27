@@ -28,6 +28,7 @@ import {
   updateShippingSettings,
 } from '../controllers/shippingController';
 import { verifyToken, checkRole } from '../middlewares/auth';
+import Review from '../models/Review';
 
 const router = express.Router();
 
@@ -69,6 +70,21 @@ router.delete('/fulfillers/:id', deleteFulfiller);
 
 // Vendor billing route
 router.get('/vendor-billing', getVendorBilling);
+
+// Reviews route
+router.get('/reviews', async (req, res) => {
+  try {
+    const reviews = await Review.find()
+      .populate('product_id', 'name images')
+      .populate('customer_id', 'name email')
+      .sort('-createdAt')
+      .limit(100);
+
+    res.json({ success: true, reviews });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 export default router;
 
