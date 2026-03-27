@@ -25,16 +25,16 @@ const previewProducts = async () => {
     const productsByCategory = await Product.aggregate([
       {
         $group: {
-          _id: '$category',
+          _id: '$mainCategory',
           count: { $sum: 1 },
-          subcategories: { $addToSet: '$subcategory' }
+          subcategories: { $addToSet: '$subCategory' }
         }
       },
       { $sort: { count: -1 } }
     ]);
 
     console.log('📊 Products by Category:\n');
-    productsByCategory.forEach((cat) => {
+    productsByCategory.forEach((cat: any) => {
       console.log(`  ${cat._id}: ${cat.count} products`);
       if (cat.subcategories && cat.subcategories.length > 0) {
         cat.subcategories.forEach((sub: string) => {
@@ -46,14 +46,15 @@ const previewProducts = async () => {
     // Get sample products
     console.log('\n📋 Sample Products (first 10):\n');
     const sampleProducts = await Product.find()
-      .select('name category subcategory price brand')
+      .select('name mainCategory subCategory mrp brand_id')
+      .populate('brand_id', 'name')
       .limit(10)
       .lean();
 
-    sampleProducts.forEach((product, index) => {
+    sampleProducts.forEach((product: any, index: number) => {
       console.log(`  ${index + 1}. ${product.name}`);
-      console.log(`     Category: ${product.category} > ${product.subcategory}`);
-      console.log(`     Brand: ${product.brand || 'N/A'} | Price: ₹${product.price}`);
+      console.log(`     Category: ${product.mainCategory} > ${product.subCategory}`);
+      console.log(`     Brand: ${product.brand_id?.name || 'N/A'} | MRP: ₹${product.mrp || 'N/A'}`);
       console.log('');
     });
 

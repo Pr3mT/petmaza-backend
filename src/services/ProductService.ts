@@ -353,11 +353,8 @@ export class ProductService {
 
   // Delete product (soft delete)
   static async deleteProduct(id: string) {
-    const product = await Product.findByIdAndUpdate(
-      id,
-      { isActive: false },
-      { new: true }
-    );
+    // Permanently delete the product from database
+    const product = await Product.findByIdAndDelete(id);
 
     if (!product) {
       throw new AppError('Product not found', 404);
