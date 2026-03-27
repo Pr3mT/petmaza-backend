@@ -177,10 +177,11 @@ export const googleAuth = async (req: Request, res: Response, next: NextFunction
 
     if (user) {
       // User exists - login
-      // Update Google ID if not set
+      // Update Google ID and email verification if not set
       if (!user.googleId) {
         user.googleId = googleId;
         user.profilePicture = picture;
+        user.isEmailVerified = true; // Google emails are verified
         await user.save();
       }
     } else {
@@ -191,7 +192,8 @@ export const googleAuth = async (req: Request, res: Response, next: NextFunction
         googleId,
         profilePicture: picture,
         role: 'customer',
-        isEmailVerified: email_verified || false,
+        isEmailVerified: true, // Google emails are always verified
+        isApproved: true, // Auto-approve Google users
         password: Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8), // Random password for Google users
       });
     }

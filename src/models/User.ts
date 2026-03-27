@@ -49,7 +49,10 @@ const userSchema = new Schema<IUser>(
     },
     phone: {
       type: String,
-      required: [true, 'Please provide a phone number'],
+      required: function(this: IUser) {
+        // Phone is required only for non-Google signups
+        return !this.googleId;
+      },
     },
     address: {
       street: String,
