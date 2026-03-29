@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import Review from '../models/Review';
 import Order from '../models/Order';
 import Product from '../models/Product';
@@ -7,67 +8,176 @@ import Product from '../models/Product';
 export const createReview = async (req: Request, res: Response) => {
   try {
     const { product_id, order_id, rating, title, comment, images } = req.body;
-    const customer_id = (req as any).user.id;
-
-    console.log('Creating review:', { product_id, order_id, rating, title, customer_id });
-
-    // Verify order exists and belongs to customer
-    const order = await Order.findOne({ _id: order_id, status: 'DELIVERED' });
-    if (!order) {
-      console.log('Order not found or not delivered:', order_id);
-      return res.status(400).json({ message: 'Invalid order or order not delivered yet' });
+    
+    // Check if user is authenticated
+    const user = (req as any).user;
+    if (!user) {
+      console.log('❌ User not authenticated - req.user is missing');
+      return res.status(401).json({ 
+        success: false,
+        message: 'Authentication required' 
+      });
     }
+    
+    // Get customer ID - handle both _id and id
+    const customer_id = user._id || user.id;
+    
+    if (!customer_id) {
+      console.log('❌ User object exists but has no ID:', user);
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid user data' 
+      });
+    }
+
+    console.log('📝 Creating review with data:', { 
+      product_id, 
+      order_id, 
+      rating, 
+      title, 
+      comment,
+      customer_id,
+      userEmail: user.email 
+    });
+
+    // Validate required fields
+    if (!product_id || !order_id || !rating) {
+      console.log('❌ Missing required fields');
+      return res.status(400).json({ 
+        success: false,
+        message: 'Missing required fields: product_id, order_id, and rating are required' 
+      });
+    }
+
+    // First, check if order exists at all
+    const orderExists = await Order.findById(order_id);
+    if (!orderExists) {
+      console.log('❌ Order not found:', order_id);
+      return res.status(400).json({ 
+        success: false,
+        message: 'Order not found' 
+      });
+    }
+
+    console.log('✅ Order found:', orderExists._id, 'Status:', orderExists.status);
 
     // Check if order belongs to customer
-    const orderCustomerId = order.customer_id || order.user_id;
+    const orderCustomerId = orderExists.customer_id;
     if (orderCustomerId?.toString() !== customer_id.toString()) {
-      console.log('Order does not belong to customer');
-      return res.status(400).json({ message: 'This order does not belong to you' });
+      console.log('❌ Order does not belong to customer');
+      return res.status(403).json({ 
+        success: false,
+        message: 'This order does not belong to you' 
+      });
     }
 
+    console.log('✅ Order belongs to customer');
+
     // Verify product is in the order
-    const productInOrder = order.items.some(item => {
-      const itemProductId = item.product_id?._id ? item.product_id._id.toString() : item.product_id?.toString();
-      return itemProductId === product_id.toString();
+    const productInOrder = orderExists.items.some(item => {
+      return item.product_id?.toString() === product_id.toString();
     });
     
     if (!productInOrder) {
-      console.log('Product not in order. Order items:', order.items.map(i => i.product_id));
-      return res.status(400).json({ message: 'Product not found in this order' });
+      console.log('❌ Product not in order. Order items:', orderExists.items.map(i => i.product_id));
+      return res.status(400).json({ 
+        success: false,
+        message: 'Product not found in this order' 
+      });
     }
+
+    console.log('✅ Product is in order');
 
     // Check if review already exists
     const existingReview = await Review.findOne({ product_id, order_id, customer_id });
     if (existingReview) {
-      return res.status(400).json({ message: 'You have already reviewed this product for this order' });
+      console.log('❌ Review already exists');
+      return res.status(400).json({ 
+        success: false,
+        message: 'You have already reviewed this product for this order' 
+      });
     }
 
+    console.log('✅ No existing review found, creating new review...');
+
+    // Create the review
     const review = await Review.create({
       product_id,
       customer_id,
       order_id,
       rating,
-      title,
-      comment,
+      title: title || '',
+      comment: comment || '',
       images: images || [],
       isVerifiedPurchase: true,
-      status: 'approved', // Auto-approve
+      status: 'approved',
     });
 
     await review.populate('customer_id', 'name');
 
-    console.log('Review created successfully:', review._id);
+    console.log('✅ Review created successfully:', review._id);
+
+    // Update product rating statistics
+    await updateProductRatings(product_id);
 
     res.status(201).json({
       success: true,
-      message: 'Review created successfully',
+      message: 'Review submitted successfully!',
       review,
     });
   } catch (error: any) {
-    console.error('Create review error:', error);
-    res.status(500).json({ success: false, message: 'Failed to create review', error: error.message });
+    console.error('❌ ============ CREATE REVIEW ERROR ============');
+    console.error('Error message:', error.message);
+    console.error('Error name:', error.name);
+    console.error('Error stack:', error.stack);
+    console.error('Full error:', JSON.stringify(error, null, 2));
+    console.error('============================================');
+    
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error. Please try again later.',
+      error: error.message || 'Unknown error',
+      errorName: error.name,
+    });
   }
 };
+
+// Helper function to update product ratings
+async function updateProductRatings(productId: any) {
+  try {
+    // Convert to ObjectId if it's a string
+    const prodId = typeof productId === 'string' 
+      ? new mongoose.Types.ObjectId(productId) 
+      : productId;
+    
+    const stats = await Review.aggregate([
+      { 
+        $match: { 
+          product_id: prodId, 
+          status: 'approved' 
+        } 
+      },
+      {
+        $group: {
+          _id: null,
+          averageRating: { $avg: '$rating' },
+          totalReviews: { $sum: 1 },
+        },
+      },
+    ]);
+
+    if (stats.length > 0) {
+      await Product.findByIdAndUpdate(productId, {
+        averageRating: Math.round(stats[0].averageRating * 10) / 10, // Round to 1 decimal
+        totalReviews: stats[0].totalReviews,
+      });
+      console.log('✅ Product ratings updated:', productId);
+    }
+  } catch (error) {
+    console.error('❌ Error updating product ratings:', error);
+    // Don't throw - review is already created
+  }
+}
 
 // Get reviews for a product
 export const getProductReviews = async (req: Request, res: Response) => {

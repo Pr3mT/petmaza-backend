@@ -62,6 +62,8 @@ export interface IProduct extends Document {
   addedBy?: Types.ObjectId | string; // User who created the product
   totalSoldWebsite?: number; // Total units sold via website
   totalSoldStore?: number; // Total units sold in physical store
+  averageRating?: number; // Average rating from reviews (0-5)
+  totalReviews?: number; // Total number of reviews
   inStock?: boolean;
   createdAt: Date;
   updatedAt: Date;

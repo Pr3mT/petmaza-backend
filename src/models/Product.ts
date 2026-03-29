@@ -133,6 +133,17 @@ const productSchema = new Schema<IProduct>(
       default: 0,
       min: 0,
     },
+    averageRating: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5,
+    },
+    totalReviews: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,

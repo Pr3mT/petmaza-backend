@@ -16,40 +16,58 @@ export const verifyToken = async (
   try {
     let token: string | undefined;
 
+    console.log('🔐 ===== VERIFY TOKEN =====');
+    console.log('Cookies:', req.cookies);
+    console.log('Authorization header:', req.headers.authorization);
+
     // Check for token in cookies first
     if (req.cookies && req.cookies.token) {
       token = req.cookies.token;
+      console.log('✅ Token found in cookies');
     } 
     // Fallback to Authorization header
     else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
       token = req.headers.authorization.split(' ')[1];
+      console.log('✅ Token found in Authorization header');
     }
 
     if (!token) {
+      console.log('❌ No token found in request');
       return next(new AppError('Not authorized, no token', 401));
     }
+    
+    console.log('Token (first 20 chars):', token.substring(0, 20) + '...');
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+      console.log('✅ Token verified. Decoded:', { id: decoded.id, role: decoded.role });
       
       // Try to get user from cache first - HUGE performance boost!
       let user = userCache.get(decoded.id);
       
       if (!user) {
+        console.log('Cache miss - fetching user from database...');
         // Cache miss - fetch from database
         user = await User.findById(decoded.id).select('-password').lean();
         
         if (!user) {
+          console.log('❌ User not found in database');
           return next(new AppError('User not found', 404));
         }
         
+        console.log('✅ User found:', { id: user._id, email: user.email, role: user.role });
         // Store in cache for future requests
         userCache.set(decoded.id, user);
+      } else {
+        console.log('✅ User found in cache:', { id: user._id, email: user.email, role: user.role });
       }
 
       req.user = user;
+      console.log('✅ req.user set successfully');
+      console.log('========================\n');
       next();
     } catch (error) {
+      console.log('❌ Token verification failed:', error);
       return next(new AppError('Not authorized, token failed', 401));
     }
   } catch (error) {
