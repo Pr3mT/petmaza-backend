@@ -46,17 +46,30 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     // Calculate combined subtotal across all orders
     const combinedSubtotal = orders.reduce((sum, order) => sum + order.total, 0);
 
-    // Check if order contains Prime products
+    // Check if order contains Prime products and/or Normal products
     const hasPrimeProducts = orders.some(order => order.isPrime);
+    const hasNormalProducts = orders.some(order => !order.isPrime);
+    const isMixedOrder = hasPrimeProducts && hasNormalProducts;
 
     // Calculate shipping charges and platform fee based on combined total
     let charges = await ShippingService.calculateCharges(combinedSubtotal);
     
-    // For Prime products, always apply ₹10 platform fee
+    // For orders with Prime products, always apply ₹10 platform fee
     if (hasPrimeProducts) {
       charges.platformFee = 10;
-      charges.total = combinedSubtotal + charges.shippingCharges + charges.platformFee;
     }
+    
+    // For mixed orders (prime + normal), ensure shipping charges apply to ALL orders
+    // Prime products get delivery charges when mixed with normal products
+    if (isMixedOrder) {
+      logger.info(`[createOrder] Mixed order detected - applying delivery charges to prime products`);
+      // Ensure minimum shipping charge for mixed orders
+      if (charges.shippingCharges === 0) {
+        charges.shippingCharges = 50; // Apply standard shipping for mixed orders
+      }
+    }
+    
+    charges.total = combinedSubtotal + charges.shippingCharges + charges.platformFee;
     
     // Distribute charges EQUALLY across all orders (50-50 split for 2 orders, etc.)
     // NOT proportionally - each fulfiller gets equal share of fees
@@ -66,6 +79,10 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       order.platformFee = Math.round(charges.platformFee / orders.length);
       order.total = order.subtotalBeforeCharges + order.shippingCharges + order.platformFee;
       await order.save();
+      
+      if (order.isPrime && isMixedOrder) {
+        logger.info(`[createOrder] Prime order ${order._id} charged ₹${order.shippingCharges} delivery (mixed order)`);
+      }
     }
 
     // Populate all orders with product details for email
