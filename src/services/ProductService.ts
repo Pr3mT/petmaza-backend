@@ -34,11 +34,11 @@ export class ProductService {
         _id: data.primeVendor_id,
         role: 'vendor',
         vendorType: 'PRIME',
-        isApproved: true,
+        // Removed isApproved check - vendors can create products immediately
       });
       
       if (!primeVendor) {
-        throw new AppError('Invalid Prime Vendor selected', 404);
+        throw new AppError('Invalid Prime Vendor selected. Vendor must have role "vendor" and vendorType "PRIME"', 404);
       }
     }
 

@@ -77,7 +77,7 @@ export class OrderRoutingService {
 
   /**
    * Route prime orders - supports multiple prime vendors (creates split orders)
-   * Orders are directly ACCEPTED (no pending state) as they go to specific vendor who added product
+   * Orders start as PENDING and must be accepted by vendor (like fulfiller flow)
    */
   private static async routePrimeOrders(
     customer_id: string,
@@ -116,7 +116,7 @@ export class OrderRoutingService {
       const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
       const totalProfit = total - totalPurchasePrice;
 
-      // Create order - ACCEPTED status (direct assignment, no pending)
+      // Create order - PENDING status (vendor must accept, like fulfiller flow)
       const order = await Order.create({
         customer_id,
         assignedVendorId: vendorId,
@@ -124,7 +124,7 @@ export class OrderRoutingService {
         total,
         totalPurchasePrice,
         totalProfit,
-        status: 'ACCEPTED',  // ✅ Auto-accept: order goes directly to vendor who added product
+        status: 'PENDING',  // ✅ Prime vendor must accept order (like fulfiller flow)
         isPrime: true,
         isSplitShipment,
         customerPincode,
@@ -132,18 +132,20 @@ export class OrderRoutingService {
       });
 
       createdOrders.push(order);
-      logger.info(`[routePrimeOrders] ✅ Prime order ${order._id} created for vendor ${vendorId} (status: ACCEPTED)`);
+      logger.info(`[routePrimeOrders] ✅ Prime order ${order._id} created for vendor ${vendorId} (status: PENDING)`);
 
       // Send vendor notification
       try {
         const vendor = await User.findById(vendorId);
+        const customer = await User.findById(customer_id);
+        
         if (vendor) {
           const jobId = queueVendorOrderNotificationEmail(
             vendor.email,
             vendor.name || 'Prime Vendor',
             `#${order._id.toString().slice(-8)}`,
             {
-              customerName: customer_id,
+              customerName: customer?.name || 'Customer',
               totalAmount: order.total,
               customerAddress,
               customerPincode,

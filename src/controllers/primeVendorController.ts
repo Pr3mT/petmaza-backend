@@ -179,7 +179,7 @@ export const rejectPrimeOrder = async (
       _id: id,
       assignedVendorId: vendor_id,
       isPrime: true,
-      status: { $in: ['PENDING', 'ASSIGNED'] }, // Accept both PENDING and ASSIGNED status
+      status: { $in: ['PENDING', 'ASSIGNED', 'ACCEPTED'] }, // Allow rejection of PENDING, ASSIGNED, and ACCEPTED orders
     }).populate('customer_id', 'name email');
 
     if (!order) {
