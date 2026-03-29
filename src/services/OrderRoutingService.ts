@@ -9,9 +9,11 @@ import logger from '../config/logger';
 
 export class OrderRoutingService {
   /**
-   * SIMPLIFIED Route order logic:
-   * 1. Prime products → Prime Vendor (first-come-first-serve)
-   * 2. Normal products → MY_SHOP Vendor (direct assignment, no acceptance flow)
+   * UPDATED Route order logic:
+   * 1. Prime products → Prime Vendor (direct assignment to vendor who added product)
+   * 2. Normal products → MY_SHOP/WAREHOUSE_FULFILLER (based on subcategory)
+   * 3. Mixed orders (prime + normal) → Split into separate orders per vendor type
+   * 4. Multiple prime vendors → Split into separate orders per vendor
    */
   static async routeOrder(data: {
     customer_id: string;
@@ -34,80 +36,128 @@ export class OrderRoutingService {
     const productIds = items.map((item) => item.product_id);
     const products = await Product.find({ _id: { $in: productIds } });
 
-    // Check if order contains prime products
-    const hasPrimeProducts = products.some((p) => p.isPrime);
-    const hasNormalProducts = products.some((p) => !p.isPrime);
+    // Create product map for easy lookup
+    const productMap = new Map();
+    products.forEach(p => productMap.set(p._id.toString(), p));
 
-    // Prime products cannot be mixed with normal products
-    if (hasPrimeProducts && hasNormalProducts) {
-      throw new AppError('Prime products cannot be mixed with normal products', 400);
+    // Separate items into prime and normal
+    const primeItems: Array<{ product_id: string; quantity: number; selectedVariant?: any }> = [];
+    const normalItems: Array<{ product_id: string; quantity: number; selectedVariant?: any }> = [];
+
+    for (const item of items) {
+      const product = productMap.get(item.product_id);
+      if (!product) {
+        throw new AppError(`Product ${item.product_id} not found`, 404);
+      }
+      
+      if (product.isPrime) {
+        primeItems.push(item);
+      } else {
+        normalItems.push(item);
+      }
     }
 
-    // Prime products: route to Prime Vendor (existing flow)
-    if (hasPrimeProducts) {
-      return await this.routePrimeOrder(customer_id, items, customerPincode, customerAddress);
+    const createdOrders = [];
+
+    // Handle prime products (may create multiple orders for different vendors)
+    if (primeItems.length > 0) {
+      const primeOrders = await this.routePrimeOrders(customer_id, primeItems, customerPincode, customerAddress, productMap);
+      createdOrders.push(...(Array.isArray(primeOrders) ? primeOrders : [primeOrders]));
     }
 
-    // Normal products: route directly to MY_SHOP vendor
-    return await this.routeNormalOrderToMyShop(customer_id, items, customerPincode, customerAddress);
+    // Handle normal products
+    if (normalItems.length > 0) {
+      const normalOrders = await this.routeNormalOrderToMyShop(customer_id, normalItems, customerPincode, customerAddress);
+      createdOrders.push(...(Array.isArray(normalOrders) ? normalOrders : [normalOrders]));
+    }
+
+    // Return single order if only one, array if split
+    return createdOrders.length === 1 ? createdOrders[0] : createdOrders;
   }
 
   /**
-   * Route prime order to Prime Vendor
+   * Route prime orders - supports multiple prime vendors (creates split orders)
+   * Orders are directly ACCEPTED (no pending state) as they go to specific vendor who added product
    */
-  private static async routePrimeOrder(
+  private static async routePrimeOrders(
     customer_id: string,
     items: Array<{ product_id: string; quantity: number; selectedVariant?: any }>,
     customerPincode: string,
-    customerAddress: any
+    customerAddress: any,
+    productMap: Map<string, any>
   ) {
-    // Fetch products to determine which Prime Vendor owns them
-    const productIds = items.map((item) => item.product_id);
-    const products = await Product.find({ _id: { $in: productIds } });
+    // Group items by prime vendor
+    const vendorItemsMap = new Map<string, Array<{ product_id: string; quantity: number; selectedVariant?: any }>>();
 
-    // All products in the order should belong to the same Prime Vendor
-    const primeVendorId = products[0]?.primeVendor_id;
-    
-    if (!primeVendorId) {
-      throw new AppError('Prime product has no assigned vendor', 400);
+    for (const item of items) {
+      const product = productMap.get(item.product_id);
+      if (!product || !product.primeVendor_id) {
+        throw new AppError(`Prime product ${item.product_id} has no assigned vendor`, 400);
+      }
+
+      const vendorId = product.primeVendor_id.toString();
+      
+      if (!vendorItemsMap.has(vendorId)) {
+        vendorItemsMap.set(vendorId, []);
+      }
+      vendorItemsMap.get(vendorId)!.push(item);
     }
 
-    // Convert to string to ensure we have the ID
-    const vendorIdString = primeVendorId.toString();
+    const createdOrders = [];
+    const isSplitShipment = vendorItemsMap.size > 1;
 
-    // Verify all products belong to the same vendor
-    const allSameVendor = products.every(
-      (p) => p.primeVendor_id?.toString() === vendorIdString
-    );
+    // Create one order per vendor
+    for (const [vendorId, vendorItems] of vendorItemsMap) {
+      // Build order items with pricing
+      const orderItems = await this.buildOrderItems(vendorItems, vendorId);
 
-    if (!allSameVendor) {
-      throw new AppError('All Prime products in an order must belong to the same vendor', 400);
+      // Calculate totals
+      const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
+      const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
+      const totalProfit = total - totalPurchasePrice;
+
+      // Create order - ACCEPTED status (direct assignment, no pending)
+      const order = await Order.create({
+        customer_id,
+        assignedVendorId: vendorId,
+        items: orderItems,
+        total,
+        totalPurchasePrice,
+        totalProfit,
+        status: 'ACCEPTED',  // ✅ Auto-accept: order goes directly to vendor who added product
+        isPrime: true,
+        isSplitShipment,
+        customerPincode,
+        customerAddress,
+      });
+
+      createdOrders.push(order);
+      logger.info(`[routePrimeOrders] ✅ Prime order ${order._id} created for vendor ${vendorId} (status: ACCEPTED)`);
+
+      // Send vendor notification
+      try {
+        const vendor = await User.findById(vendorId);
+        if (vendor) {
+          const jobId = queueVendorOrderNotificationEmail(
+            vendor.email,
+            vendor.name || 'Prime Vendor',
+            `#${order._id.toString().slice(-8)}`,
+            {
+              customerName: customer_id,
+              totalAmount: order.total,
+              customerAddress,
+              customerPincode,
+              items: orderItems,
+            }
+          );
+          logger.info(`[routePrimeOrders] 📧 Vendor notification sent (Job: ${jobId})`);
+        }
+      } catch (emailError: any) {
+        logger.error('[routePrimeOrders] Failed to send vendor notification:', emailError.message);
+      }
     }
 
-    // Build order items with pricing (pass just the ID string)
-    const orderItems = await this.buildOrderItems(items, vendorIdString);
-
-    // Calculate totals
-    const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
-    const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
-    const totalProfit = total - totalPurchasePrice;
-
-    // Create order - assign to specific Prime Vendor who owns the product
-    const order = await Order.create({
-      customer_id,
-      assignedVendorId: vendorIdString,  // Assign to the Prime Vendor who owns the product
-      items: orderItems,
-      total,
-      totalPurchasePrice,
-      totalProfit,
-      status: 'PENDING',
-      isPrime: true,
-      isSplitShipment: false,
-      customerPincode,
-      customerAddress,
-    });
-
-    return order;
+    return createdOrders.length === 1 ? createdOrders[0] : createdOrders;
   }
 
   /**
