@@ -6,6 +6,7 @@ import Order from '../models/Order';
 import User from '../models/User';
 import PrimeProduct from '../models/PrimeProduct';
 import Product from '../models/Product';
+import Coupon from '../models/Coupon';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
@@ -19,7 +20,13 @@ import {
 // Create order (customer)
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { items, customerPincode, customerAddress } = req.body;
+    const { items, customerPincode, customerAddress, couponCode } = req.body;
+
+    // DEBUG: Log initial request
+    console.log('\n========== DEBUG: Order Creation Started ==========');
+    console.log('Coupon Code Received:', couponCode);
+    console.log('Items:', items.length);
+    console.log('===================================================\n');
 
     if (!items || items.length === 0) {
       return next(new AppError('Order must have at least one item', 400));
@@ -45,6 +52,135 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     // Calculate combined subtotal across all orders
     const combinedSubtotal = orders.reduce((sum, order) => sum + order.total, 0);
+    
+    console.log('\n===== DEBUG: Before Coupon Validation =====');
+    console.log('Combined Subtotal:', combinedSubtotal);
+    console.log('Coupon Code:', couponCode);
+    console.log('Has Coupon Code:', !!couponCode);
+    console.log('==========================================\n');
+    
+    // Validate and apply coupon if provided
+    let discountAmount = 0;
+    let appliedCouponData = null;
+    
+    if (couponCode) {
+      try {
+        logger.info(`[createOrder] Validating coupon: ${couponCode}`);
+        
+        // Collect products with brands and subcategories for validation
+        const productsInOrder = await Promise.all(
+          items.map(async (item: any) => {
+            const product = await Product.findById(item.product_id).populate('brand_id');
+            return {
+              productId: product?._id,
+              brandId: product?.brand_id?._id,
+              subcategory: product?.subcategory,
+              quantity: item.quantity,
+            };
+          })
+        );
+        
+        // Validate coupon
+        const coupon = await Coupon.findOne({ code: couponCode.toUpperCase(), isActive: true });
+        
+        if (!coupon) {
+          logger.warn(`[createOrder] Invalid or inactive coupon: ${couponCode}`);
+          return next(new AppError('Invalid or inactive coupon code', 400));
+        }
+        
+        // Check if coupon is within valid date range
+        const now = new Date();
+        if (coupon.validFrom && now < coupon.validFrom) {
+          return next(new AppError('Coupon is not yet valid', 400));
+        }
+        if (coupon.validTo && now > coupon.validTo) {
+          return next(new AppError('Coupon has expired', 400));
+        }
+        
+        // Check minimum order value
+        if (coupon.minOrderValue && combinedSubtotal < coupon.minOrderValue) {
+          return next(new AppError(`Minimum order value of ₹${coupon.minOrderValue} required`, 400));
+        }
+        
+        // Check if first-time customer only
+        if (coupon.isFirstTimeOnly) {
+          const previousOrders = await Order.countDocuments({ customer_id: req.user._id });
+          if (previousOrders > 0) {
+            return next(new AppError('This coupon is only valid for first-time customers', 400));
+          }
+        }
+        
+        // Check usage limits
+        if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
+          return next(new AppError('Coupon usage limit has been reached', 400));
+        }
+        
+        // Check per-user usage limit
+        if (coupon.usagePerUser) {
+          const userUsage = coupon.usedBy.find(
+            (usage: any) => usage.user_id.toString() === req.user._id.toString()
+          );
+          if (userUsage && userUsage.usageCount >= coupon.usagePerUser) {
+            return next(new AppError('You have reached the usage limit for this coupon', 400));
+          }
+        }
+        
+        // Check brand/category applicability
+        if (coupon.applicableFor === 'SPECIFIC_BRANDS') {
+          const hasApplicableProduct = productsInOrder.some((p: any) =>
+            coupon.brands.some((brandId: any) => brandId.toString() === p.brandId?.toString())
+          );
+          if (!hasApplicableProduct) {
+            return next(new AppError('Coupon not applicable to products in cart', 400));
+          }
+        } else if (coupon.applicableFor === 'SPECIFIC_CATEGORIES') {
+          const hasApplicableProduct = productsInOrder.some((p: any) =>
+            coupon.categories.includes(p.subcategory)
+          );
+          if (!hasApplicableProduct) {
+            return next(new AppError('Coupon not applicable to products in cart', 400));
+          }
+        }
+        
+        // Calculate discount
+        if (coupon.discountType === 'PERCENTAGE') {
+          discountAmount = Math.round((combinedSubtotal * coupon.discountValue) / 100);
+          if (coupon.maxDiscount && discountAmount > coupon.maxDiscount) {
+            discountAmount = coupon.maxDiscount;
+          }
+        } else {
+          discountAmount = coupon.discountValue;
+        }
+        
+        // Ensure discount doesn't exceed subtotal
+        discountAmount = Math.min(discountAmount, combinedSubtotal);
+        
+        appliedCouponData = {
+          couponId: coupon._id,
+          code: coupon.code,
+          discount: discountAmount,
+        };
+        
+        console.log('\n===== DEBUG: Coupon Applied Successfully =====');
+        console.log('Coupon Code:', coupon.code);
+        console.log('Discount Type:', coupon.discountType);
+        console.log('Discount Value:', coupon.discountValue);
+        console.log('Calculated Discount Amount:', discountAmount);
+        console.log('==============================================\n');
+        
+        logger.info(`[createOrder] ✅ Coupon ${couponCode} applied - Discount: ₹${discountAmount}`);
+        
+      } catch (couponError: any) {
+        console.log('\n===== DEBUG: Coupon Validation ERROR =====');
+        console.log('Error:', couponError.message);
+        console.log('==========================================\n');
+        logger.error('[createOrder] Coupon validation error:', couponError.message);
+        return next(new AppError(couponError.message || 'Error validating coupon', 400));
+      }
+    } else {
+      console.log('\n===== DEBUG: No Coupon Code Provided =====');
+      console.log('=========================================\n');
+    }
 
     // Check if order contains Prime products and/or Normal products
     const hasPrimeProducts = orders.some(order => order.isPrime);
@@ -69,19 +205,46 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       }
     }
     
-    charges.total = combinedSubtotal + charges.shippingCharges + charges.platformFee;
+    // Apply discount before calculating final total
+    const subtotalAfterDiscount = combinedSubtotal - discountAmount;
+    charges.total = subtotalAfterDiscount + charges.shippingCharges + charges.platformFee;
     
-    // Distribute charges EQUALLY across all orders (50-50 split for 2 orders, etc.)
-    // NOT proportionally - each fulfiller gets equal share of fees
+    console.log('\n===== DEBUG: Calculating Final Totals =====');
+    console.log('Combined Subtotal:', combinedSubtotal);
+    console.log('Discount Amount:', discountAmount);
+    console.log('Subtotal After Discount:', subtotalAfterDiscount);
+    console.log('Shipping Charges:', charges.shippingCharges);
+    console.log('Platform Fee:', charges.platformFee);
+    console.log('Final Total:', charges.total);
+    console.log('Number of Orders:', orders.length);
+    console.log('==========================================\n');
+    
+    // Distribute charges AND discount EQUALLY across all orders
+    const discountPerOrder = Math.round(discountAmount / orders.length);
+    
     for (const order of orders) {
       order.subtotalBeforeCharges = order.total;
+      order.discountAmount = discountPerOrder;
+      order.couponCode = couponCode ? couponCode.toUpperCase() : undefined;
       order.shippingCharges = Math.round(charges.shippingCharges / orders.length);
       order.platformFee = Math.round(charges.platformFee / orders.length);
-      order.total = order.subtotalBeforeCharges + order.shippingCharges + order.platformFee;
+      order.total = order.subtotalBeforeCharges - order.discountAmount + order.shippingCharges + order.platformFee;
       await order.save();
+      
+      // Debug logging  
+      console.log('DEBUG - createOrder - Saved order with discount:', {
+        orderId: order._id,
+        discountAmount: order.discountAmount,
+        couponCode: order.couponCode,
+        subtotalBeforeCharges: order.subtotalBeforeCharges,
+        total: order.total,
+      });
       
       if (order.isPrime && isMixedOrder) {
         logger.info(`[createOrder] Prime order ${order._id} charged ₹${order.shippingCharges} delivery (mixed order)`);
+      }
+      if (order.discountAmount > 0) {
+        logger.info(`[createOrder] Order ${order._id} applied discount: ₹${order.discountAmount}`);
       }
     }
 
@@ -93,6 +256,12 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     // Collect all items from all orders for customer email
     const allItems = populatedOrders.flatMap(order => order.items);
     const totalAmount = orders.reduce((sum, order) => sum + order.total, 0);
+
+    console.log('\n===== DEBUG: Final Order Summary =====');
+    console.log('Total Amount (sum of all orders):', totalAmount);
+    console.log('Total Discount Applied:', discountAmount);
+    console.log('Coupon Code:', couponCode);
+    console.log('======================================\n');
 
     // Queue order confirmation email to customer with ALL items (non-blocking)
     logger.info('[createOrder] Queueing order confirmation email to:', req.user.email);
@@ -108,6 +277,9 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
           shippingCharges: charges.shippingCharges,
           platformFee: charges.platformFee,
           subtotal: combinedSubtotal,
+          subtotalBeforeCharges: combinedSubtotal, // Subtotal before discount
+          discountAmount: discountAmount || 0,
+          couponCode: couponCode || undefined,
           isSplitShipment: isSplitShipment,
           splitOrderCount: orders.length,
           splitOrderIds: orders.map(o => `#${o._id.toString().slice(-8)}`),
@@ -120,6 +292,41 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     // Vendor notifications are already sent in OrderRoutingService
+
+    // Record coupon usage if coupon was applied
+    if (appliedCouponData) {
+      try {
+        logger.info(`[createOrder] Recording coupon usage: ${appliedCouponData.code}`);
+        
+        const coupon = await Coupon.findById(appliedCouponData.couponId);
+        if (coupon) {
+          // Increment global usage count
+          coupon.usedCount += 1;
+          
+          // Track per-user usage
+          const existingUsage = coupon.usedBy.find(
+            (usage: any) => usage.user_id.toString() === req.user._id.toString()
+          );
+          
+          if (existingUsage) {
+            existingUsage.usageCount += 1;
+            existingUsage.lastUsedAt = new Date();
+          } else {
+            coupon.usedBy.push({
+              user_id: req.user._id,
+              usageCount: 1,
+              lastUsedAt: new Date(),
+            });
+          }
+          
+          await coupon.save();
+          logger.info(`[createOrder] ✅ Coupon usage recorded for ${appliedCouponData.code}`);
+        }
+      } catch (couponUsageError: any) {
+        logger.error('[createOrder] Failed to record coupon usage:', couponUsageError.message);
+        // Don't fail the order if coupon usage recording fails
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -287,6 +494,15 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
       });
       return next(new AppError('Access denied', 403));
     }
+
+    // Debug logging for discount fields
+    console.log('DEBUG - getOrderById - Discount fields:', {
+      orderId: order._id,
+      discountAmount: order.discountAmount,
+      couponCode: order.couponCode,
+      subtotalBeforeCharges: order.subtotalBeforeCharges,
+      total: order.total,
+    });
 
     res.status(200).json({
       success: true,

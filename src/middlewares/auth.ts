@@ -81,7 +81,11 @@ export const checkRole = (...roles: string[]) => {
       return next(new AppError('Not authorized', 401));
     }
 
-    if (!roles.includes(req.user.role)) {
+    // Case-insensitive role comparison
+    const userRole = req.user.role?.toLowerCase();
+    const allowedRoles = roles.map(r => r.toLowerCase());
+    
+    if (!allowedRoles.includes(userRole)) {
       return next(new AppError('Access denied. Insufficient permissions', 403));
     }
 

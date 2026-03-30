@@ -155,6 +155,7 @@ import searchRoutes from './routes/search';
 import debugRoutes from './routes/debug';
 import shippingRoutes from './routes/shipping';
 import productNotificationRoutes from './routes/productNotifications';
+import couponRoutes from './routes/coupons';
 
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
@@ -186,6 +187,7 @@ app.use('/api/recommendations', recommendationRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/debug', debugRoutes);
 app.use('/api/shipping', shippingRoutes);
+app.use('/api/coupons', couponRoutes);
 
 // Error handling
 app.use(notFound);

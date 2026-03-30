@@ -102,6 +102,15 @@ export async function sendOrderConfirmationEmail(
   orderId: string,
   orderData: any
 ) {
+  // Debug logging
+  console.log('DEBUG - sendOrderConfirmationEmail - orderData:', {
+    orderId,
+    discountAmount: orderData.discountAmount,
+    couponCode: orderData.couponCode,
+    totalAmount: orderData.totalAmount,
+    subtotalBeforeCharges: orderData.subtotalBeforeCharges,
+  });
+  
   // Check if this is a split shipment
   const isSplit = orderData.isSplitShipment || false;
   const splitCount = orderData.splitOrderCount || 1;
@@ -148,8 +157,14 @@ export async function sendOrderConfirmationEmail(
           <table style="width: 100%; border-collapse: collapse;">
             <tr>
               <td style="padding: 5px 0;"><strong>Subtotal:</strong></td>
-              <td style="padding: 5px 0; text-align: right;">₹${(orderData.subtotal || 0).toFixed(2)}</td>
+              <td style="padding: 5px 0; text-align: right;">₹${(orderData.subtotalBeforeCharges || orderData.subtotal || 0).toFixed(2)}</td>
             </tr>
+            ${orderData.discountAmount > 0 ? `
+            <tr>
+              <td style="padding: 5px 0; color: #4caf50;"><strong>Discount ${orderData.couponCode ? `(${orderData.couponCode})` : ''}:</strong></td>
+              <td style="padding: 5px 0; text-align: right; color: #4caf50;">-₹${(orderData.discountAmount || 0).toFixed(2)}</td>
+            </tr>
+            ` : ''}
             <tr>
               <td style="padding: 5px 0;"><strong>Shipping Charges:</strong></td>
               <td style="padding: 5px 0; text-align: right;">₹${(orderData.shippingCharges || 0).toFixed(2)}</td>

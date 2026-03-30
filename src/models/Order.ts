@@ -216,6 +216,16 @@ const orderSchema = new Schema<IOrder>(
     refundAmount: {
       type: Number,
     },
+    couponCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+    discountAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     deliveredAt: {
       type: Date,
     },
