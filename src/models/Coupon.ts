@@ -14,6 +14,9 @@ export interface ICoupon extends Document {
   usedCount: number;
   isActive: boolean;
   isFirstTimeOnly: boolean; // Only for customers who never ordered before
+  applicableProductType: 'ALL' | 'FULFILLER' | 'PRIME'; // Which product types this coupon applies to
+  applicableVendorTypes: string[]; // Which vendor types: 'ALL', 'PRIME', 'FULFILLER'
+  applicableVendors: mongoose.Types.ObjectId[]; // Specific vendor IDs who can see this coupon
   applicableFor: 'ALL' | 'SPECIFIC_BRANDS' | 'SPECIFIC_CATEGORIES';
   brands?: mongoose.Types.ObjectId[]; // Brand-specific coupons
   categories?: string[]; // Category-specific coupons (e.g., 'Dog Food', 'Cat Food')
@@ -88,6 +91,24 @@ const CouponSchema: Schema = new Schema(
       type: Boolean,
       default: false,
     },
+    applicableProductType: {
+      type: String,
+      enum: ['ALL', 'FULFILLER', 'PRIME'],
+      default: 'ALL',
+      required: true,
+    },
+    applicableVendorTypes: [
+      {
+        type: String,
+        enum: ['ALL', 'PRIME', 'FULFILLER'],
+      },
+    ],
+    applicableVendors: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
     applicableFor: {
       type: String,
       enum: ['ALL', 'SPECIFIC_BRANDS', 'SPECIFIC_CATEGORIES'],

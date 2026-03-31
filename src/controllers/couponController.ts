@@ -4,6 +4,7 @@ import { AppError } from '../middlewares/errorHandler';
 import Coupon from '../models/Coupon';
 import Order from '../models/Order';
 import Brand from '../models/Brand';
+import User from '../models/User';
 import logger from '../config/logger';
 
 /**
@@ -11,9 +12,31 @@ import logger from '../config/logger';
  */
 export const getAllCoupons = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const coupons = await Coupon.find()
+    let filter: any = {};
+
+    // Filter coupons based on user role (for vendors in read-only mode)
+    const userRole = req.user?.role;
+    const userId = req.user?._id;
+
+    if (userRole === 'vendor') {
+      // Show coupons that are either:
+      // 1. Specifically assigned to this vendor (applicableVendors includes their ID)
+      // 2. No specific vendors selected (empty applicableVendors array and type matches)
+      // 3. Legacy coupons without vendor restrictions
+      
+      filter = {
+        $or: [
+          { applicableVendors: userId },
+          { applicableVendors: { $size: 0 }, applicableVendorTypes: { $size: 0 } }, // Legacy coupons
+          { applicableVendorTypes: { $exists: false } }, // Legacy coupons
+        ],
+      };
+    }
+
+    const coupons = await Coupon.find(filter)
       .populate('brands', 'name')
       .populate('createdBy', 'name email')
+      .populate('applicableVendors', 'name email vendorType')
       .sort('-createdAt');
 
     res.status(200).json({
@@ -67,6 +90,9 @@ export const createCoupon = async (req: AuthRequest, res: Response, next: NextFu
       usageLimit,
       usagePerUser,
       isFirstTimeOnly,
+      applicableProductType,
+      applicableVendorTypes,
+      applicableVendors,
       applicableFor,
       brands,
       categories,
@@ -112,6 +138,9 @@ export const createCoupon = async (req: AuthRequest, res: Response, next: NextFu
       usageLimit: usageLimit || null,
       usagePerUser: usagePerUser || 1,
       isFirstTimeOnly: isFirstTimeOnly || false,
+      applicableProductType: applicableProductType || 'ALL',
+      applicableVendorTypes: applicableVendorTypes || [],
+      applicableVendors: applicableVendors || [],
       applicableFor: applicableFor || 'ALL',
       brands: applicableFor === 'SPECIFIC_BRANDS' ? brands : [],
       categories: applicableFor === 'SPECIFIC_CATEGORIES' ? categories : [],
@@ -307,6 +336,40 @@ export const validateCoupon = async (req: AuthRequest, res: Response, next: Next
       return next(new AppError('You have already used this coupon the maximum number of times', 400));
     }
 
+    // Check product type applicability (Prime vs Fulfiller/MyShop products)
+    if (coupon.applicableProductType && coupon.applicableProductType !== 'ALL') {
+      // Get prime and fulfiller products from cart
+      const hasPrimeProducts = cartItems.some((item: any) => 
+        item.isPrime || item.product?.isPrime
+      );
+      const hasFullfillerProducts = cartItems.some((item: any) => 
+        !item.isPrime && !item.product?.isPrime
+      );
+      
+      // Check if cart has mixed products
+      if (hasPrimeProducts && hasFullfillerProducts) {
+        return next(
+          new AppError(
+            'This coupon code is not valid because your cart contains both Prime and MyShop products. Prime products have different coupon codes. Please use separate coupons or place separate orders.',
+            400
+          )
+        );
+      }
+      
+      // Check if coupon matches cart product type
+      if (coupon.applicableProductType === 'PRIME' && !hasPrimeProducts) {
+        return next(
+          new AppError('This coupon is only valid for Prime vendor products', 400)
+        );
+      }
+      
+      if (coupon.applicableProductType === 'FULFILLER' && hasPrimeProducts) {
+        return next(
+          new AppError('This coupon is only valid for MyShop/Fulfiller products. Prime products have separate coupon codes.', 400)
+        );
+      }
+    }
+
     // Check brand/category applicability
     if (coupon.applicableFor === 'SPECIFIC_BRANDS' && coupon.brands && coupon.brands.length > 0) {
       const applicableBrandIds = coupon.brands.map((b: any) => b._id.toString());
@@ -413,5 +476,39 @@ export const recordCouponUsage = async (couponCode: string, userId: string) => {
     logger.info(`[Coupon] Usage recorded: ${couponCode} by user ${userId}`);
   } catch (error: any) {
     logger.error(`[Coupon] Error recording usage: ${error.message}`);
+  }
+};
+
+/**
+ * Get vendors by type (for coupon creation dropdown)
+ */
+export const getVendorsByType = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { type } = req.query;
+
+    // Base filter - get all users with vendor role (case-insensitive)
+    const filter: any = { 
+      role: { $in: ['vendor', 'VENDOR', 'Vendor'] }
+    };
+
+    // Only filter by vendorType if it's FULFILLER
+    if (type === 'FULFILLER') {
+      filter.vendorType = { $in: ['MY_SHOP', 'WAREHOUSE_FULFILLER', 'my_shop', 'warehouse_fulfiller'] };
+    }
+    // For PRIME or no type, just get all vendors
+
+    const vendors = await User.find(filter)
+      .select('_id name email vendorType isApproved role')
+      .sort('name');
+
+    logger.info(`[Coupon] Found ${vendors.length} vendors for type: ${type}. Vendors: ${vendors.map(v => `${v.name} (role: ${v.role})`).join(', ')}`);
+
+    res.status(200).json({
+      success: true,
+      data: { vendors },
+    });
+  } catch (error: any) {
+    logger.error(`[Coupon] Error fetching vendors: ${error.message}`);
+    next(new AppError(error.message, 500));
   }
 };

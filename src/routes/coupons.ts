@@ -7,6 +7,7 @@ import {
   deleteCoupon,
   toggleCouponStatus,
   validateCoupon,
+  getVendorsByType,
 } from '../controllers/couponController';
 import { verifyToken, checkRole } from '../middlewares/auth';
 
@@ -15,17 +16,22 @@ const router = express.Router();
 // Public routes - Get active coupons (for customers to browse)
 router.get('/active', getActiveCoupons);
 
-// Customer routes - Validate coupon
-router.post('/validate', verifyToken, validateCoupon);
-
-// Admin routes - Full coupon management
+// Routes requiring authentication
 router.use(verifyToken);
-router.use(checkRole('admin'));
 
+// Get vendors by type (for coupon creation)
+router.get('/vendors', getVendorsByType);
+
+// Validate coupon (any authenticated user)
+router.post('/validate', validateCoupon);
+
+// Get all coupons (Admin and Vendors with read-only access)
 router.get('/', getAllCoupons);
-router.post('/', createCoupon);
-router.put('/:id', updateCoupon);
-router.delete('/:id', deleteCoupon);
-router.patch('/:id/toggle-status', toggleCouponStatus);
+
+// Admin-only routes - Full coupon management
+router.post('/', checkRole('admin'), createCoupon);
+router.put('/:id', checkRole('admin'), updateCoupon);
+router.delete('/:id', checkRole('admin'), deleteCoupon);
+router.patch('/:id/toggle-status', checkRole('admin'), toggleCouponStatus);
 
 export default router;
