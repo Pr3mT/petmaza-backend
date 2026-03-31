@@ -19,17 +19,9 @@ export const getAllCoupons = async (req: AuthRequest, res: Response, next: NextF
     const userId = req.user?._id;
 
     if (userRole === 'vendor') {
-      // Show coupons that are either:
-      // 1. Specifically assigned to this vendor (applicableVendors includes their ID)
-      // 2. No specific vendors selected (empty applicableVendors array and type matches)
-      // 3. Legacy coupons without vendor restrictions
-      
+      // Only show coupons specifically assigned to this vendor
       filter = {
-        $or: [
-          { applicableVendors: userId },
-          { applicableVendors: { $size: 0 }, applicableVendorTypes: { $size: 0 } }, // Legacy coupons
-          { applicableVendorTypes: { $exists: false } }, // Legacy coupons
-        ],
+        applicableVendors: userId
       };
     }
 
