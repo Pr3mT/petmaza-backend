@@ -1,5 +1,5 @@
 import express from 'express';
-import { register, login, logout, getMe, updateProfile, sendVerificationEmailController, sendVerificationSuccessController, registerPrimeVendor, googleAuth } from '../controllers/authController';
+import { register, login, logout, getMe, updateProfile, sendVerificationEmailController, sendVerificationSuccessController, registerPrimeVendor, googleAuth, forgotPassword, resetPassword } from '../controllers/authController';
 import { verifyToken } from '../middlewares/auth';
 
 const router = express.Router();
@@ -9,6 +9,8 @@ router.post('/register-prime-vendor', registerPrimeVendor);
 router.post('/login', login);
 router.post('/google-auth', googleAuth);
 router.post('/logout', logout);
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 router.post('/send-verification-email', sendVerificationEmailController);
 router.post('/send-verification-success', sendVerificationSuccessController);
 router.get('/me', verifyToken, getMe);

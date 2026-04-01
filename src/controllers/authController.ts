@@ -1,11 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
 import { generateToken } from '../utils/jwt';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
-import { sendVerificationEmail, sendVerificationSuccessEmail } from '../services/emailer';
+import { sendVerificationEmail, sendVerificationSuccessEmail, sendEmail } from '../services/emailer';
 import { OAuth2Client } from 'google-auth-library';
+import logger from '../config/logger';
 
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -433,6 +435,194 @@ export const registerPrimeVendor = async (req: Request, res: Response, next: Nex
     });
 
   } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Forgot Password
+ * Send password reset email to user
+ */
+export const forgotPassword = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return next(new AppError('Please provide your email address', 400));
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      // For security, don't reveal if email exists or not
+      return res.status(200).json({
+        success: true,
+        message: 'If an account exists with this email, you will receive a password reset link shortly.',
+      });
+    }
+
+    // Generate reset token using crypto
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    
+    // Hash token and set to resetPasswordToken field
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    
+    // Set token and expiration on user (30 minutes)
+    user.resetPasswordToken = hashedToken;
+    user.resetPasswordExpire = new Date(Date.now() + 30 * 60 * 1000);
+    await user.save();
+    
+    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}&email=${email}`;
+
+    // Send password reset email
+    const emailHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+          .button { display: inline-block; padding: 15px 40px; background: #667eea; color: white !important; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold; }
+          .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+          .link { color: #667eea; word-break: break-all; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔒 Password Reset Request</h1>
+          </div>
+          <div class="content">
+            <p>Hello ${user.name},</p>
+            <p>We received a request to reset your password for your PETMAZA account.</p>
+            <p>Click the button below to reset your password:</p>
+            <div style="text-align: center;">
+              <table cellpadding="0" cellspacing="0" border="0" align="center">
+                <tr>
+                  <td style="background-color: #667eea; border-radius: 5px; padding: 15px 40px;">
+                    <a href="${resetUrl}" style="color: #ffffff; text-decoration: none; font-weight: bold; display: inline-block; font-size: 16px;">Reset Password</a>
+                  </td>
+                </tr>
+              </table>
+            </div>
+            <p>Or copy and paste this link into your browser:</p>
+            <p style="text-align: center;"><a href="${resetUrl}" class="link">${resetUrl}</a></p>
+            <p><strong>Note:</strong> This link will expire in 30 minutes for security reasons.</p>
+            <p>If you didn't request this, you can safely ignore this email.</p>
+            <p>Best regards,<br>The PETMAZA Team</p>
+          </div>
+          <div class="footer">
+            <p>© 2026 PETMAZA - Pet Marketplace</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    await sendEmail({
+      to: email,
+      subject: 'Password Reset Request - PETMAZA',
+      html: emailHtml,
+      trigger: 'forgot_password',
+      userId: user._id.toString(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset instructions have been sent to your email.',
+    });
+
+  } catch (error: any) {
+    logger.error(`Forgot password error: ${error.message}`);
+    next(error);
+  }
+};
+
+/**
+ * Reset Password
+ * Verify token and update user password
+ */
+export const resetPassword = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { token, email, newPassword } = req.body;
+
+    if (!token || !email || !newPassword) {
+      return next(new AppError('Please provide token, email and new password', 400));
+    }
+
+    if (newPassword.length < 6) {
+      return next(new AppError('Password must be at least 6 characters long', 400));
+    }
+
+    // Hash the token from URL to compare with stored hash
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Find user with matching token and email, and token not expired
+    const user = await User.findOne({
+      email,
+      resetPasswordToken: hashedToken,
+      resetPasswordExpire: { $gt: Date.now() },
+    }).select('+password');
+
+    if (!user) {
+      return next(new AppError('Invalid or expired reset token', 400));
+    }
+
+    // Update password (will be hashed by pre-save hook)
+    user.password = newPassword;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+    await user.save();
+
+    // Send confirmation email
+    const emailHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+          .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>✅ Password Changed Successfully</h1>
+          </div>
+          <div class="content">
+            <p>Hello ${user.name},</p>
+            <p>Your PETMAZA account password has been successfully changed.</p>
+            <p>If you did not make this change, please contact our support team immediately.</p>
+            <p>Best regards,<br>The PETMAZA Team</p>
+          </div>
+          <div class="footer">
+            <p>© 2026 PETMAZA - Pet Marketplace</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    await sendEmail({
+      to: email,
+      subject: 'Password Changed Successfully - PETMAZA',
+      html: emailHtml,
+      trigger: 'password_reset_success',
+      userId: user._id.toString(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Password has been reset successfully. You can now login with your new password.',
+    });
+
+  } catch (error: any) {
+    logger.error(`Reset password error: ${error.message}`);
     next(error);
   }
 };

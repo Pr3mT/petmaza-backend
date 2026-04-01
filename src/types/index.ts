@@ -18,6 +18,8 @@ export interface IUser extends Document {
     pincode: string;
   };
   isApproved: boolean;
+  resetPasswordToken?: string;
+  resetPasswordExpire?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
