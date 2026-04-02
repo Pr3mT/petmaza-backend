@@ -14,16 +14,37 @@ export const getAllCoupons = async (req: AuthRequest, res: Response, next: NextF
   try {
     let filter: any = {};
 
-    // Filter coupons based on user role (for vendors in read-only mode)
+    // Filter coupons based on user role and vendor type
     const userRole = req.user?.role;
     const userId = req.user?._id;
+    const vendorType = req.user?.vendorType;
 
     if (userRole === 'vendor') {
-      // Only show coupons specifically assigned to this vendor
-      filter = {
-        applicableVendors: userId
-      };
+      // Filter based on vendor type
+      if (vendorType === 'WAREHOUSE_FULFILLER' || vendorType === 'MY_SHOP') {
+        // Fulfillers/MyShop vendors: Show FULFILLER and ALL coupons, or coupons assigned to them
+        filter = {
+          $or: [
+            { applicableProductType: { $in: ['ALL', 'FULFILLER'] } },
+            { applicableVendors: userId }
+          ]
+        };
+      } else if (vendorType === 'PRIME') {
+        // Prime vendors: Show PRIME and ALL coupons, or coupons assigned to them
+        filter = {
+          $or: [
+            { applicableProductType: { $in: ['ALL', 'PRIME'] } },
+            { applicableVendors: userId }
+          ]
+        };
+      } else {
+        // Legacy vendors without type: Only show coupons specifically assigned to them
+        filter = {
+          applicableVendors: userId
+        };
+      }
     }
+    // If admin, no filter - show all coupons
 
     const coupons = await Coupon.find(filter)
       .populate('brands', 'name')
