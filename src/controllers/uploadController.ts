@@ -14,16 +14,14 @@ export const uploadImage = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     // Upload to Cloudinary using stream
+    // Note: Image is already compressed by imageCompression middleware
     const uploadPromise = new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           folder: 'petmaza/products',
           resource_type: 'image',
-          transformation: [
-            { width: 1000, height: 1000, crop: 'limit' },
-            { quality: 'auto' },
-            { fetch_format: 'auto' },
-          ],
+          // Removed transformations as images are already compressed
+          // This prevents double compression and maintains quality
         },
         (error, result) => {
           if (error) reject(error);
@@ -58,17 +56,14 @@ export const uploadMultipleImages = async (req: AuthRequest, res: Response, next
       return next(new AppError('No files uploaded', 400));
     }
 
+    // Note: Images are already compressed by imageCompression middleware
     const uploadPromises = req.files.map((file) => {
       return new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
           {
             folder: 'petmaza/products',
             resource_type: 'image',
-            transformation: [
-              { width: 1000, height: 1000, crop: 'limit' },
-              { quality: 'auto' },
-              { fetch_format: 'auto' },
-            ],
+            // Removed transformations as images are already compressed
           },
           (error, result) => {
             if (error) reject(error);
