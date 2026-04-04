@@ -198,9 +198,10 @@ export const getProductReviews = async (req: Request, res: Response) => {
 
     const total = await Review.countDocuments(filter);
 
-    // Calculate rating statistics
+    // Calculate rating statistics - Convert productId to ObjectId for aggregate
+    const mongoose = require('mongoose');
     const statsResult = await Review.aggregate([
-      { $match: { product_id: productId, status: 'approved' } },
+      { $match: { product_id: new mongoose.Types.ObjectId(productId), status: 'approved' } },
       {
         $group: {
           _id: null,
