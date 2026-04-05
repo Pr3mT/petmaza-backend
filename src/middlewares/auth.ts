@@ -119,6 +119,19 @@ export const checkPrimeVendor = (req: AuthRequest, res: Response, next: NextFunc
   return next(new AppError('Access denied. Only Prime vendors can access this resource', 403));
 };
 
+// Check for WAREHOUSE_FULFILLER vendor type
+export const checkWarehouseFulfiller = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return next(new AppError('Not authorized', 401));
+  }
+
+  if (req.user.role === 'vendor' && req.user.vendorType === 'WAREHOUSE_FULFILLER') {
+    return next();
+  }
+
+  return next(new AppError('Access denied. Only Warehouse Fulfillers can access this resource', 403));
+};
+
 // Alias for verifyToken
 export const authenticate = verifyToken;
 

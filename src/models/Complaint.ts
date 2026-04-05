@@ -11,7 +11,17 @@ const complaintSchema = new Schema<IComplaint>(
     order_id: {
       type: Schema.Types.ObjectId,
       ref: 'Order',
+      required: false, // Optional - complaints can be filed without an order
+    },
+    product_id: {
+      type: Schema.Types.ObjectId,
+      ref: 'Product',
       required: true,
+    },
+    productName: {
+      type: String,
+      required: true,
+      trim: true,
     },
     subject: {
       type: String,
@@ -25,13 +35,18 @@ const complaintSchema = new Schema<IComplaint>(
     },
     status: {
       type: String,
-      enum: ['pending', 'in_progress', 'resolved', 'closed'],
+      enum: ['pending', 'in_progress', 'resolved', 'closed', 'rejected'],
       default: 'pending',
     },
     priority: {
       type: String,
       enum: ['low', 'medium', 'high', 'urgent'],
       default: 'medium',
+    },
+    issueType: {
+      type: String,
+      enum: ['product_quality', 'damaged_defective', 'incorrect_product', 'missing_items', 'description_mismatch', 'other'],
+      default: 'other',
     },
     assignedTo: {
       type: Schema.Types.ObjectId,
@@ -45,7 +60,15 @@ const complaintSchema = new Schema<IComplaint>(
       type: Schema.Types.ObjectId,
       ref: 'User',
     },
+    fulfiller_id: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
     resolution: {
+      type: String,
+      trim: true,
+    },
+    vendorNotes: {
       type: String,
       trim: true,
     },
@@ -64,9 +87,12 @@ const complaintSchema = new Schema<IComplaint>(
 
 complaintSchema.index({ customer_id: 1 });
 complaintSchema.index({ order_id: 1 });
+complaintSchema.index({ product_id: 1 });
 complaintSchema.index({ vendor_id: 1 });
+complaintSchema.index({ fulfiller_id: 1 });
 complaintSchema.index({ status: 1 });
 complaintSchema.index({ priority: 1 });
+complaintSchema.index({ issueType: 1 });
 
 const Complaint = mongoose.model<IComplaint>('Complaint', complaintSchema);
 

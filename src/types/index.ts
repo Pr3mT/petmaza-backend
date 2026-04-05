@@ -357,15 +357,19 @@ export interface IBilling extends Document {
 // Complaints & Support
 export interface IComplaint extends Document {
   customer_id: Types.ObjectId | string;
-  order_id: Types.ObjectId | string;
+  order_id?: Types.ObjectId | string; // Optional - complaints can be filed without an order
+  product_id: Types.ObjectId | string;
+  productName: string;
   subject: string;
-  description: string;
-  status: 'pending' | 'in_progress' | 'resolved' | 'closed';
+  description: string;  status: 'pending' | 'in_progress' | 'resolved' | 'closed' | 'rejected';
   priority: 'low' | 'medium' | 'high' | 'urgent';
+  issueType?: 'product_quality' | 'damaged_defective' | 'incorrect_product' | 'missing_items' | 'description_mismatch' | 'other';
   assignedTo?: Types.ObjectId | string; // Admin user ID
   vendorNotified?: boolean;
   vendor_id?: Types.ObjectId | string; // If complaint involves vendor
+  fulfiller_id?: Types.ObjectId | string; // Warehouse fulfiller who handled the order
   resolution?: string;
+  vendorNotes?: string;
   resolvedAt?: Date;
   resolvedBy?: Types.ObjectId | string; // Admin user ID
   createdAt: Date;
