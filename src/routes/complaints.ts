@@ -11,6 +11,7 @@ import {
   addVendorNotes,
   rejectComplaint,
   resolveComplaintByVendor,
+  resolveComplaint,
 } from '../controllers/complaintController';
 import { verifyToken, checkRole, checkWarehouseFulfiller } from '../middlewares/auth';
 
@@ -41,6 +42,7 @@ router.use(verifyToken);
 router.use(checkRole('admin'));
 
 router.get('/', getAllComplaints);
+router.put('/:id/resolve', resolveComplaint);
 
 export default router;
 

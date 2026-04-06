@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { ComplaintService } from '../services/ComplaintService';
 import { AuthRequest } from '../middlewares/auth';
 import { AppError } from '../middlewares/errorHandler';
+import Complaint from '../models/Complaint';
 
 export const createComplaint = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -130,13 +131,29 @@ export const assignComplaint = async (req: AuthRequest, res: Response, next: Nex
 
 export const resolveComplaint = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { resolution } = req.body;
+    const { resolution, status } = req.body;
 
-    const complaint = await ComplaintService.resolveComplaint(
-      req.params.id,
-      req.user._id.toString(),
-      resolution
-    );
+    if (!resolution || !resolution.trim()) {
+      throw new AppError('Resolution text is required', 400);
+    }
+
+    // Validate status if provided
+    const validStatuses = ['resolved', 'rejected', 'closed'];
+    const finalStatus = status && validStatuses.includes(status) ? status : 'resolved';
+
+    // Get the complaint
+    const complaint = await ComplaintService.getComplaintById(req.params.id);
+
+    if (complaint.status === 'resolved' || complaint.status === 'closed') {
+      throw new AppError('Complaint is already resolved or closed', 400);
+    }
+
+    // Update the complaint with the new status
+    complaint.status = finalStatus;
+    complaint.resolution = resolution;
+    complaint.resolvedAt = new Date();
+    complaint.resolvedBy = req.user._id;
+    await complaint.save();
 
     res.status(200).json({
       success: true,
