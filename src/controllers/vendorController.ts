@@ -89,11 +89,18 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
       });
     }
 
-    // MY_SHOP vendors only see non-PRIME products (regular products)
-    const allProducts = await Product.find({ 
-      isPrime: false // Only regular products, not PRIME products
-      // Removed isActive filter to show all products (available and marked out)
-    })
+    // MY_SHOP and WAREHOUSE vendors
+    // WAREHOUSE_FULFILLER vendors only see products they created (addedBy)
+    // MY_SHOP vendors see ALL non-PRIME products
+    const productFilter: any = { isPrime: false };
+    if (vendor.vendorType === 'WAREHOUSE_FULFILLER') {
+      productFilter.addedBy = vendor._id;
+      console.log(`🔒 WAREHOUSE_FULFILLER filter: addedBy=${vendor._id}, name=${vendor.name}`);
+    } else {
+      console.log(`🔓 ${vendor.vendorType} vendor - showing all non-prime products`);
+    }
+
+    const allProducts = await Product.find(productFilter)
       .populate('brand_id', 'name _id')
       .populate('category_id', 'name _id')
       .sort({ createdAt: -1 });
@@ -311,6 +318,8 @@ export const updateVendorProductStock = async (req: AuthRequest, res: Response, 
               displayWeight: variant.displayWeight,
               isActive: variant.isActive || true,
               availableStock: 0,
+              totalSoldWebsite: 0,
+              totalSoldStore: 0,
             }));
           }
         }

@@ -198,6 +198,17 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
 
 export const deleteProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    // Vendors can only delete products they created
+    if (req.user.role === 'vendor') {
+      const existingProduct = await Product.findById(req.params.id);
+      if (!existingProduct) {
+        return res.status(404).json({ success: false, message: 'Product not found' });
+      }
+      if (!existingProduct.addedBy || existingProduct.addedBy.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ success: false, message: 'You can only delete products you created' });
+      }
+    }
+
     const product = await ProductService.deleteProduct(req.params.id);
     
     // Clear product cache so customers don't see the deleted product

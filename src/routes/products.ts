@@ -26,6 +26,6 @@ router.get('/:productId/prime-listings', optionalAuth, cacheForCustomersOnly(300
 router.post('/', verifyToken, createProduct); // MY_SHOP vendors can create products
 router.put('/:id', verifyToken, updateProduct); // MY_SHOP vendors can update their products
 router.patch('/:id', verifyToken, updateProduct);
-router.delete('/:id', verifyToken, checkRole('admin'), deleteProduct); // Only admin can delete
+router.delete('/:id', verifyToken, checkRole('admin', 'vendor'), deleteProduct); // Admin can delete any, vendors can delete own
 
 export default router;
