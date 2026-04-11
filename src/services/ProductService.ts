@@ -119,10 +119,13 @@ export class ProductService {
       .limit(limit)
       .lean(); // Convert to plain JavaScript objects for better performance
 
-    // Add inStock field to each product based on product.isActive
+    // Compute inStock for every product:
+    // A product is in-stock only when BOTH conditions are true:
+    //   1. isActive !== false  — covers legacy products marked out-of-stock via isActive
+    //   2. inStock !== false   — covers new products marked out-of-stock via the inStock toggle
     if (products.length > 0) {
       products = products.map((p) => {
-        p.inStock = p.isActive === true;
+        p.inStock = p.isActive !== false && p.inStock !== false;
         return p;
       });
     }
@@ -186,15 +189,16 @@ export class ProductService {
     }
 
     // Determine inStock status based on product type
+    // Check BOTH isActive (legacy) and inStock (new toggle) — must be truthy in both
     let inStock = false;
     
     // For variant products, check if product is active and has active variants
     if (product.hasVariants && product.variants && product.variants.length > 0) {
       const hasActiveVariants = product.variants.some((v: any) => v.isActive);
-      inStock = product.isActive && hasActiveVariants;
+      inStock = product.isActive !== false && product.inStock !== false && hasActiveVariants;
     } else {
-      // For non-variant products, use product.isActive
-      inStock = product.isActive === true;
+      // For non-variant products, use both isActive and inStock
+      inStock = product.isActive !== false && product.inStock !== false;
     }
 
     const productWithStock = {

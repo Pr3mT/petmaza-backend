@@ -5,6 +5,8 @@ import Order from '../models/Order';
 import User from '../models/User';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
+import { notifyWaitingCustomers } from './productNotificationController';
+import { clearCache } from '../middlewares/cache';
 
 export const getVendorProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -499,17 +501,34 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
         product.markModified('variants');
         await product.save();
       } else {
-        // Update product-level isActive status
-        console.log(`📝 Updating product ${product._id} isActive from ${product.isActive} to ${isActive}`);
-        product.isActive = isActive;
+        // Update product-level inStock status (keep isActive=true so product stays visible to customers)
+        // Check BOTH inStock and isActive for legacy docs (old out-of-stock products have isActive:false, inStock:undefined)
+        const wasOutOfStock = product.inStock === false || product.isActive === false;
+        console.log(`📝 Updating product ${product._id} inStock: ${product.inStock} -> ${isActive}`);
+        product.inStock = isActive;
+        product.isActive = true; // always keep visible; inStock controls purchase availability
         await product.save();
-        console.log(`✅ Product saved. New isActive: ${product.isActive}`);
+        console.log(`✅ Product saved. inStock: ${product.inStock}, isActive: ${product.isActive}`);
+
+        // If product was out-of-stock and is now back in stock, notify waiting customers
+        if (wasOutOfStock && isActive === true) {
+          console.log('🔔 Product marked available - triggering notify-me emails');
+          notifyWaitingCustomers(
+            product._id.toString(),
+            product.name,
+            product.images && product.images.length > 0 ? product.images[0] : undefined
+          ).catch(err => console.error('Error notifying customers:', err));
+        }
+
+        // Clear product cache so customers see updated stock status immediately
+        clearCache('/api/products');
+        clearCache('/products');
       }
 
       await product.populate('brand_id', 'name _id');
       await product.populate('category_id', 'name _id');
 
-      console.log(`📤 Returning updated product. isActive: ${product.isActive}`);
+      console.log(`📤 Returning updated product. inStock: ${product.inStock}`);
 
       res.status(200).json({
         success: true,

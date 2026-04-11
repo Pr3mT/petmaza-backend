@@ -101,16 +101,14 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
       isAdmin: req.user && req.user.role === 'admin'
     });
 
-    // Admin users can see all products (active and inactive)
-    // Customers only see active products
+    // All users (admin, customers, public) see all products.
+    // Out-of-stock products remain visible with an "Out of Stock" badge and "Notify Me" button.
+    // The inStock field (derived from legacy isActive for old docs) controls purchase availability.
+    filters.isActive = undefined; // no filter - show all products to everyone
     if (req.user && req.user.role === 'admin') {
-      // Don't filter by isActive for admin - show all products
-      filters.isActive = undefined;
-      console.log('✅ Admin detected - showing all products (active + inactive)');
+      console.log('✅ Admin detected - showing all products');
     } else {
-      // For customers and non-logged-in users, only show active products
-      filters.isActive = true;
-      console.log('👤 Customer/public - showing only active products');
+      console.log('👤 Customer/public - showing all products (out-of-stock shown with badge)');
     }
 
     const products = await ProductService.getAllProducts(filters);
@@ -167,11 +165,12 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
     // Get the existing product to check if status changed
     const existingProduct = await Product.findById(req.params.id);
     const wasInactive = existingProduct && !existingProduct.isActive;
+    const wasOutOfStock = existingProduct && existingProduct.inStock === false;
     
     const product = await ProductService.updateProduct(req.params.id, req.body);
     
-    // If product was inactive and now is active, notify waiting customers
-    if (wasInactive && product.isActive) {
+    // If product was inactive/out-of-stock and now is active/in-stock, notify waiting customers
+    if ((wasInactive && product.isActive) || (wasOutOfStock && product.inStock !== false)) {
       console.log('🔔 Product became active - checking for waiting customers');
       // Run notification in background (don't await)
       notifyWaitingCustomers(

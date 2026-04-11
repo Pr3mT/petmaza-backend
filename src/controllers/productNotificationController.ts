@@ -25,8 +25,9 @@ export const registerForNotification = async (req: Request, res: Response, next:
       return next(new AppError('Product not found', 404));
     }
 
-    // Check if product is already active
-    if (product.isActive) {
+    // Check if product is already in stock (use inStock field, fall back to isActive for legacy docs)
+    const productInStock = product.inStock !== undefined ? product.inStock !== false : product.isActive !== false;
+    if (productInStock) {
       return res.status(200).json({
         success: true,
         message: 'Product is already in stock!',

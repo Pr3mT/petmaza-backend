@@ -118,6 +118,10 @@ const productSchema = new Schema<IProduct>(
       type: Boolean,
       default: true,
     },
+    inStock: {
+      type: Boolean,
+      default: true,
+    },
     addedBy: {
       type: Schema.Types.ObjectId,
       ref: 'User',
