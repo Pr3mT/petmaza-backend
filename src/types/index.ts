@@ -278,10 +278,18 @@ export interface IServiceRequest extends Document {
     pincode: string;
   };
   birds: Array<{
-    ringId: string;
+    birdName?: string;
+    bandId: string;
     species: string;
     collectionDateTime: Date;
     notes?: string;
+    labReports: Array<{
+      url: string;
+      publicId?: string;
+      note?: string;
+      uploadedAt: Date;
+      uploadedBy: string;
+    }>;
   }>;
   pickupAddress: {
     street: string;
@@ -296,11 +304,20 @@ export interface IServiceRequest extends Document {
     pincode: string;
   };
   extraNote?: string;
-  status: 'pending' | 'pickup_scheduled' | 'picked_up' | 'delivered' | 'completed';
+  status: 'pending' | 'accepted' | 'sample_collected' | 'testing' | 'completed' | 'cancelled';
   pickupRequestId?: string;
   payment_id?: string;
   payment_status: PaymentStatus;
+  pricePerSample: number;
   totalAmount: number;
+  labReports?: Array<{
+    url: string;
+    publicId?: string;
+    note?: string;
+    uploadedAt: Date;
+    uploadedBy: string;
+  }>;
+  vendorAssignedId?: Types.ObjectId | string;
   createdAt: Date;
   updatedAt: Date;
 }

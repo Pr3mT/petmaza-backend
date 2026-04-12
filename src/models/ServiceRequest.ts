@@ -1,5 +1,5 @@
 import mongoose, { Schema } from 'mongoose';
-import { IServiceRequest, PaymentStatus } from '../types';
+import { IServiceRequest } from '../types';
 
 const addressSchema = new Schema(
   {
@@ -11,12 +11,28 @@ const addressSchema = new Schema(
   { _id: false }
 );
 
+const labReportSchema = new Schema(
+  {
+    url: { type: String, required: true },
+    publicId: { type: String },
+    note: { type: String },
+    uploadedAt: { type: Date, default: Date.now },
+    uploadedBy: { type: String, required: true },
+  },
+  { _id: false }
+);
+
 const birdSchema = new Schema(
   {
-    ringId: { type: String, required: true },
+    birdName: { type: String },
+    bandId: { type: String, required: true },
     species: { type: String, required: true },
     collectionDateTime: { type: Date, required: true },
     notes: String,
+    labReports: {
+      type: [labReportSchema],
+      default: [],
+    },
   },
   { _id: false }
 );
@@ -24,7 +40,8 @@ const birdSchema = new Schema(
 const serviceRequestSchema = new Schema<IServiceRequest>(
   {
     customerId: {
-      type: String,
+      type: Schema.Types.ObjectId,
+      ref: 'User',
       required: true,
     },
     serviceType: {
@@ -63,7 +80,7 @@ const serviceRequestSchema = new Schema<IServiceRequest>(
     extraNote: String,
     status: {
       type: String,
-      enum: ['pending', 'pickup_scheduled', 'picked_up', 'delivered', 'completed'],
+      enum: ['pending', 'accepted', 'sample_collected', 'testing', 'completed', 'cancelled'],
       default: 'pending',
     },
     pickupRequestId: String,
@@ -73,10 +90,23 @@ const serviceRequestSchema = new Schema<IServiceRequest>(
       enum: ['Pending', 'Paid', 'Failed', 'Refunded'],
       default: 'Pending',
     },
+    pricePerSample: {
+      type: Number,
+      default: 300,
+    },
     totalAmount: {
       type: Number,
       required: true,
       min: 0,
+    },
+    // Legacy request-level reports retained for backward compatibility with existing data.
+    labReports: {
+      type: [labReportSchema],
+      default: [],
+    },
+    vendorAssignedId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
     },
   },
   {
@@ -86,6 +116,7 @@ const serviceRequestSchema = new Schema<IServiceRequest>(
 
 serviceRequestSchema.index({ customerId: 1 });
 serviceRequestSchema.index({ status: 1 });
+serviceRequestSchema.index({ vendorAssignedId: 1 });
 
 const ServiceRequest = mongoose.model<IServiceRequest>('ServiceRequest', serviceRequestSchema);
 

@@ -13,7 +13,7 @@ cloudinary.config({
 const storage = multer.memoryStorage();
 
 // File filter for images only
-const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+const imageFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
   
   if (allowedTypes.includes(file.mimetype)) {
@@ -23,12 +23,30 @@ const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilt
   }
 };
 
-// Multer upload configuration
+// File filter for PDF documents
+const pdfFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  if (file.mimetype === 'application/pdf') {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only PDF files are allowed.'));
+  }
+};
+
+// Multer upload configuration for images
 export const upload = multer({
   storage,
-  fileFilter,
+  fileFilter: imageFilter,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB max file size
+  },
+});
+
+// Multer upload configuration for PDFs (lab reports etc.)
+export const uploadPdf = multer({
+  storage,
+  fileFilter: pdfFilter,
+  limits: {
+    fileSize: 20 * 1024 * 1024, // 20MB max
   },
 });
 
