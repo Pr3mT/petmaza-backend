@@ -71,7 +71,7 @@ router.delete('/fulfillers/:id', deleteFulfiller);
 // Vendor billing route
 router.get('/vendor-billing', getVendorBilling);
 
-// Reviews route
+// Reviews routes
 router.get('/reviews', async (req, res) => {
   try {
     const reviews = await Review.find()
@@ -81,6 +81,34 @@ router.get('/reviews', async (req, res) => {
       .limit(100);
 
     res.json({ success: true, reviews });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.put('/reviews/:id', async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['approved', 'rejected', 'pending'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+    const review = await Review.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    );
+    if (!review) return res.status(404).json({ success: false, message: 'Review not found' });
+    res.json({ success: true, review });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.delete('/reviews/:id', async (req, res) => {
+  try {
+    const review = await Review.findByIdAndDelete(req.params.id);
+    if (!review) return res.status(404).json({ success: false, message: 'Review not found' });
+    res.json({ success: true, message: 'Review deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
