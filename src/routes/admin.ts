@@ -17,6 +17,8 @@ import {
   updateFulfiller,
   deleteFulfiller,
   getVendorBilling,
+  getVendorWeeklyBilling,
+  markWeeklyInvoicePaid,
 } from '../controllers/adminController';
 import {
   getAnalytics,
@@ -70,6 +72,10 @@ router.delete('/fulfillers/:id', deleteFulfiller);
 
 // Vendor billing route
 router.get('/vendor-billing', getVendorBilling);
+
+// Vendor weekly invoice routes
+router.get('/vendor-weekly-billing', getVendorWeeklyBilling);
+router.post('/vendor-weekly-billing/mark-paid', markWeeklyInvoicePaid);
 
 // Reviews routes
 router.get('/reviews', async (req, res) => {

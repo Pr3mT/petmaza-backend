@@ -4,6 +4,7 @@ import Product from '../models/Product';
 import Order from '../models/Order';
 import Transaction from '../models/Transaction';
 import ShippingSettings from '../models/ShippingSettings';
+import Settlement from '../models/Settlement';
 import { VendorProductPricingService } from '../services/VendorProductPricingService';
 import { ShippingService } from '../services/ShippingService';
 import { AppError } from '../middlewares/errorHandler';
@@ -685,6 +686,192 @@ export const deleteFulfiller = async (req: AuthRequest, res: Response, next: Nex
       message: 'Fulfiller deleted successfully',
     });
   } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Get vendor weekly billing / invoice data grouped by vendor + week
+ */
+export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { week, vendorId, status } = req.query;
+
+    // Helper: get week boundaries (Mon–Sun) for a given date
+    const getWeekRange = (date: Date): { start: Date; end: Date; label: string } => {
+      const d = new Date(date);
+      const day = d.getDay(); // 0=Sun
+      const diffToMon = day === 0 ? -6 : 1 - day;
+      const mon = new Date(d);
+      mon.setDate(d.getDate() + diffToMon);
+      mon.setHours(0, 0, 0, 0);
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      sun.setHours(23, 59, 59, 999);
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const label =
+        mon.getMonth() === sun.getMonth()
+          ? `${months[mon.getMonth()]} ${mon.getDate()}–${sun.getDate()}`
+          : `${months[mon.getMonth()]} ${mon.getDate()} – ${months[sun.getMonth()]} ${sun.getDate()}`;
+      return { start: mon, end: sun, label };
+    };
+
+    // Fetch all delivered orders assigned to a vendor
+    const orderFilter: any = {
+      assignedVendorId: { $exists: true, $ne: null },
+      status: { $nin: ['CANCELLED', 'REJECTED', 'PENDING'] },
+    };
+    if (vendorId) orderFilter.assignedVendorId = vendorId;
+
+    const orders = await Order.find(orderFilter)
+      .populate('assignedVendorId', 'name email vendorType')
+      .populate('customer_id', 'name email')
+      .populate('items.product_id', 'name images')
+      .populate('items.primeProduct_id', 'name images')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Group by vendor + week key
+    const groupMap: Record<string, any> = {};
+
+    for (const order of orders) {
+      const vendor = order.assignedVendorId as any;
+      if (!vendor) continue;
+
+      const weekInfo = getWeekRange(new Date(order.createdAt as any));
+      const weekKey = `${vendor._id.toString()}_${weekInfo.start.toISOString().slice(0, 10)}`;
+
+      if (!groupMap[weekKey]) {
+        // Map vendor type to display label
+        const typeLabel =
+          vendor.vendorType === 'PRIME'
+            ? 'Prime Vendor'
+            : vendor.vendorType === 'MY_SHOP'
+            ? 'My Shop'
+            : vendor.vendorType === 'WAREHOUSE_FULFILLER'
+            ? 'Fulfiller'
+            : vendor.vendorType;
+
+        groupMap[weekKey] = {
+          id: weekKey,
+          weekStart: weekInfo.start.toISOString(),
+          weekEnd: weekInfo.end.toISOString(),
+          weekLabel: weekInfo.label,
+          vendorId: vendor._id,
+          vendorName: vendor.name,
+          vendorEmail: vendor.email,
+          vendorType: typeLabel,
+          totalAmount: 0,
+          paidAt: null,
+          status: 'Pending', // default; update logic can change to 'Paid'
+          orders: [],
+        };
+      }
+
+      const entry = groupMap[weekKey];
+      entry.totalAmount += order.total || 0;
+      entry.orders.push({
+        orderId: order.order_id || order._id,
+        orderDate: order.createdAt,
+        orderStatus: order.status,
+        items: (order.items || []).map((item: any) => {
+          const product = item.product_id || item.primeProduct_id;
+          // Order model uses sellingPrice / subtotal (not price / total)
+          const unitPrice = item.sellingPrice ?? item.price ?? 0;
+          const qty = item.quantity || 1;
+          const lineTotal = item.subtotal ?? item.purchaseSubtotal ?? (qty * unitPrice);
+          return {
+            productId: product?._id ? String(product._id) : 'N/A',
+            productName: product?.name || 'Unknown Product',
+            quantity: qty,
+            price: unitPrice,
+            total: lineTotal,
+          };
+        }),
+        grandTotal: order.total || 0,
+      });
+    }
+
+    let invoices = Object.values(groupMap);
+
+    // Load all settlement records for the vendors in this result set
+    const vendorIds = [...new Set(invoices.map((inv) => inv.vendorId.toString()))];
+    const settlements = await Settlement.find({ vendorId: { $in: vendorIds } }).lean();
+    console.log(`[getVendorWeeklyBilling] Found ${settlements.length} settlement(s) for ${vendorIds.length} vendor(s)`);
+
+    // Build lookup map: "vendorId_weekStart(YYYY-MM-DD)" -> settlement
+    const settlementMap: Record<string, any> = {};
+    for (const s of settlements) {
+      const key = `${s.vendorId.toString()}_${new Date(s.weekStart).toISOString().slice(0, 10)}`;
+      settlementMap[key] = s;
+    }
+
+    // Merge settlement status into each invoice group
+    for (const inv of invoices) {
+      const key = `${inv.vendorId.toString()}_${inv.weekStart.slice(0, 10)}`;
+      const settlement = settlementMap[key];
+      if (settlement && settlement.status === 'paid') {
+        inv.status = 'Paid';
+        inv.paidAt = settlement.processedAt ? settlement.processedAt.toISOString() : null;
+      }
+    }
+
+    // Apply status filter
+    if (status) {
+      invoices = invoices.filter((inv) => inv.status === status);
+    }
+    // Apply week filter (match weekLabel or weekStart date prefix)
+    if (week) {
+      invoices = invoices.filter(
+        (inv) =>
+          inv.weekLabel.toLowerCase().includes((week as string).toLowerCase()) ||
+          inv.weekStart.slice(0, 10) === week
+      );
+    }
+
+    res.status(200).json({ success: true, data: invoices });
+  } catch (error: any) {
+    console.error('[getVendorWeeklyBilling] Error:', error);
+    next(error);
+  }
+};
+
+/**
+ * Mark a weekly invoice entry as Paid
+ */
+export const markWeeklyInvoicePaid = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { weekStart, vendorId } = req.body;
+
+    if (!weekStart || !vendorId) {
+      return res.status(400).json({ success: false, message: 'weekStart and vendorId are required' });
+    }
+
+    const paidAt = new Date();
+    const weekStartDate = new Date(weekStart);
+
+    // Find existing settlement or create new one — avoids $setOnInsert path-conflict errors
+    const existing = await Settlement.findOne({ vendorId, weekStart: weekStartDate });
+
+    if (existing) {
+      existing.status = 'paid';
+      existing.processedAt = paidAt;
+      await existing.save();
+    } else {
+      await Settlement.create({
+        vendorId,
+        weekStart: weekStartDate,
+        status: 'paid',
+        processedAt: paidAt,
+        totalDue: 0,
+        orders: [],
+      });
+    }
+
+    console.log(`[markWeeklyInvoicePaid] Saved: vendorId=${vendorId} weekStart=${weekStartDate.toISOString()}`);
+    res.status(200).json({ success: true, message: 'Invoice marked as paid', paidAt });
+  } catch (error: any) {
+    console.error('[markWeeklyInvoicePaid] Error:', error.message);
     next(error);
   }
 };
