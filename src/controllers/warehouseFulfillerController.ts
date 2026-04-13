@@ -6,7 +6,6 @@ import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
 import { 
   queueOrderAcceptedEmail, 
-  sendOrderRejectedEmail, 
   sendOrderShippedEmail,
   sendDeliveryCompletedEmail,
   sendAdminDeliveryNotificationEmail
@@ -206,7 +205,7 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
       const customer = populatedOrder.customer_id as any;
       
       if (customer?.email) {
-        logger.info('[acceptOrder] Queueing order accepted email to:', customer.email);
+        logger.info(`[acceptOrder] Queueing order accepted email to: ${customer.email}`);
         const jobId = queueOrderAcceptedEmail(
           customer.email,
           customer.name || 'Customer',

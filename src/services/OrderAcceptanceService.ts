@@ -333,6 +333,23 @@ export class OrderAcceptanceService {
       const acceptingVendor = await User.findById(vendor_id);
       const acceptingVendorName = acceptingVendor?.name || 'Another vendor';
 
+      // Notify the winning fulfiller about the assignment (non-blocking)
+      if (acceptingVendor?.email) {
+        const { sendFulfillerDeliveryNotificationEmail } = await import('./emailer');
+        sendFulfillerDeliveryNotificationEmail(
+          acceptingVendor.email,
+          acceptingVendorName,
+          `#${updatedOrder._id.toString().slice(-8)}`,
+          {
+            totalAmount: updatedOrder.total,
+            items: updatedOrder.items,
+            customerAddress: updatedOrder.customerAddress,
+          }
+        ).catch((err: any) =>
+          console.error('[OrderAcceptanceService] Fulfiller assignment email failed:', err.message)
+        );
+      }
+
       // Find all other eligible fulfillers who were competing for this order
       const VendorDetails = (await import('../models/VendorDetails')).default;
       

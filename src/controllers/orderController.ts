@@ -15,6 +15,7 @@ import {
   queueOrderStatusUpdateEmail,
   queueVendorOrderNotificationEmail,
   queuePaymentSuccessEmail,
+  sendAdminOrderNotificationEmail,
 } from '../services/emailer';
 
 // Create order (customer)
@@ -264,7 +265,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     console.log('======================================\n');
 
     // Queue order confirmation email to customer with ALL items (non-blocking)
-    logger.info('[createOrder] Queueing order confirmation email to:', req.user.email);
+    logger.info(`[createOrder] Queueing order confirmation email to: ${req.user.email}`);
     try {
       const jobId = queueOrderConfirmationEmail(
         req.user.email,
@@ -291,7 +292,21 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       // Don't fail the order creation if email queueing fails
     }
 
-    // Vendor notifications are already sent in OrderRoutingService
+    // Notify admin of new order (non-blocking)
+    const adminEmails = process.env.ADMIN_EMAILS;
+    if (adminEmails) {
+      adminEmails.split(',').forEach(adminEmail => {
+        sendAdminOrderNotificationEmail(
+          adminEmail.trim(),
+          `#${orders[0]._id.toString().slice(-8)}`,
+          {
+            customerName: req.user.name,
+            totalAmount: totalAmount,
+            items: allItems,
+          }
+        ).catch((err: any) => logger.error('[createOrder] Admin notification email failed:', err.message));
+      });
+    }
 
     // Record coupon usage if coupon was applied
     if (appliedCouponData) {

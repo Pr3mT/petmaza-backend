@@ -65,6 +65,13 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
     // Generate token
     const token = generateToken(user._id.toString());
 
+    // Send welcome email to new customer (non-blocking)
+    if (userRole === 'customer') {
+      sendVerificationSuccessEmail(email, user.name).catch((err: any) => {
+        logger.error(`[register] Failed to send welcome email to ${email}: ${err.message}`);
+      });
+    }
+
     // Set cookie
     res.cookie('token', token, {
       httpOnly: true,
@@ -197,6 +204,12 @@ export const googleAuth = async (req: Request, res: Response, next: NextFunction
         isEmailVerified: true, // Google emails are always verified
         isApproved: true, // Auto-approve Google users
         password: Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8), // Random password for Google users
+      });
+
+      // Send welcome email to new Google user (non-blocking)
+      const newUserName = user.name;
+      sendVerificationSuccessEmail(email, newUserName).catch((err: any) => {
+        logger.error(`[googleAuth] Failed to send welcome email to ${email}: ${err.message}`);
       });
     }
 

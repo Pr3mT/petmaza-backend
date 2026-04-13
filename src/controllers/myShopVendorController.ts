@@ -5,7 +5,6 @@ import User from '../models/User';
 import { AppError } from '../middlewares/errorHandler';
 import { 
   sendOrderAcceptedEmail, 
-  sendOrderRejectedEmail, 
   sendOrderShippedEmail,
   sendDeliveryCompletedEmail,
   sendRefundInitiatedEmail,
