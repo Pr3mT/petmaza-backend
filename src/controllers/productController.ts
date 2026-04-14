@@ -104,11 +104,15 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
     // All users (admin, customers, public) see all products.
     // Out-of-stock products remain visible with an "Out of Stock" badge and "Notify Me" button.
     // The inStock field (derived from legacy isActive for old docs) controls purchase availability.
-    filters.isActive = undefined; // no filter - show all products to everyone
+    // But for Prime products: only show those that still have an active PrimeProduct listing
     if (req.user && req.user.role === 'admin') {
+      // Admin sees everything (including inactive)
+      filters.isActive = undefined;
       console.log('✅ Admin detected - showing all products');
     } else {
-      console.log('👤 Customer/public - showing all products (out-of-stock shown with badge)');
+      // Customers see only active products
+      filters.isActive = true;
+      console.log('👤 Customer/public - showing active products only');
     }
 
     const products = await ProductService.getAllProducts(filters);
@@ -207,6 +211,9 @@ export const deleteProduct = async (req: AuthRequest, res: Response, next: NextF
         return res.status(403).json({ success: false, message: 'You can only delete products you created' });
       }
     }
+
+    // Also delete any PrimeProduct listings that reference this product
+    await PrimeProduct.deleteMany({ product_id: req.params.id });
 
     const product = await ProductService.deleteProduct(req.params.id);
     

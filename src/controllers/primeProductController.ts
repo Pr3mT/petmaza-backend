@@ -5,6 +5,7 @@ import Product from '../models/Product';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import logger from '../config/logger';
+import { clearCache } from '../middlewares/cache';
 
 // Create Prime Product Listing (Prime Vendor only)
 export const createPrimeListing = async (
@@ -255,7 +256,21 @@ export const deletePrimeListing = async (
       return next(new AppError('Prime listing not found', 404));
     }
 
+    // Also delete the corresponding Product from the main collection
+    // so customers no longer see it
+    if (listing.product_id) {
+      const product = await Product.findById(listing.product_id);
+      if (product && product.isPrime && product.primeVendor_id?.toString() === vendor_id.toString()) {
+        await Product.findByIdAndDelete(listing.product_id);
+        logger.info(`[PrimeProduct] Also deleted Product ${listing.product_id} from main collection`);
+      }
+    }
+
     await listing.deleteOne();
+
+    // Clear ALL product caches so customers immediately stop seeing the deleted product
+    clearCache('/products');
+    clearCache('/prime-products');
 
     // Update vendor stats
     await VendorDetails.findOneAndUpdate(

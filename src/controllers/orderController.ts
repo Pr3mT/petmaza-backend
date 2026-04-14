@@ -72,11 +72,11 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
         // Collect products with brands and subcategories for validation
         const productsInOrder = await Promise.all(
           items.map(async (item: any) => {
-            const product = await Product.findById(item.product_id).populate('brand_id');
+            const product: any = await Product.findById(item.product_id).populate('brand_id');
             return {
               productId: product?._id,
               brandId: product?.brand_id?._id,
-              subcategory: product?.subcategory,
+              subcategory: product?.subCategory,
               quantity: item.quantity,
             };
           })

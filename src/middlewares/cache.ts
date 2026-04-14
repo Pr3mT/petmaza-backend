@@ -46,7 +46,8 @@ export const cacheResponse = (durationMs: number = 60000) => {
     const cached = globalCache.get(key);
 
     if (cached && Date.now() - cached.timestamp < durationMs) {
-      // Return cached response
+      // Return cached response but tell browser not to cache
+      res.set('Cache-Control', 'no-store');
       return res.json(cached.data);
     }
 
@@ -55,6 +56,7 @@ export const cacheResponse = (durationMs: number = 60000) => {
 
     // Override json method to cache response
     res.json = function (data: any) {
+      res.set('Cache-Control', 'no-store');
       globalCache.set(key, { data, timestamp: Date.now() });
       return originalJson(data);
     };
@@ -89,7 +91,8 @@ export const cacheForCustomersOnly = (durationMs: number = 60000) => {
     const cached = globalCache.get(key);
 
     if (cached && Date.now() - cached.timestamp < durationMs) {
-      // Return cached response
+      // Return cached response but tell browser not to cache
+      res.set('Cache-Control', 'no-store');
       return res.json(cached.data);
     }
 
@@ -98,6 +101,7 @@ export const cacheForCustomersOnly = (durationMs: number = 60000) => {
 
     // Override json method to cache response
     res.json = function (data: any) {
+      res.set('Cache-Control', 'no-store');
       globalCache.set(key, { data, timestamp: Date.now() });
       return originalJson(data);
     };
