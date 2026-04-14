@@ -16,6 +16,7 @@ import {
   queueVendorOrderNotificationEmail,
   queuePaymentSuccessEmail,
   sendAdminOrderNotificationEmail,
+  sendOrderConfirmationEmail,
 } from '../services/emailer';
 
 // Create order (customer)
@@ -264,33 +265,33 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     console.log('Coupon Code:', couponCode);
     console.log('======================================\n');
 
-    // Queue order confirmation email to customer with ALL items (non-blocking)
-    logger.info(`[createOrder] Queueing order confirmation email to: ${req.user.email}`);
-    try {
-      const jobId = queueOrderConfirmationEmail(
-        req.user.email,
-        req.user.name,
-        `#${orders[0]._id.toString().slice(-8)}${isSplitShipment ? ` (+${orders.length - 1} more)` : ''}`,
-        {
-          totalAmount: totalAmount,
-          items: allItems, // ALL items from ALL split orders
-          customerAddress: orders[0].customerAddress,
-          shippingCharges: charges.shippingCharges,
-          platformFee: charges.platformFee,
-          subtotal: combinedSubtotal,
-          subtotalBeforeCharges: combinedSubtotal, // Subtotal before discount
-          discountAmount: discountAmount || 0,
-          couponCode: couponCode || undefined,
-          isSplitShipment: isSplitShipment,
-          splitOrderCount: orders.length,
-          splitOrderIds: orders.map(o => `#${o._id.toString().slice(-8)}`),
-        }
-      );
-      logger.info(`[createOrder] ✅ Order confirmation email queued (Job: ${jobId})`);
-    } catch (emailError: any) {
-      logger.error('[createOrder] ❌ Failed to queue order confirmation email:', emailError.message);
-      // Don't fail the order creation if email queueing fails
-    }
+    // Send order confirmation email to customer directly (non-blocking fire-and-forget)
+    // NOTE: Using direct call (not queue) so email is attempted immediately and survives server restarts
+    logger.info(`[createOrder] Sending order confirmation email to: ${req.user.email}`);
+    sendOrderConfirmationEmail(
+      req.user.email,
+      req.user.name,
+      `#${orders[0]._id.toString().slice(-8)}${isSplitShipment ? ` (+${orders.length - 1} more)` : ''}`,
+      {
+        totalAmount: totalAmount,
+        items: allItems, // ALL items from ALL split orders
+        customerAddress: orders[0].customerAddress,
+        shippingCharges: charges.shippingCharges,
+        platformFee: charges.platformFee,
+        subtotal: combinedSubtotal,
+        subtotalBeforeCharges: combinedSubtotal,
+        discountAmount: discountAmount || 0,
+        couponCode: couponCode || undefined,
+        isSplitShipment: isSplitShipment,
+        splitOrderCount: orders.length,
+        splitOrderIds: orders.map(o => `#${o._id.toString().slice(-8)}`),
+      }
+    ).then(() => {
+      logger.info(`[createOrder] ✅ Order confirmation email sent to ${req.user.email}`);
+    }).catch((emailError: any) => {
+      logger.error('[createOrder] ❌ Order confirmation email failed:', emailError.message);
+      // Don't fail the order creation if email fails
+    });
 
     // Notify admin of new order (non-blocking)
     const adminEmails = process.env.ADMIN_EMAILS;
