@@ -8,16 +8,33 @@ import { emailQueue } from '../utils/emailQueue';
 // Load environment variables
 dotenv.config();
 
-// Initialize transporter
+// For Gmail, use port 465 (SSL) which works on cloud hosts like Render
+// Port 587 (STARTTLS) is often blocked by cloud hosting providers
+const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
+const isGmail = smtpHost.includes('gmail.com');
+const smtpPort = isGmail ? 465 : Number(process.env.SMTP_PORT) || 587;
+const smtpSecure = isGmail ? true : process.env.SMTP_SECURE === 'true';
+
+// Initialize transporter with connection pooling and timeouts
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === 'true' || false,
+  host: smtpHost,
+  port: smtpPort,
+  secure: smtpSecure,
+  pool: true,
+  maxConnections: 3,
+  connectionTimeout: 30000,
+  greetingTimeout: 15000,
+  socketTimeout: 60000,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
 });
+
+// Verify SMTP connection on startup
+transporter.verify()
+  .then(() => logger.info(`[Emailer] SMTP connected successfully (${smtpHost}:${smtpPort}, secure: ${smtpSecure})`))
+  .catch((err) => logger.error(`[Emailer] SMTP connection failed: ${err.message}`));
 
 export interface EmailOptions {
   to: string;
