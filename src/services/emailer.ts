@@ -1,40 +1,19 @@
-import nodemailer from 'nodemailer';
+import { SendMailClient } from 'zeptomail';
 import dotenv from 'dotenv';
 import EmailLog from '../models/EmailLog';
 import logger from '../config/logger';
 import { generatePaymentReceiptPDF } from './pdfGenerator';
-import { emailQueue } from '../utils/emailQueue';
 
 // Load environment variables
 dotenv.config();
 
-// For Gmail, use port 465 (SSL) which works on cloud hosts like Render
-// Port 587 (STARTTLS) is often blocked by cloud hosting providers
-const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
-const isGmail = smtpHost.includes('gmail.com');
-const smtpPort = isGmail ? 465 : Number(process.env.SMTP_PORT) || 587;
-const smtpSecure = isGmail ? true : process.env.SMTP_SECURE === 'true';
-
-// Initialize transporter with connection pooling and timeouts
-const transporter = nodemailer.createTransport({
-  host: smtpHost,
-  port: smtpPort,
-  secure: smtpSecure,
-  pool: true,
-  maxConnections: 3,
-  connectionTimeout: 30000,
-  greetingTimeout: 15000,
-  socketTimeout: 60000,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
+// ZeptoMail client - uses HTTPS API (not SMTP, works on all hosting providers)
+const zeptoClient = new SendMailClient({
+  url: 'api.zeptomail.com/',
+  token: process.env.ZEPTOMAIL_TOKEN || '',
 });
 
-// Verify SMTP connection on startup
-transporter.verify()
-  .then(() => logger.info(`[Emailer] SMTP connected successfully (${smtpHost}:${smtpPort}, secure: ${smtpSecure})`))
-  .catch((err) => logger.error(`[Emailer] SMTP connection failed: ${err.message}`));
+logger.info('[Emailer] ZeptoMail client initialized');
 
 export interface EmailOptions {
   to: string;
@@ -59,17 +38,27 @@ export async function sendEmail(options: EmailOptions) {
   try {
     const { to, cc, bcc, subject, html, trigger, orderId, userId, attachments } = options;
 
-    // Send email directly without verification (verified once at startup)
-    const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to,
-      cc,
-      bcc,
+    // Send email via ZeptoMail HTTPS API
+    const resp = await zeptoClient.sendMail({
+      from: {
+        address: process.env.ZEPTOMAIL_FROM_ADDRESS || 'noreply@petmaza.com',
+        name: process.env.ZEPTOMAIL_FROM_NAME || 'PETMAZA',
+      },
+      to: [{ email_address: { address: to, name: to } }],
+      ...(cc?.length ? { cc: cc.map(addr => ({ email_address: { address: addr, name: addr } })) } : {}),
+      ...(bcc?.length ? { bcc: bcc.map(addr => ({ email_address: { address: addr, name: addr } })) } : {}),
       subject,
-      html,
-      attachments,
-    });
+      htmlbody: html,
+      ...(attachments?.length ? {
+        attachments: attachments.map(a => ({
+          content: a.content.toString('base64'),
+          mime_type: a.contentType,
+          name: a.filename,
+        })),
+      } : {}),
+    } as any);
 
+    const messageId = (resp as any)?.request_id || '';
     logger.info(`Email sent successfully: ${subject} to ${to}`);
 
     // Log successful email (non-blocking, don't fail email if logging fails)
@@ -80,14 +69,14 @@ export async function sendEmail(options: EmailOptions) {
       status: 'sent',
       trigger,
       timestamp: new Date(),
-      messageId: info.messageId,
+      messageId,
       orderId,
       userId,
     }).catch((logError) => {
       logger.error(`Failed to log sent email: ${logError.message}`);
     });
 
-    return { success: true, messageId: info.messageId };
+    return { success: true, messageId };
   } catch (error: any) {
     logger.error(`Email send failed: ${error.message}`);
 
@@ -1401,106 +1390,7 @@ export async function sendVerificationSuccessEmail(email: string, name: string) 
   });
 }
 
-// ========================================
-// QUEUED EMAIL FUNCTIONS (NON-BLOCKING)
-// ========================================
 
-/**
- * Queue order confirmation email (non-blocking)
- * Returns immediately without waiting for email to send
- */
-export function queueOrderConfirmationEmail(
-  customerEmail: string,
-  customerName: string,
-  orderId: string,
-  orderData: any
-): string {
-  return emailQueue.add(async () => {
-    await sendOrderConfirmationEmail(customerEmail, customerName, orderId, orderData);
-  });
-}
-
-/**
- * Queue vendor notification email (non-blocking)
- */
-export function queueVendorOrderNotificationEmail(
-  vendorEmail: string,
-  vendorName: string,
-  orderId: string,
-  orderData: any
-): string {
-  return emailQueue.add(async () => {
-    await sendVendorOrderNotificationEmail(vendorEmail, vendorName, orderId, orderData);
-  });
-}
-
-/**
- * Queue order status update email (non-blocking)
- */
-export function queueOrderStatusUpdateEmail(
-  customerEmail: string,
-  customerName: string,
-  orderId: string,
-  status: string,
-  vendorName?: string
-): string {
-  return emailQueue.add(async () => {
-    await sendOrderStatusUpdateEmail(customerEmail, customerName, orderId, status, vendorName);
-  });
-}
-
-/**
- * Queue payment success email (non-blocking)
- */
-export function queuePaymentSuccessEmail(
-  customerEmail: string,
-  customerName: string,
-  orderId: string,
-  amount: number,
-  razorpayPaymentId: string,
-  orderDetails: any
-): string {
-  return emailQueue.add(async () => {
-    await sendPaymentSuccessEmail(customerEmail, customerName, orderId, amount, razorpayPaymentId, orderDetails);
-  });
-}
-
-/**
- * Queue order accepted email (non-blocking)
- */
-export function queueOrderAcceptedEmail(
-  customerEmail: string,
-  customerName: string,
-  orderId: string,
-  vendorName: string,
-  estimatedDelivery: string
-): string {
-  return emailQueue.add(async () => {
-    await sendOrderAcceptedEmail(customerEmail, customerName, orderId, vendorName, estimatedDelivery);
-  });
-}
-
-/**
- * Queue order rejection with refund email (non-blocking)
- */
-export function queueOrderRejectionEmail(
-  customerEmail: string,
-  customerName: string,
-  orderId: string,
-  reason: string,
-  amount: number
-): string {
-  logger.info(`[EmailQueue] Adding rejection email to queue for ${customerEmail}, Order: ${orderId}`);
-  return emailQueue.add(async () => {
-    try {
-      await sendOrderRejectionEmail(customerEmail, customerName, orderId, reason, amount);
-      logger.info(`[EmailQueue] Rejection email sent successfully to ${customerEmail}, Order: ${orderId}`);
-    } catch (error: any) {
-      logger.error(`[EmailQueue] Failed to send rejection email to ${customerEmail}, Order: ${orderId}: ${error.message}`);
-      throw error;
-    }
-  });
-}
 
 /**
  * Send order taken notification to competing vendors (when another vendor accepts first)
@@ -1552,24 +1442,7 @@ export async function sendOrderTakenNotificationEmail(
   });
 }
 
-/**
- * Queue order taken notification email (non-blocking)
- */
-export function queueOrderTakenNotificationEmail(data: {
-  vendorEmail: string;
-  vendorName: string;
-  orderId: string;
-  winnerName: string;
-}): string {
-  return emailQueue.add(async () => {
-    await sendOrderTakenNotificationEmail(
-      data.vendorEmail,
-      data.vendorName,
-      data.orderId,
-      data.winnerName
-    );
-  });
-}
+
 
 /**
  * Send product available notification email
@@ -1642,14 +1515,4 @@ export async function sendProductAvailableEmail(data: {
 /**
  * Queue product available notification email (non-blocking)
  */
-export function queueProductAvailableEmail(data: {
-  email: string;
-  name: string;
-  productName: string;
-  productId: string;
-  productImage?: string;
-}): string {
-  return emailQueue.add(async () => {
-    await sendProductAvailableEmail(data);
-  });
-}
+

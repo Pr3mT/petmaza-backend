@@ -390,17 +390,17 @@ export class OrderAcceptanceService {
         // Continue even if WebSocket fails
       }
 
-      // Send email notifications to losers (optional - using existing email queue)
-      const { queueOrderTakenNotificationEmail } = await import('./emailer');
+      // Send email notifications to losers
+      const { sendOrderTakenNotificationEmail } = await import('./emailer');
       for (const fulfiller of eligibleFulfillers) {
         try {
-          await queueOrderTakenNotificationEmail({
-            vendorEmail: (fulfiller.vendor_id as any).email,
-            vendorName: (fulfiller.vendor_id as any).name,
-            orderId: updatedOrder._id.toString(),
-            winnerName: acceptingVendorName,
-          });
-          console.log(`📧 Order taken email queued for ${(fulfiller.vendor_id as any).email}`);
+          await sendOrderTakenNotificationEmail(
+            (fulfiller.vendor_id as any).email,
+            (fulfiller.vendor_id as any).name,
+            updatedOrder._id.toString(),
+            acceptingVendorName
+          );
+          console.log(`📧 Order taken email sent to ${(fulfiller.vendor_id as any).email}`);
         } catch (emailError) {
           console.error(`Failed to queue email for ${(fulfiller.vendor_id as any).email}:`, emailError);
           // Continue even if email fails
@@ -442,7 +442,7 @@ export class OrderAcceptanceService {
 
     // Send rejection email with refund notification to customer
     try {
-      const { queueOrderRejectionEmail } = await import('./emailer');
+      const { sendOrderRejectionEmail } = await import('./emailer');
       const orderId = order._id.toString().slice(-8).toUpperCase();
       
       const customer = order.customer_id as any;
@@ -452,14 +452,14 @@ export class OrderAcceptanceService {
       logger.info(`[OrderAcceptanceService] Customer data - Email: ${customerEmail}, Name: ${customerName}`);
       
       if (customerEmail && customerName) {
-        queueOrderRejectionEmail(
+        sendOrderRejectionEmail(
           customerEmail,
           customerName,
           orderId,
           reason || 'Vendor rejected the order',
           order.total || 0
-        );
-        logger.info(`[OrderAcceptanceService] Rejection email queued successfully for order ${orderId} to ${customerEmail}`);
+        ).then(() => logger.info(`[OrderAcceptanceService] Rejection email sent for order ${orderId} to ${customerEmail}`))
+         .catch((e: any) => logger.error(`[OrderAcceptanceService] Rejection email failed: ${e.message}`));
       } else {
         logger.error(`[OrderAcceptanceService] Cannot send rejection email - Missing customer data. Email: ${customerEmail}, Name: ${customerName}`);
       }

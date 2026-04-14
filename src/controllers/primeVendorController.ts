@@ -5,7 +5,7 @@ import PrimeProduct from '../models/PrimeProduct';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import logger from '../config/logger';
-import { queueOrderStatusUpdateEmail } from '../services/emailer';
+import { sendOrderStatusUpdateEmail, sendOrderRejectionEmail } from '../services/emailer';
 
 // Get Prime Vendor Orders
 export const getPrimeVendorOrders = async (
@@ -141,7 +141,7 @@ export const acceptPrimeOrder = async (
       
       if (customer?.email) {
         const orderId = order._id.toString().slice(-8).toUpperCase();
-        await queueOrderStatusUpdateEmail(
+        await sendOrderStatusUpdateEmail(
           customer.email,
           customer.name,
           orderId,
@@ -203,7 +203,6 @@ export const rejectPrimeOrder = async (
 
     // Send rejection email with refund notification to customer
     try {
-      const { queueOrderRejectionEmail } = await import('../services/emailer');
       const orderId = order._id.toString().slice(-8).toUpperCase();
       
       // Check if customer_id is populated (has email property)
@@ -214,14 +213,14 @@ export const rejectPrimeOrder = async (
       logger.info(`[PrimeVendor] Customer data - Email: ${customerEmail}, Name: ${customerName}`);
       
       if (customerEmail && customerName) {
-        queueOrderRejectionEmail(
+        sendOrderRejectionEmail(
           customerEmail,
           customerName,
           orderId,
           reason || 'Vendor rejected the order',
           order.total || 0
-        );
-        logger.info(`[PrimeVendor] Rejection email queued successfully for order ${orderId} to ${customerEmail}`);
+        ).then(() => logger.info(`[PrimeVendor] Rejection email sent for order ${orderId} to ${customerEmail}`))
+         .catch((e: any) => logger.error(`[PrimeVendor] Rejection email failed: ${e.message}`));
       } else {
         logger.error(`[PrimeVendor] Cannot send rejection email - Missing customer data. Email: ${customerEmail}, Name: ${customerName}`);
       }
@@ -302,7 +301,7 @@ export const updatePrimeOrderStatus = async (
         
         if (customer?.email) {
           const orderId = order._id.toString().slice(-8).toUpperCase();
-          await queueOrderStatusUpdateEmail(
+          await sendOrderStatusUpdateEmail(
             customer.email,
             customer.name,
             orderId,

@@ -4,7 +4,7 @@ import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { IOrderItem } from '../types';
-import { queueVendorOrderNotificationEmail } from './emailer';
+import { sendVendorOrderNotificationEmail } from './emailer';
 import logger from '../config/logger';
 
 export class OrderRoutingService {
@@ -140,7 +140,7 @@ export class OrderRoutingService {
         const customer = await User.findById(customer_id);
         
         if (vendor) {
-          const jobId = queueVendorOrderNotificationEmail(
+          sendVendorOrderNotificationEmail(
             vendor.email,
             vendor.name || 'Prime Vendor',
             `#${order._id.toString().slice(-8)}`,
@@ -151,8 +151,8 @@ export class OrderRoutingService {
               customerPincode,
               items: orderItems,
             }
-          );
-          logger.info(`[routePrimeOrders] 📧 Vendor notification sent (Job: ${jobId})`);
+          ).then(() => logger.info('[routePrimeOrders] 📧 Vendor notification sent'))
+           .catch((e: any) => logger.error('[routePrimeOrders] Failed to send vendor notification:', e.message));
         }
       } catch (emailError: any) {
         logger.error('[routePrimeOrders] Failed to send vendor notification:', emailError.message);
@@ -289,7 +289,7 @@ export class OrderRoutingService {
 
           for (const fulfiller of eligibleFulfillers) {
             try {
-              const jobId = queueVendorOrderNotificationEmail(
+              sendVendorOrderNotificationEmail(
                 fulfiller.email,
                 fulfiller.name || 'Warehouse Fulfiller',
                 `#${order._id.toString().slice(-8)}`,
@@ -299,12 +299,12 @@ export class OrderRoutingService {
                   customerAddress: customerAddress,
                   customerPincode: customerPincode,
                   items: orderItems,
-                  isCompetitive: true, // Flag to indicate competitive order
+                  isCompetitive: true,
                   competitorCount: eligibleFulfillers.length,
                   acceptanceDeadline: acceptanceDeadline.toISOString(),
                 }
-              );
-              logger.info(`[routeNormalOrderToMyShop] 📢 Broadcast notification to ${fulfiller.name} (${fulfiller.email}) - Job: ${jobId}`);
+              ).then(() => logger.info(`[routeNormalOrderToMyShop] 📢 Broadcast notification sent to ${fulfiller.name} (${fulfiller.email})`))
+               .catch((e: any) => logger.error(`[routeNormalOrderToMyShop] Failed to notify ${fulfiller.email}:`, e.message));
             } catch (emailError: any) {
               logger.error(`[routeNormalOrderToMyShop] Failed to notify ${fulfiller.email}:`, emailError.message);
             }

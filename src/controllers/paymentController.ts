@@ -5,7 +5,7 @@ import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import { getRazorpayInstance } from '../config/razorpay';
 import { io } from '../server';
-import { queuePaymentSuccessEmail, sendPaymentFailureEmail } from '../services/emailer';
+import { sendPaymentSuccessEmail, sendPaymentFailureEmail } from '../services/emailer';
 import logger from '../config/logger';
 
 export const createPaymentOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -228,8 +228,8 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
         // Populate items to show product names in receipt
         const populatedOrder = await order.populate('items.product_id');
         
-        logger.info('[completePayment] Queueing payment receipt email to:', customerEmail);
-        const jobId = queuePaymentSuccessEmail(
+        logger.info('[completePayment] Sending payment receipt email to:', customerEmail);
+        sendPaymentSuccessEmail(
           customerEmail,
           customerName || 'Customer',
           `#${order._id.toString().slice(-8)}`,
@@ -241,13 +241,13 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
             paymentGateway: order.payment_gateway || 'Razorpay',
             paymentMethod: 'Online Payment',
           }
-        );
-        logger.info(`[completePayment] ✅ Payment receipt email queued (Job: ${jobId})`);
+        ).then(() => logger.info('[completePayment] ✅ Payment receipt email sent'))
+         .catch((e: any) => logger.error('[completePayment] ❌ Payment receipt email failed:', e.message));
       } else {
         logger.info('[completePayment] ⚠️ No customer email found, skipping receipt email');
       }
     } catch (emailError: any) {
-      logger.error('[completePayment] ❌ Failed to queue payment success email:', emailError.message);
+      logger.error('[completePayment] ❌ Payment success email error:', emailError.message);
       // Don't fail the payment completion if email fails
     }
 

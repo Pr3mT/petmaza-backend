@@ -11,12 +11,11 @@ import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
 import {
-  queueOrderConfirmationEmail,
-  queueOrderStatusUpdateEmail,
-  queueVendorOrderNotificationEmail,
-  queuePaymentSuccessEmail,
-  sendAdminOrderNotificationEmail,
   sendOrderConfirmationEmail,
+  sendOrderStatusUpdateEmail,
+  sendVendorOrderNotificationEmail,
+  sendPaymentSuccessEmail,
+  sendAdminOrderNotificationEmail,
 } from '../services/emailer';
 
 // Create order (customer)
@@ -424,7 +423,7 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
         if (customer?.email) {
           logger.info('[updateOrder] Queueing payment receipt to:', customer.email);
           const orderId = order._id.toString().slice(-8).toUpperCase();
-          const jobId = queuePaymentSuccessEmail(
+          sendPaymentSuccessEmail(
             customer.email,
             customer.name || 'Customer',
             orderId,
@@ -436,14 +435,14 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
               paymentGateway: order.payment_gateway || 'Razorpay',
               paymentMethod: 'Online Payment',
             }
-          );
-          logger.info(`[updateOrder] ✅ Payment receipt email queued (Job: ${jobId})`);
+          ).then(() => logger.info('[updateOrder] ✅ Payment receipt email sent'))
+           .catch((e: any) => logger.error('[updateOrder] ❌ Payment receipt email failed:', e.message));
         } else {
           logger.info('[updateOrder] ⚠️ No customer email found, skipping receipt');
         }
       } catch (emailError: any) {
-        logger.error('[updateOrder] ❌ Failed to queue payment receipt:', emailError.message);
-        // Don't fail the order update if email queueing fails
+        logger.error('[updateOrder] ❌ Failed to send payment receipt:', emailError.message);
+        // Don't fail the order update if email fails
       }
     }
     res.status(200).json({
@@ -707,18 +706,18 @@ export const updateOrderStatus = async (
       const vendorName = (order.assignedVendorId as any)?.name;
 
       if (customerEmail) {
-        const jobId = queueOrderStatusUpdateEmail(
+        sendOrderStatusUpdateEmail(
           customerEmail,
           customerName || 'Customer',
           orderId,
           statusMap[status] || status.toLowerCase(),
           vendorName
-        );
-        logger.info(`[updateOrderStatus] Status update email queued (Job: ${jobId})`);
+        ).then(() => logger.info('[updateOrderStatus] ✅ Status update email sent'))
+         .catch((e: any) => logger.error('[updateOrderStatus] ❌ Status update email failed:', e.message));
       }
     } catch (emailError: any) {
-      logger.error('Failed to queue status update email:', emailError.message);
-      // Don't fail the status update if email queueing fails
+      logger.error('Failed to send status update email:', emailError.message);
+      // Don't fail the status update if email fails
     }
 
     logger.info(`[updateOrderStatus] Order ${orderId} status updated to ${status} by vendor ${vendorId}`);
@@ -922,7 +921,7 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
     // Queue order confirmation email to customer (non-blocking)
     logger.info('[createPrimeOrder] Queueing prime order confirmation email to:', req.user.email);
     try {
-      const jobId = queueOrderConfirmationEmail(
+      sendOrderConfirmationEmail(
         req.user.email,
         req.user.name,
         `#${order._id.toString().slice(-8)}`,
@@ -937,16 +936,16 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
           isPrimeOrder: true,
           vendorName: (primeListing.vendor_id as any).shopName || (primeListing.vendor_id as any).name,
         }
-      );
-      logger.info(`[createPrimeOrder] ✅ Order confirmation email queued (Job: ${jobId})`);
+      ).then(() => logger.info('[createPrimeOrder] ✅ Order confirmation email sent'))
+       .catch((e: any) => logger.error('[createPrimeOrder] ❌ Order confirmation email failed:', e.message));
     } catch (emailError: any) {
-      logger.error('[createPrimeOrder] ❌ Failed to queue order confirmation email:', emailError.message);
+      logger.error('[createPrimeOrder] ❌ Order confirmation email error:', emailError.message);
     }
 
     // Queue vendor notification email (non-blocking)
     try {
       const vendorEmail = (primeListing.vendor_id as any).email;
-      const jobId = queueVendorOrderNotificationEmail(
+      sendVendorOrderNotificationEmail(
         vendorEmail,
         (primeListing.vendor_id as any).shopName || (primeListing.vendor_id as any).name,
         order._id.toString(),
@@ -956,10 +955,10 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
           customerAddress: order.customerAddress,
           customerPincode: order.customerPincode,
         }
-      );
-      logger.info(`[createPrimeOrder] ✅ Vendor notification email queued (Job: ${jobId})`);
+      ).then(() => logger.info('[createPrimeOrder] ✅ Vendor notification email sent'))
+       .catch((e: any) => logger.error('[createPrimeOrder] ❌ Vendor notification email failed:', e.message));
     } catch (emailError: any) {
-      logger.error('[createPrimeOrder] ❌ Failed to queue vendor notification email:', emailError.message);
+      logger.error('[createPrimeOrder] ❌ Vendor notification email error:', emailError.message);
     }
 
     res.status(201).json({

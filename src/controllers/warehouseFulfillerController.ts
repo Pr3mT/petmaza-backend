@@ -5,7 +5,7 @@ import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
 import { 
-  queueOrderAcceptedEmail, 
+  sendOrderAcceptedEmail,
   sendOrderShippedEmail,
   sendDeliveryCompletedEmail,
   sendAdminDeliveryNotificationEmail
@@ -205,20 +205,20 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
       const customer = populatedOrder.customer_id as any;
       
       if (customer?.email) {
-        logger.info(`[acceptOrder] Queueing order accepted email to: ${customer.email}`);
-        const jobId = queueOrderAcceptedEmail(
+        logger.info(`[acceptOrder] Sending order accepted email to: ${customer.email}`);
+        sendOrderAcceptedEmail(
           customer.email,
           customer.name || 'Customer',
           `#${order._id.toString().slice(-8)}`,
           fulfiller.name || 'Warehouse',
           '2-5 business days'
-        );
-        logger.info(`[acceptOrder] ✅ Order accepted email queued (Job: ${jobId})`);
+        ).then(() => logger.info('[acceptOrder] ✅ Order accepted email sent'))
+         .catch((e: any) => logger.error('[acceptOrder] ❌ Order accepted email failed:', e.message));
       } else {
         logger.info('[acceptOrder] ⚠️ Customer email not found, skipping email');
       }
     } catch (emailError: any) {
-      logger.error('[acceptOrder] ❌ Failed to queue order accepted email:', emailError.message);
+      logger.error('[acceptOrder] ❌ Order accepted email error:', emailError.message);
     }
 
     res.status(200).json({
