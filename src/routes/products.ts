@@ -7,6 +7,7 @@ import {
   deleteProduct,
   getPrimeListingsForProduct,
   getPrimeProductsByCategory,
+  bulkUploadProducts,
 } from '../controllers/productController';
 import { verifyToken, checkRole, optionalAuth } from '../middlewares/auth';
 import { cacheResponse, cacheForCustomersOnly } from '../middlewares/cache';
@@ -23,7 +24,8 @@ router.get('/prime/category', optionalAuth, cacheForCustomersOnly(30000), getPri
 router.get('/:productId/prime-listings', optionalAuth, cacheForCustomersOnly(30000), getPrimeListingsForProduct);
 
 // Protected routes - Admin and MY_SHOP vendors can create/manage products
-router.post('/', verifyToken, createProduct); // MY_SHOP vendors can create products
+router.post('/', verifyToken, createProduct);
+router.post('/bulk-upload', verifyToken, checkRole('admin'), bulkUploadProducts);
 router.put('/:id', verifyToken, updateProduct); // MY_SHOP vendors can update their products
 router.patch('/:id', verifyToken, updateProduct);
 router.delete('/:id', verifyToken, checkRole('admin', 'vendor'), deleteProduct); // Admin can delete any, vendors can delete own

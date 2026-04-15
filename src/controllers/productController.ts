@@ -3,6 +3,7 @@ import { ProductService } from '../services/ProductService';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import Product from '../models/Product';
+import Brand from '../models/Brand';
 import PrimeProduct from '../models/PrimeProduct';
 import VendorDetails from '../models/VendorDetails';
 import { clearCache } from '../middlewares/cache';
@@ -370,6 +371,197 @@ export const getPrimeProductsByCategory = async (req: Request, res: Response, ne
         totalItems: total,
         itemsPerPage: Number(limit),
       },
+    });
+
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Bulk Product Upload ──────────────────────────────────────────────────────
+
+const VALID_MAIN_CATEGORIES = ['Dog', 'Cat', 'Fish', 'Bird', 'Small Animals'];
+const REQUIRED_COLUMNS = [
+  'product_name', 'brand_name', 'main_category', 'sub_category',
+  'type', 'mrp', 'purchase_price', 'selling_price', 'status',
+];
+
+interface BulkRow {
+  product_name: string;
+  brand_name: string;
+  main_category: string;
+  sub_category: string;
+  type: string;
+  mrp: string;
+  purchase_price: string;
+  selling_price: string;
+  quantity: string;
+  status: string;
+  image_url: string;
+}
+
+interface RowError {
+  row: number;
+  product_name: string;
+  errors: string[];
+}
+
+// ─── Default images per main category (used when vendor leaves image_url blank) ──
+const CATEGORY_DEFAULT_IMAGES: Record<string, string> = {
+  'Dog':           'https://placehold.co/400x400/FFF3E0/5D4037?text=Dog+Product',
+  'Cat':           'https://placehold.co/400x400/F3E5F5/6A1B9A?text=Cat+Product',
+  'Fish':          'https://placehold.co/400x400/E3F2FD/0D47A1?text=Fish+Product',
+  'Bird':          'https://placehold.co/400x400/E8F5E9/1B5E20?text=Bird+Product',
+  'Small Animals': 'https://placehold.co/400x400/FBE9E7/BF360C?text=Small+Animal',
+};
+
+export const bulkUploadProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== 'admin') {
+      return next(new AppError('Only admins can perform bulk product uploads', 403));
+    }
+
+    // Accept JSON array of rows from frontend (frontend already parses the CSV)
+    const records: BulkRow[] = req.body?.rows;
+    if (!Array.isArray(records) || records.length === 0) {
+      return next(new AppError('No product rows provided', 400));
+    }
+
+    // Pre-load all brands into a map for efficient lookup
+    const allBrands = await Brand.find({}).select('_id name');
+    const brandMap = new Map<string, string>(); // name (lowercase) -> _id
+    allBrands.forEach(b => brandMap.set(b.name.trim().toLowerCase(), b._id.toString()));
+
+    const successProducts: any[] = [];
+    const rowErrors: RowError[] = [];
+
+    for (let i = 0; i < records.length; i++) {
+      const row = records[i];
+      const rowNum = i + 2; // 1-based, +1 for header row
+      const errors: string[] = [];
+
+      // Required field checks
+      REQUIRED_COLUMNS.forEach(col => {
+        const value = (row as any)[col];
+        if (!value || String(value).trim() === '') {
+          errors.push(`'${col}' is required`);
+        }
+      });
+
+      if (errors.length > 0) {
+        rowErrors.push({ row: rowNum, product_name: row.product_name || '', errors });
+        continue;
+      }
+
+      // Field-level validation
+      const mrp = parseFloat(row.mrp);
+      if (isNaN(mrp) || mrp < 0) errors.push("'mrp' must be a non-negative number");
+
+      const purchasePrice = parseFloat(row.purchase_price);
+      if (isNaN(purchasePrice) || purchasePrice < 0) errors.push("'purchase_price' must be a non-negative number");
+
+      const sellingPrice = parseFloat(row.selling_price);
+      if (isNaN(sellingPrice) || sellingPrice < 0) errors.push("'selling_price' must be a non-negative number");
+
+      const quantity = row.quantity ? parseInt(row.quantity, 10) : 0;
+      if (row.quantity && isNaN(quantity)) errors.push("'quantity' must be a number");
+
+      const mainCat = row.main_category.trim();
+      if (!VALID_MAIN_CATEGORIES.includes(mainCat)) {
+        errors.push(`'main_category' must be one of: ${VALID_MAIN_CATEGORIES.join(', ')}`);
+      }
+
+      const typeVal = row.type.trim().toLowerCase();
+      if (!['basic', 'special'].includes(typeVal)) {
+        errors.push("'type' must be 'basic' or 'special'");
+      }
+
+      const statusVal = row.status.trim().toLowerCase();
+      if (!['active', 'inactive'].includes(statusVal)) {
+        errors.push("'status' must be 'Active' or 'Inactive'");
+      }
+
+      // Brand lookup
+      const brandId = brandMap.get(row.brand_name.trim().toLowerCase());
+      if (!brandId) {
+        errors.push(`Brand '${row.brand_name}' not found in database`);
+      }
+
+      if (errors.length > 0) {
+        rowErrors.push({ row: rowNum, product_name: row.product_name || '', errors });
+        continue;
+      }
+
+      // Build product document
+      const isPrime = typeVal === 'special';
+      const purchasePct = mrp > 0 ? Math.round((purchasePrice / mrp) * 100) : 60;
+      const sellingPct = mrp > 0 ? Math.round((sellingPrice / mrp) * 100) : 80;
+
+      const productData: any = {
+        name: row.product_name.trim(),
+        brand_id: brandId,
+        mainCategory: mainCat,
+        subCategory: row.sub_category.trim(),
+        isPrime,
+        mrp,
+        purchasePrice,
+        purchasePercentage: purchasePct,
+        sellingPrice,
+        sellingPercentage: sellingPct,
+        isActive: statusVal === 'active',
+        addedBy: user._id,
+        images: row.image_url && row.image_url.trim()
+          ? [row.image_url.trim()]
+          : [CATEGORY_DEFAULT_IMAGES[mainCat] || 'https://placehold.co/400x400/e8f4ea/333333?text=Product+Image'],
+      };
+
+      if (quantity > 0) {
+        productData.quantity = quantity;
+      }
+
+      successProducts.push(productData);
+    }
+
+    // Bulk insert valid products
+    let insertedCount = 0;
+    const insertErrors: RowError[] = [];
+
+    if (successProducts.length > 0) {
+      const results = await Promise.allSettled(
+        successProducts.map(p => Product.create(p))
+      );
+
+      results.forEach((result, idx) => {
+        if (result.status === 'fulfilled') {
+          insertedCount++;
+        } else {
+          insertErrors.push({
+            row: -1,
+            product_name: successProducts[idx].name,
+            errors: [result.reason?.message || 'Database insert failed'],
+          });
+        }
+      });
+    }
+
+    const allErrors = [...rowErrors, ...insertErrors];
+
+    // Clear product cache after bulk insert
+    if (insertedCount > 0) {
+      clearCache('/products');
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        successCount: insertedCount,
+        failedCount: allErrors.length,
+        totalRows: records.length,
+        errors: allErrors,
+      },
+      message: `Bulk upload complete: ${insertedCount} products added, ${allErrors.length} failed.`,
     });
 
   } catch (error: any) {
