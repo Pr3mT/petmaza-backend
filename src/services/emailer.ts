@@ -8,12 +8,14 @@ import { generatePaymentReceiptPDF } from './pdfGenerator';
 dotenv.config();
 
 // ZeptoMail client - uses HTTPS API (not SMTP, works on all hosting providers)
+const zeptoHost = (process.env.ZEPTOMAIL_HOST || 'api.zeptomail.com').replace(/https?:\/\//, '').replace(/\/$/, '') + '/';
+const zeptoToken = process.env.ZEPTOMAIL_TOKEN || '';
 const zeptoClient = new SendMailClient({
-  url: 'api.zeptomail.com/',
-  token: process.env.ZEPTOMAIL_TOKEN || '',
+  url: zeptoHost,
+  token: zeptoToken,
 });
 
-logger.info('[Emailer] ZeptoMail client initialized');
+logger.info(`[Emailer] ZeptoMail client initialized (host=${zeptoHost}, token=${zeptoToken ? '****' : 'MISSING'})`);
 
 export interface EmailOptions {
   to: string;
