@@ -282,12 +282,14 @@ export class ProductService {
         // Calculate prices for all variants (including single variant)
         data.variants = data.variants.map((variant: any) => {
           if (variant.mrp && variant.sellingPercentage !== undefined) {
-            variant.sellingPrice = variant.mrp * (variant.sellingPercentage / 100);
-            variant.discount = Math.round(((variant.mrp - variant.sellingPrice) / variant.mrp) * 100 * 100) / 100;
-          }
-          if (variant.mrp && variant.purchasePercentage !== undefined) {
-            variant.purchasePrice = variant.mrp * (variant.purchasePercentage / 100);
-          }
+              const sp = variant.mrp * (variant.sellingPercentage / 100);
+              variant.sellingPrice = Math.round(sp * 100) / 100;
+              variant.discount = Math.round(((variant.mrp - variant.sellingPrice) / variant.mrp) * 100 * 100) / 100;
+            }
+            if (variant.mrp && variant.purchasePercentage !== undefined) {
+              const pp = variant.mrp * (variant.purchasePercentage / 100);
+              variant.purchasePrice = Math.round(pp * 100) / 100;
+            }
           return variant;
         });
         
@@ -331,12 +333,14 @@ export class ProductService {
     
     // Only calculate if we have valid values
     if (mrp && sellingPercentage !== undefined) {
-      data.sellingPrice = mrp * (sellingPercentage / 100);
+      const sp = mrp * (sellingPercentage / 100);
+      data.sellingPrice = Math.round(sp * 100) / 100;
       data.discount = Math.round(((mrp - data.sellingPrice) / mrp) * 100 * 100) / 100;
     }
-    
+
     if (mrp && purchasePercentage !== undefined) {
-      data.purchasePrice = mrp * (purchasePercentage / 100);
+      const pp = mrp * (purchasePercentage / 100);
+      data.purchasePrice = Math.round(pp * 100) / 100;
     }
 
     const product = await Product.findByIdAndUpdate(id, data, {

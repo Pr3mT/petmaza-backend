@@ -45,8 +45,9 @@ const vendorProductPricingSchema = new Schema<IVendorProductPricing>(
     variantStock: {
       type: [
         {
-          weight: { type: Number, required: true },
-          unit: { type: String, required: true },
+          weight: { type: Number },
+          unit: { type: String },
+          size: { type: String },
           displayWeight: { type: String, required: true },
           availableStock: { type: Number, default: 0, min: 0 },
           totalSoldWebsite: { type: Number, default: 0, min: 0 },

@@ -27,6 +27,8 @@ export interface IUser extends Document {
 export interface IProductVariant {
   weight?: number;
   unit?: string;
+  // Optional size string for apparel/harness variants (e.g. S, M, L, XL, 2XL)
+  size?: string;
   displayWeight?: string;
   mrp: number;
   sellingPercentage: number;
@@ -88,9 +90,10 @@ export interface IPrimeProduct extends Document {
   vendorDescription?: string;
   vendorImages: string[];
   selectedVariant?: {
-    weight: number;
-    unit: string;
-    displayWeight: string;
+    weight?: number;
+    unit?: string;
+    size?: string;
+    displayWeight?: string;
   };
   views: number;
   ordersCount: number;
@@ -111,8 +114,9 @@ export interface IOrderItem {
   profit: number; // subtotal - purchaseSubtotal
   profitPercentage: number; // (profit / subtotal) * 100
   selectedVariant?: {
-    weight: number;
-    unit: string;
+    weight?: number;
+    unit?: string;
+    size?: string;
     displayWeight?: string;
   };
 }
@@ -189,8 +193,9 @@ export interface IVendorProductPricing extends Document {
   totalSoldStore: number;
   isActive: boolean;
   variantStock?: Array<{
-    weight: number;
-    unit: string;
+    weight?: number;
+    unit?: string;
+    size?: string;
     displayWeight: string;
     availableStock: number;
     totalSoldWebsite: number;

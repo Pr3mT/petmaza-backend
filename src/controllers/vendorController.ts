@@ -45,22 +45,24 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
               availableStock: 0,
               isActive: false,
               variantStock: product.hasVariants && product.variants?.length > 0
-                ? product.variants.map((variant: any) => ({
-                    weight: variant.weight,
-                    unit: variant.unit,
-                    displayWeight: variant.displayWeight,
-                    availableStock: 0,
-                    totalSoldWebsite: 0,
-                    totalSoldStore: 0,
-                    isActive: false,
-                  }))
-                : undefined,
+                    ? product.variants.map((variant: any) => ({
+                        weight: variant.weight,
+                        unit: variant.unit,
+                        size: variant.size,
+                        displayWeight: variant.displayWeight,
+                        availableStock: 0,
+                        totalSoldWebsite: 0,
+                        totalSoldStore: 0,
+                        isActive: false,
+                      }))
+                    : undefined,
             });
           } else if (!vendorProduct.variantStock && product.hasVariants && product.variants?.length > 0) {
             // Initialize variantStock if product has variants but vendor doesn't
             vendorProduct.variantStock = product.variants.map((variant: any) => ({
               weight: variant.weight,
               unit: variant.unit,
+              size: variant.size,
               displayWeight: variant.displayWeight,
               availableStock: 0,
               totalSoldWebsite: 0,
@@ -140,6 +142,7 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
               ? product.variants.map((variant: any) => ({
                   weight: variant.weight,
                   unit: variant.unit,
+                  size: variant.size,
                   displayWeight: variant.displayWeight,
                   availableStock: 0,
                   totalSoldWebsite: 0,
@@ -152,15 +155,16 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
           // Only initialize variantStock if product has variants but vendor pricing doesn't
           if (!vendorProduct.variantStock && product.hasVariants && product.variants?.length > 0) {
             // Initialize variantStock if product has variants but vendor doesn't
-            vendorProduct.variantStock = product.variants.map((variant: any) => ({
-              weight: variant.weight,
-              unit: variant.unit,
-              displayWeight: variant.displayWeight,
-              availableStock: 0,
-              totalSoldWebsite: 0,
-              totalSoldStore: 0,
-              isActive: variant.isActive,
-            }));
+              vendorProduct.variantStock = product.variants.map((variant: any) => ({
+                weight: variant.weight,
+                unit: variant.unit,
+                size: variant.size,
+                displayWeight: variant.displayWeight,
+                availableStock: 0,
+                totalSoldWebsite: 0,
+                totalSoldStore: 0,
+                isActive: variant.isActive,
+              }));
             await vendorProduct.save();
           }
         }
@@ -275,7 +279,7 @@ export const getAvailableProducts = async (req: AuthRequest, res: Response, next
 export const updateVendorProductStock = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params; // product_id
-    const { availableStock, weight, unit, action, reason } = req.body; // action: 'set', 'add', 'remove'; reason: 'sold_offline', 'adjustment'
+    const { availableStock, weight, unit, size, action, reason } = req.body; // action: 'set', 'add', 'remove'; reason: 'sold_offline', 'adjustment'
 
     if (availableStock === undefined || availableStock < 0) {
       return next(new AppError('Please provide a valid stock quantity', 400));
@@ -317,6 +321,7 @@ export const updateVendorProductStock = async (req: AuthRequest, res: Response, 
             vendorProductPricing.variantStock = product.variants.map((variant: any) => ({
               weight: variant.weight,
               unit: variant.unit,
+              size: variant.size,
               displayWeight: variant.displayWeight,
               isActive: variant.isActive || true,
               availableStock: 0,
@@ -327,11 +332,13 @@ export const updateVendorProductStock = async (req: AuthRequest, res: Response, 
         }
 
         if (vendorProductPricing.variantStock) {
-          // Update specific variant stock
-          const variantIndex = vendorProductPricing.variantStock.findIndex(
-            (v: any) => v.weight === Number(weight) && v.unit === unit
-          );
-          
+          // Update specific variant stock (match by size if provided, otherwise weight+unit)
+          const variantIndex = vendorProductPricing.variantStock.findIndex((v: any) => {
+            if (size !== undefined && v.size !== undefined) return v.size === size;
+            if (weight !== undefined && unit !== undefined) return v.weight === Number(weight) && v.unit === unit;
+            return false;
+          });
+
           if (variantIndex === -1) {
             return next(new AppError('Variant not found', 404));
           }
@@ -404,12 +411,14 @@ export const updateVendorProductStock = async (req: AuthRequest, res: Response, 
       }
 
       // Check if this is a variant stock update
-      if (weight !== undefined && unit !== undefined && vendorProductPricing.variantStock) {
-        // Update specific variant stock
-        const variantIndex = vendorProductPricing.variantStock.findIndex(
-          (v: any) => v.weight === Number(weight) && v.unit === unit
-        );
-        
+      if ((size !== undefined) || (weight !== undefined && unit !== undefined) && vendorProductPricing.variantStock) {
+        // Update specific variant stock (match by size if provided, otherwise weight+unit)
+        const variantIndex = vendorProductPricing.variantStock.findIndex((v: any) => {
+          if (size !== undefined && v.size !== undefined) return v.size === size;
+          if (weight !== undefined && unit !== undefined) return v.weight === Number(weight) && v.unit === unit;
+          return false;
+        });
+
         if (variantIndex === -1) {
           return next(new AppError('Variant not found', 404));
         }
@@ -468,7 +477,7 @@ export const updateVendorProductStock = async (req: AuthRequest, res: Response, 
 export const updateVendorProductStatus = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params; // product_id
-    const { isActive, weight, unit } = req.body;
+    const { isActive, weight, unit, size } = req.body;
 
     if (typeof isActive !== 'boolean') {
       return next(new AppError('Please provide a valid status (true/false)', 400));
@@ -487,11 +496,13 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
       }
 
       // Check if this is a variant product
-      if (weight !== undefined && unit !== undefined && product.hasVariants && product.variants) {
-        // Update specific variant status in the product
-        const variantIndex = product.variants.findIndex(
-          (v: any) => v.weight === Number(weight) && v.unit === unit
-        );
+      if ((size !== undefined) || (weight !== undefined && unit !== undefined)) {
+        // Update specific variant status in the product (match by size if provided, otherwise weight+unit)
+        const variantIndex = product.variants.findIndex((v: any) => {
+          if (size !== undefined && v.size !== undefined) return v.size === size;
+          if (weight !== undefined && unit !== undefined) return v.weight === Number(weight) && v.unit === unit;
+          return false;
+        });
         
         if (variantIndex === -1) {
           return next(new AppError('Variant not found', 404));
@@ -549,11 +560,13 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
       }
 
       // Check if this is a variant product
-      if (weight !== undefined && unit !== undefined && vendorProductPricing.variantStock) {
-        // Update specific variant status
-        const variantIndex = vendorProductPricing.variantStock.findIndex(
-          (v: any) => v.weight === Number(weight) && v.unit === unit
-        );
+      if ((size !== undefined) || (weight !== undefined && unit !== undefined) && vendorProductPricing.variantStock) {
+        // Update specific variant status (match by size if provided, otherwise weight+unit)
+        const variantIndex = vendorProductPricing.variantStock.findIndex((v: any) => {
+          if (size !== undefined && v.size !== undefined) return v.size === size;
+          if (weight !== undefined && unit !== undefined) return v.weight === Number(weight) && v.unit === unit;
+          return false;
+        });
         
         if (variantIndex === -1) {
           return next(new AppError('Variant not found', 404));

@@ -79,6 +79,7 @@ const primeProductSchema = new Schema<IPrimeProduct>(
     selectedVariant: {
       weight: { type: Number },
       unit: { type: String },
+      size: { type: String },
       displayWeight: { type: String },
     },
     views: {

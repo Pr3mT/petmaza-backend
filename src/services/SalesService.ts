@@ -71,11 +71,13 @@ export class SalesService {
     });
 
     // Update product sales counters
-    if (selectedVariant && selectedVariant.weight && selectedVariant.unit && product.hasVariants) {
-      // Update variant-specific sales counters
-      const variantIndex = product.variants?.findIndex(
-        (v: any) => v.weight === selectedVariant.weight && v.unit === selectedVariant.unit
-      );
+    if (selectedVariant && product.hasVariants) {
+      // Support size-based variants or weight+unit
+      const variantIndex = product.variants?.findIndex((v: any) => {
+        if (selectedVariant.size && v.size) return v.size === selectedVariant.size;
+        if (selectedVariant.weight !== undefined && selectedVariant.unit) return v.weight === selectedVariant.weight && v.unit === selectedVariant.unit;
+        return false;
+      });
 
       if (variantIndex !== undefined && variantIndex >= 0 && product.variants) {
         // Update sales counter for this variant
@@ -88,7 +90,8 @@ export class SalesService {
         await product.save();
       } else {
         // Variant not found in variants array - update general counters instead
-        console.log(`Variant ${selectedVariant.weight}${selectedVariant.unit} not in variants, updating general counters`);
+        const variantLabel = selectedVariant.size ? selectedVariant.size : `${selectedVariant.weight || ''}${selectedVariant.unit || ''}`;
+        console.log(`Variant ${variantLabel} not in variants, updating general counters`);
         const updateFields: any = {
           $inc: {},
         };
@@ -158,11 +161,13 @@ export class SalesService {
     }
 
     // Reverse sales counters in Product
-    if (selectedVariant && selectedVariant.weight && selectedVariant.unit && product.hasVariants) {
-      // Reverse variant-specific sales counter
-      const variantIndex = product.variants?.findIndex(
-        (v: any) => v.weight === selectedVariant.weight && v.unit === selectedVariant.unit
-      );
+    if (selectedVariant && product.hasVariants) {
+      // Support size-based variants or weight+unit
+      const variantIndex = product.variants?.findIndex((v: any) => {
+        if ((selectedVariant as any).size && v.size) return v.size === (selectedVariant as any).size;
+        if ((selectedVariant as any).weight !== undefined && (selectedVariant as any).unit) return v.weight === (selectedVariant as any).weight && v.unit === (selectedVariant as any).unit;
+        return false;
+      });
 
       if (variantIndex !== undefined && variantIndex >= 0 && product.variants) {
         // Reverse sales counter for this variant

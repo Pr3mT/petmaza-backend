@@ -49,6 +49,8 @@ const productSchema = new Schema<IProduct>(
       default: false,
     },
     variants: [{
+      // Optional size for apparel/harness variants (S, M, L, XL, 2XL, etc.)
+      size: { type: String },
       weight: { type: Number, min: 0 },
       unit: { type: String, enum: ['g', 'kg', 'ml', 'l'] },
       displayWeight: { type: String },
@@ -162,16 +164,18 @@ productSchema.pre('save', function (next) {
       const mrp = variant.mrp;
       
       if (mrp && variant.sellingPercentage !== undefined) {
-        variant.sellingPrice = mrp * (variant.sellingPercentage / 100);
-        
+        const sp = mrp * (variant.sellingPercentage / 100);
+        variant.sellingPrice = Math.round(sp * 100) / 100;
+
         // Auto-calculate discount percentage
         if (mrp > 0) {
           variant.discount = Math.round(((mrp - variant.sellingPrice) / mrp) * 100 * 100) / 100;
         }
       }
-      
+
       if (mrp && variant.purchasePercentage !== undefined) {
-        variant.purchasePrice = mrp * (variant.purchasePercentage / 100);
+        const pp = mrp * (variant.purchasePercentage / 100);
+        variant.purchasePrice = Math.round(pp * 100) / 100;
       }
     });
   }
@@ -195,11 +199,11 @@ productSchema.pre('save', function (next) {
   else if (mrp && !this.hasVariants && (this.isModified('mrp') || this.isModified('sellingPercentage'))) {
     const sellingPercentage = this.get('sellingPercentage') as number;
     const sellingPrice = mrp * (sellingPercentage / 100);
-    this.set('sellingPrice', sellingPrice);
-    
+    this.set('sellingPrice', Math.round(sellingPrice * 100) / 100);
+
     // Auto-calculate discount percentage
     if (mrp > 0) {
-      const discount = ((mrp - sellingPrice) / mrp) * 100;
+      const discount = ((mrp - this.get('sellingPrice')) / mrp) * 100;
       this.set('discount', Math.round(discount * 100) / 100); // Round to 2 decimal places
     }
   }
@@ -221,11 +225,13 @@ productSchema.pre('findOneAndUpdate', function (next) {
     if (update.variants && Array.isArray(update.variants)) {
       update.variants = update.variants.map((variant: any) => {
         if (variant.mrp && variant.sellingPercentage !== undefined) {
-          variant.sellingPrice = variant.mrp * (variant.sellingPercentage / 100);
+          const sp = variant.mrp * (variant.sellingPercentage / 100);
+          variant.sellingPrice = Math.round(sp * 100) / 100;
           variant.discount = Math.round(((variant.mrp - variant.sellingPrice) / variant.mrp) * 100 * 100) / 100;
         }
         if (variant.mrp && variant.purchasePercentage !== undefined) {
-          variant.purchasePrice = variant.mrp * (variant.purchasePercentage / 100);
+          const pp = variant.mrp * (variant.purchasePercentage / 100);
+          variant.purchasePrice = Math.round(pp * 100) / 100;
         }
         return variant;
       });
@@ -237,12 +243,14 @@ productSchema.pre('findOneAndUpdate', function (next) {
     const sellingPercentage = update.sellingPercentage;
     
     if (mrp && sellingPercentage !== undefined) {
-      update.sellingPrice = mrp * (sellingPercentage / 100);
+      const sp = mrp * (sellingPercentage / 100);
+      update.sellingPrice = Math.round(sp * 100) / 100;
       update.discount = Math.round(((mrp - update.sellingPrice) / mrp) * 100 * 100) / 100;
     }
-    
+
     if (mrp && update.purchasePercentage !== undefined) {
-      update.purchasePrice = mrp * (update.purchasePercentage / 100);
+      const pp = mrp * (update.purchasePercentage / 100);
+      update.purchasePrice = Math.round(pp * 100) / 100;
     }
   }
   
