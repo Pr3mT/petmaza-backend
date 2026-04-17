@@ -5,6 +5,7 @@ import Order from '../models/Order';
 import Transaction from '../models/Transaction';
 import ShippingSettings from '../models/ShippingSettings';
 import Settlement from '../models/Settlement';
+import CategoryFulfillerMapping from '../models/CategoryFulfillerMapping';
 import { VendorProductPricingService } from '../services/VendorProductPricingService';
 import { ShippingService } from '../services/ShippingService';
 import { AppError } from '../middlewares/errorHandler';
@@ -81,10 +82,24 @@ export const approveVendor = async (req: AuthRequest, res: Response, next: NextF
 
     const VendorDetails = (await import('../models/VendorDetails')).default;
 
+    // If approving a PRIME vendor, auto-assign a sequential primeVendorCode
+    let primeCodeUpdate: Record<string, any> = {};
+    if (isApproved) {
+      const targetUser = await User.findById(id).select('vendorType primeVendorCode').lean();
+      if (targetUser?.vendorType === 'PRIME' && !targetUser.primeVendorCode) {
+        // Find highest existing code and increment
+        const highest = await User.findOne({ primeVendorCode: { $exists: true } })
+          .sort({ primeVendorCode: -1 })
+          .select('primeVendorCode')
+          .lean();
+        primeCodeUpdate = { primeVendorCode: (highest?.primeVendorCode || 0) + 1 };
+      }
+    }
+
     // Update user
     const user = await User.findByIdAndUpdate(
       id,
-      { isApproved },
+      { isApproved, ...primeCodeUpdate },
       { new: true, runValidators: true }
     ).select('-password');
 
@@ -1124,5 +1139,128 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
   } catch (error: any) {
     console.error('[getVendorBilling] Error:', error);
     next(error);
+  }
+};
+
+// ─── Category → Fulfiller Mapping ────────────────────────────────────────────
+
+/**
+ * GET /admin/category-mappings
+ * Returns all category→fulfiller mappings with fulfiller details populated.
+ */
+export const getCategoryMappings = async (
+  _req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const mappings = await CategoryFulfillerMapping.find({})
+      .populate('fulfiller_id', 'name email')
+      .sort({ mainCategory: 1, subCategory: 1 })
+      .lean();
+
+    res.status(200).json({ success: true, data: mappings });
+  } catch (err: any) {
+    next(err);
+  }
+};
+
+/**
+ * POST /admin/category-mappings
+ * Create or update a category→fulfiller mapping (upsert).
+ * Body: { mainCategory, subCategory?, fulfiller_id }
+ */
+export const upsertCategoryMapping = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { mainCategory, subCategory, fulfiller_id } = req.body;
+
+    if (!mainCategory || !fulfiller_id) {
+      return next(new AppError('mainCategory and fulfiller_id are required', 400));
+    }
+
+    // Verify the fulfiller exists and is a WAREHOUSE_FULFILLER
+    const fulfiller = await User.findOne({
+      _id: fulfiller_id,
+      role: 'vendor',
+      vendorType: 'WAREHOUSE_FULFILLER',
+    }).select('name');
+
+    if (!fulfiller) {
+      return next(
+        new AppError('Fulfiller not found or is not a WAREHOUSE_FULFILLER', 404)
+      );
+    }
+
+    const filter: Record<string, any> = { mainCategory };
+    filter.subCategory = subCategory?.trim() || null;
+
+    const update = {
+      fulfiller_id,
+      fulfillerName: fulfiller.name,
+      isActive: true,
+    };
+
+    const mapping = await CategoryFulfillerMapping.findOneAndUpdate(
+      filter,
+      { $set: update },
+      { new: true, upsert: true, runValidators: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Category mapping saved successfully',
+      data: mapping,
+    });
+  } catch (err: any) {
+    next(err);
+  }
+};
+
+/**
+ * DELETE /admin/category-mappings/:id
+ */
+export const deleteCategoryMapping = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const mapping = await CategoryFulfillerMapping.findByIdAndDelete(req.params.id);
+    if (!mapping) {
+      return next(new AppError('Mapping not found', 404));
+    }
+    res.status(200).json({ success: true, message: 'Mapping deleted' });
+  } catch (err: any) {
+    next(err);
+  }
+};
+
+/**
+ * PATCH /admin/category-mappings/:id/toggle
+ * Toggle isActive on a mapping.
+ */
+export const toggleCategoryMapping = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const mapping = await CategoryFulfillerMapping.findById(req.params.id);
+    if (!mapping) {
+      return next(new AppError('Mapping not found', 404));
+    }
+    mapping.isActive = !mapping.isActive;
+    await mapping.save();
+    res.status(200).json({
+      success: true,
+      message: `Mapping ${mapping.isActive ? 'activated' : 'deactivated'}`,
+      data: mapping,
+    });
+  } catch (err: any) {
+    next(err);
   }
 };

@@ -7,8 +7,12 @@ import {
   deleteProduct,
   getPrimeListingsForProduct,
   getPrimeProductsByCategory,
-  bulkUploadProducts,
 } from '../controllers/productController';
+import {
+  bulkUploadProducts,
+  generateBulkTemplate,
+  getActivePrimeVendors,
+} from '../controllers/bulkUploadController';
 import { verifyToken, checkRole, optionalAuth } from '../middlewares/auth';
 import { cacheResponse, cacheForCustomersOnly } from '../middlewares/cache';
 
@@ -22,6 +26,10 @@ router.get('/:id', optionalAuth, cacheForCustomersOnly(30000), getProduct); // 3
 // Prime product routes (public) - Cache for customers only
 router.get('/prime/category', optionalAuth, cacheForCustomersOnly(30000), getPrimeProductsByCategory);
 router.get('/:productId/prime-listings', optionalAuth, cacheForCustomersOnly(30000), getPrimeListingsForProduct);
+
+// Bulk upload utilities (admin only)
+router.get('/bulk/template', verifyToken, checkRole('admin'), generateBulkTemplate);
+router.get('/bulk/prime-vendors', verifyToken, checkRole('admin'), getActivePrimeVendors);
 
 // Protected routes - Admin and MY_SHOP vendors can create/manage products
 router.post('/', verifyToken, createProduct);

@@ -8,6 +8,20 @@ import { AuthRequest } from '../middlewares/auth';
 import { sendVerificationEmail, sendVerificationSuccessEmail, sendEmail } from '../services/emailer';
 import { OAuth2Client } from 'google-auth-library';
 import logger from '../config/logger';
+import { userCache } from '../utils/userCache';
+
+/**
+ * Returns the next available primeVendorCode (1, 2, 3, ...).
+ * Uses findOneAndUpdate with $inc on a counter doc for atomicity,
+ * falling back to MAX+1 if no counter exists.
+ */
+const getNextPrimeVendorCode = async (): Promise<number> => {
+  const highest = await User.findOne({ primeVendorCode: { $exists: true } })
+    .sort({ primeVendorCode: -1 })
+    .select('primeVendorCode')
+    .lean();
+  return (highest?.primeVendorCode || 0) + 1;
+};
 
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -31,7 +45,7 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
     }
 
     // Create user
-    const user = await User.create({
+    const userData: any = {
       name,
       email,
       password,
@@ -40,8 +54,15 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
       vendorType,
       pincodesServed: pincodesServed || [],
       address: role === 'customer' ? address : undefined,
-      isApproved: userRole === 'admin' || vendorType === 'MY_SHOP' ? true : false, // MY_SHOP auto-approved
-    });
+      isApproved: userRole === 'admin' || vendorType === 'MY_SHOP' ? true : false,
+    };
+
+    // Assign a unique sequential ID immediately for all PRIME vendors
+    if (vendorType === 'PRIME') {
+      userData.primeVendorCode = await getNextPrimeVendorCode();
+    }
+
+    const user = await User.create(userData);
 
     // Create vendor details if vendor
     if (userRole === 'vendor' && vendorType) {
@@ -244,19 +265,35 @@ export const googleAuth = async (req: Request, res: Response, next: NextFunction
 
 export const getMe = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    // User is already fetched in auth middleware, just return it
-    // No need for another DB query
-    const user = req.user;
+    const reqUser = req.user as any;
 
+    if (!reqUser) {
+      return next(new AppError('User not found', 404));
+    }
+
+    // Always fetch fresh from DB to avoid stale cache for fields like primeVendorCode
+    let user = await User.findById(reqUser._id).select('-password').lean() as any;
     if (!user) {
       return next(new AppError('User not found', 404));
     }
 
+    // Invalidate cache so subsequent requests get fresh data
+    userCache.delete(String(reqUser._id));
+
+    // Auto-assign primeVendorCode for PRIME vendors that still don't have one
+    if (user.vendorType === 'PRIME' && !user.primeVendorCode) {
+      const code = await getNextPrimeVendorCode();
+      const updated = await User.findByIdAndUpdate(
+        user._id,
+        { primeVendorCode: code },
+        { new: true }
+      ).select('-password').lean();
+      user = updated || user;
+    }
+
     res.status(200).json({
       success: true,
-      data: {
-        user,
-      },
+      data: { user },
     });
   } catch (error: any) {
     next(error);

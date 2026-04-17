@@ -64,6 +64,11 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
     },
+    primeVendorCode: {
+      type: Number,
+      sparse: true,
+      unique: true,
+    },
     resetPasswordToken: {
       type: String,
     },
@@ -97,6 +102,7 @@ userSchema.index({ role: 1 });
 userSchema.index({ vendorType: 1 });
 userSchema.index({ isApproved: 1 });
 userSchema.index({ role: 1, isApproved: 1 }); // Compound index for vendor queries
+userSchema.index({ primeVendorCode: 1 }, { unique: true, sparse: true });
 
 const User = mongoose.model<IUser>('User', userSchema);
 

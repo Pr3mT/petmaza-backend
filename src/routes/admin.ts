@@ -19,6 +19,10 @@ import {
   getVendorBilling,
   getVendorWeeklyBilling,
   markWeeklyInvoicePaid,
+  getCategoryMappings,
+  upsertCategoryMapping,
+  deleteCategoryMapping,
+  toggleCategoryMapping,
 } from '../controllers/adminController';
 import {
   getAnalytics,
@@ -76,6 +80,12 @@ router.get('/vendor-billing', getVendorBilling);
 // Vendor weekly invoice routes
 router.get('/vendor-weekly-billing', getVendorWeeklyBilling);
 router.post('/vendor-weekly-billing/mark-paid', markWeeklyInvoicePaid);
+
+// Category → Fulfiller mapping routes
+router.get('/category-mappings', getCategoryMappings);
+router.post('/category-mappings', upsertCategoryMapping);
+router.delete('/category-mappings/:id', deleteCategoryMapping);
+router.patch('/category-mappings/:id/toggle', toggleCategoryMapping);
 
 // Reviews routes
 router.get('/reviews', async (req, res) => {

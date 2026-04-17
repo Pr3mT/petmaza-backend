@@ -18,6 +18,8 @@ export interface IUser extends Document {
     pincode: string;
   };
   isApproved: boolean;
+  /** Sequential human-readable ID auto-assigned to approved PRIME vendors (e.g. 1, 2, 3) */
+  primeVendorCode?: number;
   resetPasswordToken?: string;
   resetPasswordExpire?: Date;
   createdAt: Date;
