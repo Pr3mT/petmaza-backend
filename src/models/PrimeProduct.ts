@@ -82,6 +82,11 @@ const primeProductSchema = new Schema<IPrimeProduct>(
       size: { type: String },
       displayWeight: { type: String },
     },
+    purchasePrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
     views: {
       type: Number,
       default: 0,

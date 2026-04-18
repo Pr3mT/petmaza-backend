@@ -1,5 +1,6 @@
 import Order from '../models/Order';
 import Product from '../models/Product';
+import PrimeProduct from '../models/PrimeProduct';
 import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
@@ -108,8 +109,46 @@ export class OrderRoutingService {
 
     // Create one order per vendor
     for (const [vendorId, vendorItems] of vendorItemsMap) {
-      // Build order items with pricing
-      const orderItems = await this.buildOrderItems(vendorItems, vendorId);
+      // Build order items with prime-specific pricing (PrimeProduct.purchasePrice)
+      const orderItems: IOrderItem[] = [];
+      for (const item of vendorItems) {
+        const product = productMap.get(item.product_id);
+        if (!product) {
+          throw new AppError(`Product ${item.product_id} not found`, 404);
+        }
+
+        // Look up PrimeProduct listing for vendor-specific pricing
+        const primeListing = await PrimeProduct.findOne({
+          vendor_id: vendorId,
+          product_id: item.product_id,
+          isActive: true,
+        });
+
+        const sellingPrice = primeListing?.vendorPrice ?? product.sellingPrice ?? 0;
+        const purchasePrice = primeListing?.purchasePrice ?? 0;
+
+        if (sellingPrice === 0) {
+          throw new AppError(`Product ${product.name} has invalid pricing`, 400);
+        }
+
+        const subtotal = sellingPrice * item.quantity;
+        const purchaseSubtotal = purchasePrice * item.quantity;
+        const profit = subtotal - purchaseSubtotal;
+        const profitPercentage = subtotal > 0 ? (profit / subtotal) * 100 : 0;
+
+        orderItems.push({
+          product_id: item.product_id as any,
+          vendor_id: vendorId as any,
+          quantity: item.quantity,
+          sellingPrice,
+          purchasePrice,
+          subtotal,
+          purchaseSubtotal,
+          profit,
+          profitPercentage,
+          selectedVariant: item.selectedVariant,
+        });
+      }
 
       // Calculate totals
       const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);

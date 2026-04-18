@@ -221,16 +221,32 @@ export class OrderAcceptanceService {
     // }
 
     // Check if vendor has all products available
-    const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
-    for (const item of order.items) {
-      const pricing = await VendorProductPricing.findOne({
-        vendor_id,
-        product_id: item.product_id,
-        isActive: true,
-      });
-      
-      if (!pricing) {
-        throw new AppError(`Product ${item.product_id} not available`, 400);
+    if (order.isPrime) {
+      // Prime orders: validate via PrimeProduct listings
+      const PrimeProductModel = (await import('../models/PrimeProduct')).default;
+      for (const item of order.items) {
+        const listing = await PrimeProductModel.findOne({
+          vendor_id,
+          product_id: item.product_id,
+          isActive: true,
+        });
+        if (!listing) {
+          throw new AppError(`Product ${item.product_id} not available`, 400);
+        }
+      }
+    } else {
+      // Non-prime orders: validate via VendorProductPricing
+      const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
+      for (const item of order.items) {
+        const pricing = await VendorProductPricing.findOne({
+          vendor_id,
+          product_id: item.product_id,
+          isActive: true,
+        });
+
+        if (!pricing) {
+          throw new AppError(`Product ${item.product_id} not available`, 400);
+        }
       }
     }
 
@@ -240,42 +256,81 @@ export class OrderAcceptanceService {
     let newTotalPurchasePrice = 0;
     let newTotalProfit = 0;
 
-    for (const item of order.items) {
-      const product = await Product.findById(item.product_id);
-      if (!product) {
-        throw new AppError(`Product ${item.product_id} not found`, 404);
+    if (order.isPrime) {
+      // Prime orders: use PrimeProduct pricing (vendorPrice as sellingPrice, purchasePrice from listing)
+      const PrimeProductModel = (await import('../models/PrimeProduct')).default;
+      for (const item of order.items) {
+        const listing = await PrimeProductModel.findOne({
+          vendor_id,
+          product_id: item.product_id,
+          isActive: true,
+        });
+        if (!listing) {
+          throw new AppError(`Product ${item.product_id} not available from vendor`, 404);
+        }
+
+        const sellingPrice = listing.vendorPrice;
+        const purchasePrice = listing.purchasePrice || 0;
+        const subtotal = sellingPrice * item.quantity;
+        const purchaseSubtotal = purchasePrice * item.quantity;
+        const profit = subtotal - purchaseSubtotal;
+        const profitPercentage = subtotal > 0 ? (profit / subtotal) * 100 : 0;
+
+        updatedItems.push({
+          product_id: item.product_id,
+          vendor_id: vendor_id,
+          quantity: item.quantity,
+          sellingPrice,
+          purchasePrice,
+          subtotal,
+          purchaseSubtotal,
+          profit,
+          profitPercentage,
+        });
+
+        newTotalPurchasePrice += purchaseSubtotal;
+        newTotalProfit += profit;
       }
+    } else {
+      // Non-prime orders: use VendorProductPricing
+      const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
+      for (const item of order.items) {
+        const product = await Product.findById(item.product_id);
+        if (!product) {
+          throw new AppError(`Product ${item.product_id} not found`, 404);
+        }
 
-      const pricing = await VendorProductPricing.findOne({
-        vendor_id,
-        product_id: item.product_id,
-        isActive: true,
-      });
+        const pricing = await VendorProductPricing.findOne({
+          vendor_id,
+          product_id: item.product_id,
+          isActive: true,
+        });
 
-      if (!pricing) {
-        throw new AppError(`Product ${item.product_id} not available from vendor`, 404);
+        if (!pricing) {
+          throw new AppError(`Product ${item.product_id} not available from vendor`, 404);
+        }
+
+        // Recalculate with accepting vendor's pricing
+        const subtotal = product.sellingPrice * item.quantity;
+        const purchaseSubtotal = pricing.purchasePrice * item.quantity;
+        const profit = subtotal - purchaseSubtotal;
+        const profitPercentage = (profit / subtotal) * 100;
+
+        updatedItems.push({
+          product_id: item.product_id,
+          vendor_id: vendor_id,
+          quantity: item.quantity,
+          sellingPrice: product.sellingPrice,
+          purchasePrice: pricing.purchasePrice,
+          subtotal,
+          purchaseSubtotal,
+          profit,
+          profitPercentage,
+        });
+
+        newTotalPurchasePrice += purchaseSubtotal;
+        newTotalProfit += profit;
       }
-
-      // Recalculate with accepting vendor's pricing
-      const subtotal = product.sellingPrice * item.quantity;
-      const purchaseSubtotal = pricing.purchasePrice * item.quantity;
-      const profit = subtotal - purchaseSubtotal;
-      const profitPercentage = (profit / subtotal) * 100;
-
-      updatedItems.push({
-        product_id: item.product_id,
-        vendor_id: vendor_id,
-        quantity: item.quantity,
-        sellingPrice: product.sellingPrice,
-        purchasePrice: pricing.purchasePrice,
-        subtotal,
-        purchaseSubtotal,
-        profit,
-        profitPercentage,
-      });
-
-      newTotalPurchasePrice += purchaseSubtotal;
-      newTotalProfit += profit;
     }
 
     // Use atomic update to ensure only first vendor can accept
@@ -532,47 +587,78 @@ export class OrderAcceptanceService {
     // If order is PENDING or ASSIGNED but not yet accepted, check if vendor is eligible
     else if (order.status === 'PENDING' || (order.status === 'ASSIGNED' && !isAssigned)) {
       console.log(`[getOrderDetails] Order is pending/unassigned, checking vendor eligibility`);
-      // Check if vendor is eligible to view this order (serves pincode and has products)
-      const vendorDetails = await VendorDetails.findOne({ 
-        vendor_id: vendorObjectId, 
-        isApproved: true 
-      });
 
-      if (!vendorDetails) {
-        throw new AppError('Vendor not found or not approved', 403);
+      if (order.isPrime) {
+        // Prime orders: check via PrimeProduct listings
+        const PrimeProductModel = (await import('../models/PrimeProduct')).default;
+        for (const item of order.items) {
+          const listing = await PrimeProductModel.findOne({
+            vendor_id: vendorObjectId,
+            product_id: item.product_id,
+            isActive: true,
+          });
+          if (!listing) {
+            throw new AppError(`Vendor does not have product ${item.product_id} available`, 403);
+          }
+        }
+      } else {
+        // Non-prime: check via VendorDetails + VendorProductPricing
+        const vendorDetails = await VendorDetails.findOne({
+          vendor_id: vendorObjectId,
+          isApproved: true,
+        });
+
+        if (!vendorDetails) {
+          throw new AppError('Vendor not found or not approved', 403);
+        }
+
+        // Check if vendor serves this pincode
+        if (!vendorDetails.serviceablePincodes.includes(order.customerPincode)) {
+          throw new AppError('Vendor does not serve this pincode', 403);
+        }
+
+        // Check if vendor has all products in stock
+        const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
+        for (const item of order.items) {
+          const pricing = await VendorProductPricing.findOne({
+            vendor_id: vendorObjectId,
+            product_id: item.product_id,
+            isActive: true,
+          });
+
+          if (!pricing) {
+            throw new AppError(`Vendor does not have product ${item.product_id} available`, 403);
+          }
+        }
       }
+    }
 
-      // Check if vendor serves this pincode
-      if (!vendorDetails.serviceablePincodes.includes(order.customerPincode)) {
-        throw new AppError('Vendor does not serve this pincode', 403);
+    // Calculate earnings (purchase price vendor will receive)
+    let totalPurchasePrice = 0;
+
+    if (order.isPrime) {
+      // Prime orders: use PrimeProduct.purchasePrice
+      const PrimeProductModel = (await import('../models/PrimeProduct')).default;
+      for (const item of order.items) {
+        const listing = await PrimeProductModel.findOne({
+          vendor_id: vendorObjectId,
+          product_id: item.product_id,
+        });
+        if (listing) {
+          totalPurchasePrice += (listing.purchasePrice || 0) * item.quantity;
+        }
       }
-
-      // Check if vendor has all products in stock
+    } else {
+      // Non-prime orders: use VendorProductPricing
       const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
       for (const item of order.items) {
         const pricing = await VendorProductPricing.findOne({
           vendor_id: vendorObjectId,
           product_id: item.product_id,
-          isActive: true,
         });
-        
-        if (!pricing) {
-          throw new AppError(`Vendor does not have product ${item.product_id} available`, 403);
+        if (pricing) {
+          totalPurchasePrice += pricing.purchasePrice * item.quantity;
         }
-      }
-    }
-
-    // Calculate earnings (profit for vendor)
-    const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
-    let totalPurchasePrice = 0;
-    
-    for (const item of order.items) {
-      const pricing = await VendorProductPricing.findOne({
-        vendor_id: vendorObjectId,
-        product_id: item.product_id,
-      });
-      if (pricing) {
-        totalPurchasePrice += pricing.purchasePrice * item.quantity;
       }
     }
 

@@ -30,11 +30,15 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     
     const product = await ProductService.createProduct(productData);
     
-    // If PRIME vendor created the product, auto-create PrimeProduct listing
-    if (user.vendorType === 'PRIME') {
-      // Create initial PrimeProduct listing for their own product
+    // Determine the prime vendor ID for listing creation
+    const primeVendorId = user.vendorType === 'PRIME'
+      ? user._id
+      : (product.isPrime && product.primeVendor_id ? product.primeVendor_id : null);
+
+    // If product is prime (created by prime vendor OR admin with isPrime: true), auto-create PrimeProduct listing
+    if (primeVendorId) {
       await PrimeProduct.create({
-        vendor_id: user._id,
+        vendor_id: primeVendorId,
         product_id: product._id,
         vendorMRP: product.mrp || (product.variants && product.variants.length > 0 ? product.variants[0].mrp : 0),
         vendorPrice: product.sellingPrice || (product.variants && product.variants.length > 0 ? product.variants[0].sellingPrice : 0),
@@ -44,7 +48,6 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
         deliveryTime: '3-5 business days',
         isActive: true,
         isAvailable: true,
-        // Use first variant if product has variants
         variant_id: undefined,
         selectedVariant: product.hasVariants && product.variants && product.variants.length > 0
           ? {

@@ -97,6 +97,7 @@ export interface IPrimeProduct extends Document {
     size?: string;
     displayWeight?: string;
   };
+  purchasePrice: number;
   views: number;
   ordersCount: number;
   soldQuantity: number;

@@ -7,13 +7,19 @@ import {
   toggleAvailability,
   deletePrimeListing,
   getPrimeDashboardStats,
+  adminGetAllPrimeListings,
 } from '../controllers/primeProductController';
-import { verifyToken, checkPrimeVendor } from '../middlewares/auth';
+import { verifyToken, checkPrimeVendor, checkRole } from '../middlewares/auth';
 
 const router = express.Router();
 
-// All routes require Prime Vendor authentication
+// All routes require authentication
 router.use(verifyToken);
+
+// ── Admin-only routes ──────────────────────────────────────────────
+router.get('/admin/all', checkRole('admin'), adminGetAllPrimeListings);
+
+// ── Prime Vendor + Admin routes ────────────────────────────────────
 router.use(checkPrimeVendor);
 
 // Dashboard

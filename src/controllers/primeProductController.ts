@@ -7,18 +7,21 @@ import { AppError } from '../middlewares/errorHandler';
 import logger from '../config/logger';
 import { clearCache } from '../middlewares/cache';
 
-// Create Prime Product Listing (Prime Vendor only)
+// Create Prime Product Listing (Admin creates on behalf of vendor, or Prime Vendor creates own)
 export const createPrimeListing = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const vendor_id = req.user._id;
+    // Admin can pass vendor_id to create on behalf of a vendor
+    const isAdmin = req.user.role === 'admin';
+    const vendor_id = isAdmin && req.body.vendor_id ? req.body.vendor_id : req.user._id;
     const {
       product_id,
       vendorPrice,
       vendorMRP,
+      purchasePrice,
       stock,
       minOrderQuantity,
       maxOrderQuantity,
@@ -58,6 +61,7 @@ export const createPrimeListing = async (
       product_id,
       vendorPrice,
       vendorMRP,
+      purchasePrice: purchasePrice || 0,
       discount,
       stock,
       minOrderQuantity: minOrderQuantity || 1,
@@ -92,24 +96,31 @@ export const createPrimeListing = async (
   }
 };
 
-// Get Vendor's Prime Listings
+// Get Vendor's Prime Listings (Admin can filter by vendor_id or get all)
 export const getMyPrimeListings = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const vendor_id = req.user._id;
-    const { page = 1, limit = 20, isActive, isAvailable } = req.query;
+    const isAdmin = req.user.role === 'admin';
+    const { page = 1, limit = 20, isActive, isAvailable, vendor_id: queryVendorId } = req.query;
 
-    const query: any = { vendor_id };
+    const query: any = {};
+    if (isAdmin) {
+      // Admin can filter by vendor_id or get all
+      if (queryVendorId) query.vendor_id = queryVendorId;
+    } else {
+      query.vendor_id = req.user._id;
+    }
     if (isActive !== undefined) query.isActive = isActive === 'true';
     if (isAvailable !== undefined) query.isAvailable = isAvailable === 'true';
 
     const skip = (Number(page) - 1) * Number(limit);
 
     const listings = await PrimeProduct.find(query)
-      .populate('product_id', 'name mainCategory subCategory images brand_id')
+      .populate('product_id', 'name mainCategory subCategory images brand_id mrp purchasePrice sellingPrice')
+      .populate('vendor_id', 'name email shopName')
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
@@ -161,20 +172,28 @@ export const getPrimeListing = async (
   }
 };
 
-// Update Prime Listing (Vendor can update their own listings)
+// Update Prime Listing (Admin can update any; vendor can update their own)
 export const updatePrimeListing = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
+    const isAdmin = req.user.role === 'admin';
     const vendor_id = req.user._id;
     const { id } = req.params;
     const updates = req.body;
 
-    const listing = await PrimeProduct.findOne({ _id: id, vendor_id });
+    // Admin can update any listing; vendors can only update their own
+    const query = isAdmin ? { _id: id } : { _id: id, vendor_id };
+    const listing = await PrimeProduct.findOne(query);
     if (!listing) {
       return next(new AppError('Prime listing not found', 404));
+    }
+
+    // Prevent non-admin from setting purchasePrice
+    if (!isAdmin) {
+      delete updates.purchasePrice;
     }
 
     // Validate pricing if updating
@@ -241,17 +260,19 @@ export const toggleAvailability = async (
   }
 };
 
-// Delete Prime Listing
+// Delete Prime Listing (Admin can delete any; vendor can delete their own)
 export const deletePrimeListing = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
+    const isAdmin = req.user.role === 'admin';
     const vendor_id = req.user._id;
     const { id } = req.params;
 
-    const listing = await PrimeProduct.findOne({ _id: id, vendor_id });
+    const query = isAdmin ? { _id: id } : { _id: id, vendor_id };
+    const listing = await PrimeProduct.findOne(query);
     if (!listing) {
       return next(new AppError('Prime listing not found', 404));
     }
@@ -272,9 +293,9 @@ export const deletePrimeListing = async (
     clearCache('/products');
     clearCache('/prime-products');
 
-    // Update vendor stats
+    // Update vendor stats (use listing's vendor_id for accuracy)
     await VendorDetails.findOneAndUpdate(
-      { vendor_id },
+      { vendor_id: listing.vendor_id },
       {
         $inc: {
           totalPrimeProducts: -1,
@@ -283,7 +304,7 @@ export const deletePrimeListing = async (
       }
     );
 
-    logger.info(`[PrimeProduct] Listing ${id} deleted by vendor ${vendor_id}`);
+    logger.info(`[PrimeProduct] Listing ${id} deleted by ${isAdmin ? 'admin' : `vendor ${vendor_id}`}`);
 
     res.status(200).json({
       success: true,
@@ -363,6 +384,52 @@ export const getPrimeDashboardStats = async (
     });
   } catch (error: any) {
     logger.error('[PrimeProduct] Error fetching dashboard stats:', error);
+    next(error);
+  }
+};
+
+// Admin: Get all prime listings across all vendors
+export const adminGetAllPrimeListings = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { page = 1, limit = 50, vendor_id, isActive, search } = req.query;
+
+    const query: any = {};
+    if (vendor_id) query.vendor_id = vendor_id;
+    if (isActive !== undefined) query.isActive = isActive === 'true';
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    let dbQuery = PrimeProduct.find(query)
+      .populate('product_id', 'name mainCategory subCategory images brand_id')
+      .populate('vendor_id', 'name email shopName vendorType')
+      .sort({ createdAt: -1 });
+
+    if (search) {
+      // Text-based search not indexed; filter after populate via aggregation is better,
+      // but for simplicity do in-memory filter after fetch
+    }
+
+    const listings = await dbQuery.skip(skip).limit(Number(limit));
+    const total = await PrimeProduct.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        listings,
+        pagination: {
+          currentPage: Number(page),
+          totalPages: Math.ceil(total / Number(limit)),
+          totalItems: total,
+          itemsPerPage: Number(limit),
+        },
+      },
+    });
+  } catch (error: any) {
+    logger.error('[PrimeProduct] Admin error fetching all listings:', error);
     next(error);
   }
 };
