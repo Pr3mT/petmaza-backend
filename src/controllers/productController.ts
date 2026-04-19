@@ -8,6 +8,7 @@ import PrimeProduct from '../models/PrimeProduct';
 import VendorDetails from '../models/VendorDetails';
 import { clearCache } from '../middlewares/cache';
 import { notifyWaitingCustomers } from './productNotificationController';
+import CategoryFulfillerMapping from '../models/CategoryFulfillerMapping';
 
 export const createProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -17,18 +18,87 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     if (user.role !== 'admin' && !['MY_SHOP', 'PRIME', 'WAREHOUSE_FULFILLER'].includes(user.vendorType)) {
       return next(new AppError('Only Admin and vendors can create products', 403));
     }
+
+    // ── DEBUG: Log the incoming payload so mismatches are visible in logs ──
+    console.log('\n[createProduct] ===== INCOMING req.body =====');
+    console.log(JSON.stringify(req.body, null, 2));
+    console.log('[createProduct] =============================================\n');
     
-    // For PRIME vendors, auto-set isPrime and primeVendor_id
     let productData = { 
       ...req.body,
-      addedBy: user._id // Track who created the product
+      addedBy: user._id
     };
     if (user.vendorType === 'PRIME') {
       productData.isPrime = true;
       productData.primeVendor_id = user._id;
     }
+
+    // When admin creates a non-prime product, auto-assign addedBy to the
+    // matching WAREHOUSE_FULFILLER via CategoryFulfillerMapping so the
+    // product appears in the correct vendor's product list.
+    if (user.role === 'admin' && !productData.isPrime) {
+      const mainCat = productData.mainCategory;
+      const subCat  = productData.subCategory;
+      const mapping = await CategoryFulfillerMapping.findOne({
+        mainCategory: mainCat,
+        subCategory:  subCat,
+        isActive:     true,
+      }) || await CategoryFulfillerMapping.findOne({
+        mainCategory: mainCat,
+        subCategory:  null,
+        isActive:     true,
+      });
+      if (mapping) {
+        productData.addedBy = mapping.fulfiller_id;
+      }
+    }
+
+    // ── Issue 2 Fix: auto-create a default variant when hasVariants = false ──
+    // This ensures the product always has at least one variant entry, so
+    // order-routing code that reads product.variants never encounters empty arrays.
+    if (!productData.hasVariants) {
+      const mrp           = Number(productData.mrp) || 0;
+      const sellingPrice  = Number(productData.sellingPrice) || 0;
+      const purchasePrice = Number(productData.purchasePrice) || 0;
+      const weight        = Number(productData.weight) || 0;
+      const unit          = productData.unit || 'g';
+
+      if (mrp > 0 && sellingPrice > 0) {
+        const discount  = mrp > 0 ? Math.round(((mrp - sellingPrice) / mrp) * 100) : 0;
+        const sellPct   = mrp > 0 ? Math.round((sellingPrice / mrp) * 100 * 100) / 100 : 80;
+        const purchPct  = mrp > 0 && purchasePrice > 0
+          ? Math.round((purchasePrice / mrp) * 100 * 100) / 100
+          : 60;
+
+        productData.variants = [{
+          weight,
+          unit,
+          displayWeight: weight > 0 ? `${weight}${unit}` : undefined,
+          mrp,
+          sellingPrice,
+          purchasePrice,
+          sellingPercentage:  sellPct,
+          purchasePercentage: purchPct,
+          discount,
+          isActive: true,
+        }];
+      }
+    }
     
     const product = await ProductService.createProduct(productData);
+
+    // ── DEBUG: Log the final saved product so pricing can be verified ──
+    console.log('\n[createProduct] ===== PRODUCT SAVED TO DB =====');
+    console.log(`ID: ${product._id}`);
+    console.log(`hasVariants: ${product.hasVariants}`);
+    console.log(`mrp: ${product.mrp}  sellingPrice: ${product.sellingPrice}  purchasePrice: ${product.purchasePrice}`);
+    console.log(`discount: ${product.discount}  sellingPercentage: ${product.sellingPercentage}  purchasePercentage: ${product.purchasePercentage}`);
+    if (product.variants && product.variants.length > 0) {
+      console.log('variants:', JSON.stringify(product.variants.map((v: any) => ({
+        mrp: v.mrp, sellingPrice: v.sellingPrice, purchasePrice: v.purchasePrice, discount: v.discount
+      })), null, 2));
+    }
+    console.log('[createProduct] =============================================\n');
     
     // Determine the prime vendor ID for listing creation
     const primeVendorId = user.vendorType === 'PRIME'

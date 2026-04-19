@@ -1210,6 +1210,22 @@ export const upsertCategoryMapping = async (
       { new: true, upsert: true, runValidators: true }
     );
 
+    // ── Issue 3 Fix: Sync VendorDetails.assignedSubcategories ──
+    // The order-routing service reads assignedSubcategories from VendorDetails
+    // to decide which fulfiller handles which products. We must keep it in sync
+    // with CategoryFulfillerMapping whenever an admin creates/updates a mapping.
+    if (subCategory?.trim()) {
+      const VendorDetails = (await import('../models/VendorDetails')).default;
+      await VendorDetails.findOneAndUpdate(
+        { vendor_id: fulfiller_id },
+        { $addToSet: { assignedSubcategories: subCategory.trim() } },
+        { new: true }
+      );
+      console.log(`[upsertCategoryMapping] ✅ Added '${subCategory.trim()}' to ${fulfiller.name}'s assignedSubcategories`);
+    }
+
+    console.log(`[upsertCategoryMapping] ✅ Mapping saved: ${mainCategory} / ${subCategory || '*'} → ${fulfiller.name}`);
+
     res.status(200).json({
       success: true,
       message: 'Category mapping saved successfully',
@@ -1233,6 +1249,17 @@ export const deleteCategoryMapping = async (
     if (!mapping) {
       return next(new AppError('Mapping not found', 404));
     }
+
+    // ── Issue 3 Fix: Remove subcategory from VendorDetails.assignedSubcategories ──
+    if (mapping.subCategory) {
+      const VendorDetails = (await import('../models/VendorDetails')).default;
+      await VendorDetails.findOneAndUpdate(
+        { vendor_id: mapping.fulfiller_id },
+        { $pull: { assignedSubcategories: mapping.subCategory } }
+      );
+      console.log(`[deleteCategoryMapping] ✅ Removed '${mapping.subCategory}' from fulfiller ${mapping.fulfiller_id}'s assignedSubcategories`);
+    }
+
     res.status(200).json({ success: true, message: 'Mapping deleted' });
   } catch (err: any) {
     next(err);
@@ -1259,6 +1286,52 @@ export const toggleCategoryMapping = async (
       success: true,
       message: `Mapping ${mapping.isActive ? 'activated' : 'deactivated'}`,
       data: mapping,
+    });
+  } catch (err: any) {
+    next(err);
+  }
+};
+
+/**
+ * Sync all active CategoryFulfillerMapping entries → VendorDetails.assignedSubcategories
+ * One-time migration endpoint for existing fulfillers.
+ */
+export const syncCategoryMappings = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const mappings = await CategoryFulfillerMapping.find({
+      isActive: true,
+      subCategory: { $ne: null },
+    });
+
+    const grouped: Record<string, string[]> = {};
+    mappings.forEach((m: any) => {
+      const key = m.fulfiller_id.toString();
+      if (!grouped[key]) grouped[key] = [];
+      if (!grouped[key].includes(m.subCategory)) {
+        grouped[key].push(m.subCategory);
+      }
+    });
+
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+
+    let syncedCount = 0;
+    for (const [fulfillerId, subcategories] of Object.entries(grouped)) {
+      await VendorDetails.findOneAndUpdate(
+        { vendor_id: fulfillerId },
+        { $addToSet: { assignedSubcategories: { $each: subcategories } } },
+        { upsert: false }
+      );
+      syncedCount++;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Synced ${mappings.length} mappings across ${syncedCount} fulfillers`,
+      data: { syncedFulfillers: syncedCount, totalMappings: mappings.length },
     });
   } catch (err: any) {
     next(err);

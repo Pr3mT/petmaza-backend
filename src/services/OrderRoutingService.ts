@@ -238,7 +238,21 @@ export class OrderRoutingService {
         vendor_id: { $in: fulfillerIds },
       }).lean();
 
-      // NEW: Group items by SUBCATEGORY (not by individual fulfiller)
+      // ── Issue 3 Fix: Build a subcategory→fulfiller map from CategoryFulfillerMapping
+      // as a fallback so orders route correctly even when VendorDetails.assignedSubcategories
+      // hasn't been populated yet (e.g., existing fulfillers before the sync fix).
+      const CategoryFulfillerMapping = (await import('../models/CategoryFulfillerMapping')).default;
+      const activeMappings = await CategoryFulfillerMapping.find({ isActive: true }).lean();
+      // subcategory (lowercase) → fulfiller_id string
+      const mappingFulfillerMap = new Map<string, string>();
+      for (const m of activeMappings) {
+        if (m.subCategory) {
+          mappingFulfillerMap.set(m.subCategory.toLowerCase(), m.fulfiller_id.toString());
+        }
+      }
+      logger.info(`[routeNormalOrderToMyShop] CategoryFulfillerMapping has ${mappingFulfillerMap.size} active subcategory mappings`);
+
+      // Group items by SUBCATEGORY (not by individual fulfiller)
       // Multiple fulfillers can compete for same subcategory
       const subcategoryItemsMap = new Map(); // subcategory -> { items, eligibleFulfillers }
       const unassignedItems = [];
@@ -254,16 +268,29 @@ export class OrderRoutingService {
 
         const subcategory = product.subCategory;
 
-        // Find ALL fulfillers who can handle this subcategory
+        // Find ALL fulfillers who can handle this subcategory.
+        // Primary: VendorDetails.assignedSubcategories (live, synced by upsertCategoryMapping)
+        // Fallback: CategoryFulfillerMapping (admin-configured)
         const eligibleFulfillers = [];
         for (const fulfiller of warehouseFulfillers) {
           const details = vendorDetailsArray.find(
             vd => vd.vendor_id.toString() === fulfiller._id.toString()
           );
 
-          if (details && details.assignedSubcategories && 
-              details.assignedSubcategories.includes(subcategory)) {
+          const handlesViaVendorDetails =
+            details &&
+            details.assignedSubcategories &&
+            details.assignedSubcategories.includes(subcategory);
+
+          // Fallback: check CategoryFulfillerMapping
+          const handlesViaMapping =
+            mappingFulfillerMap.get(subcategory.toLowerCase()) === fulfiller._id.toString();
+
+          if (handlesViaVendorDetails || handlesViaMapping) {
             eligibleFulfillers.push(fulfiller);
+            if (!handlesViaVendorDetails && handlesViaMapping) {
+              logger.info(`[routeNormalOrderToMyShop] ⚡ Fallback: routing ${subcategory} to ${fulfiller.name} via CategoryFulfillerMapping`);
+            }
           }
         }
 

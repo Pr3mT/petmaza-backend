@@ -9,6 +9,9 @@ const router = express.Router();
 // All routes require authentication
 router.use(protect);
 
+// Get products assigned to fulfiller
+router.get('/products', warehouseFulfillerController.getWarehouseFulfillerProducts);
+
 // Get assigned orders
 router.get('/orders', warehouseFulfillerController.getWarehouseFulfillerOrders);
 

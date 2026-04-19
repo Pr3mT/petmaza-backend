@@ -31,7 +31,22 @@ export const getWarehouseFulfillerOrders = async (
     const VendorDetails = (await import('../models/VendorDetails')).default;
     const vendorDetails = await VendorDetails.findOne({ vendor_id: fulfiller._id });
 
-    if (!vendorDetails || !vendorDetails.assignedSubcategories || vendorDetails.assignedSubcategories.length === 0) {
+    let assignedSubcategories: string[] = vendorDetails?.assignedSubcategories || [];
+
+    // Fallback: if VendorDetails has no subcategories, derive them from CategoryFulfillerMapping
+    if (assignedSubcategories.length === 0) {
+      logger.info(`[getWarehouseFulfillerOrders] No assignedSubcategories in VendorDetails - checking CategoryFulfillerMapping`);
+      const CategoryFulfillerMapping = (await import('../models/CategoryFulfillerMapping')).default;
+      const mappings = await CategoryFulfillerMapping.find({
+        fulfiller_id: fulfiller._id,
+        isActive: true,
+        subCategory: { $ne: null },
+      });
+      assignedSubcategories = mappings.map((m: any) => m.subCategory);
+      logger.info(`[getWarehouseFulfillerOrders] CategoryFulfillerMapping fallback: ${assignedSubcategories.length} subcategories:`, assignedSubcategories);
+    }
+
+    if (assignedSubcategories.length === 0) {
       logger.info(`[getWarehouseFulfillerOrders] Fulfiller ${fulfiller._id} has no assigned subcategories`);
       return res.status(200).json({
         success: true,
@@ -39,7 +54,6 @@ export const getWarehouseFulfillerOrders = async (
       });
     }
 
-    const assignedSubcategories = vendorDetails.assignedSubcategories;
     logger.info(`[getWarehouseFulfillerOrders] Fulfiller ${fulfiller.name} assigned subcategories:`, assignedSubcategories);
 
     // Get all products in assigned subcategories
@@ -151,12 +165,24 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
     const VendorDetails = (await import('../models/VendorDetails')).default;
     const vendorDetails = await VendorDetails.findOne({ vendor_id: fulfiller._id });
 
-    if (!vendorDetails || !vendorDetails.assignedSubcategories || vendorDetails.assignedSubcategories.length === 0) {
+    let assignedSubcategories: string[] = vendorDetails?.assignedSubcategories || [];
+
+    // Fallback: derive subcategories from CategoryFulfillerMapping
+    if (assignedSubcategories.length === 0) {
+      const CategoryFulfillerMapping = (await import('../models/CategoryFulfillerMapping')).default;
+      const mappings = await CategoryFulfillerMapping.find({
+        fulfiller_id: fulfiller._id,
+        isActive: true,
+        subCategory: { $ne: null },
+      });
+      assignedSubcategories = mappings.map((m: any) => m.subCategory);
+    }
+
+    if (assignedSubcategories.length === 0) {
       logger.warn('[acceptOrder] Fulfiller has no assigned subcategories');
       return next(new AppError('You have no assigned subcategories. Please contact admin.', 403));
     }
 
-    const assignedSubcategories = vendorDetails.assignedSubcategories;
     logger.info(`[acceptOrder] Fulfiller ${fulfiller.name} assigned subcategories:`, assignedSubcategories);
 
     // Find order and populate products
@@ -680,6 +706,70 @@ export const saveMarketCollection = async (
     });
   } catch (error: any) {
     logger.error('[saveMarketCollection] Error:', error);
+    next(error);
+  }
+};
+
+/**
+ * Get products assigned to warehouse fulfiller
+ * Returns products where addedBy = fulfiller._id (assigned by admin via category mapping)
+ * Falls back to products in assigned subcategories if addedBy is not set
+ */
+export const getWarehouseFulfillerProducts = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const fulfiller = req.user;
+
+    if (fulfiller.vendorType !== 'WAREHOUSE_FULFILLER') {
+      return next(new AppError('Access denied. Only warehouse fulfillers can access this.', 403));
+    }
+
+    const Product = (await import('../models/Product')).default;
+
+    // Primary: products explicitly assigned to this fulfiller by admin
+    let products = await Product.find({ addedBy: fulfiller._id, isActive: true })
+      .select('_id name mainCategory subCategory mrp sellingPrice hasVariants variants images isActive inStock createdAt')
+      .sort({ createdAt: -1 });
+
+    // Fallback: if no products by addedBy, use assignedSubcategories / CategoryFulfillerMapping
+    if (products.length === 0) {
+      logger.info(`[getWarehouseFulfillerProducts] No products via addedBy - checking subcategory assignment`);
+
+      const VendorDetails = (await import('../models/VendorDetails')).default;
+      const vendorDetails = await VendorDetails.findOne({ vendor_id: fulfiller._id });
+      let assignedSubcategories: string[] = vendorDetails?.assignedSubcategories || [];
+
+      if (assignedSubcategories.length === 0) {
+        const CategoryFulfillerMapping = (await import('../models/CategoryFulfillerMapping')).default;
+        const mappings = await CategoryFulfillerMapping.find({
+          fulfiller_id: fulfiller._id,
+          isActive: true,
+          subCategory: { $ne: null },
+        });
+        assignedSubcategories = mappings.map((m: any) => m.subCategory);
+      }
+
+      if (assignedSubcategories.length > 0) {
+        products = await Product.find({
+          subCategory: { $in: assignedSubcategories },
+          isActive: true,
+        })
+          .select('_id name mainCategory subCategory mrp sellingPrice hasVariants variants images isActive inStock createdAt')
+          .sort({ createdAt: -1 });
+      }
+    }
+
+    logger.info(`[getWarehouseFulfillerProducts] Returning ${products.length} products for ${fulfiller.name}`);
+
+    res.status(200).json({
+      success: true,
+      data: { products },
+    });
+  } catch (error: any) {
+    logger.error('[getWarehouseFulfillerProducts] Error:', error);
     next(error);
   }
 };

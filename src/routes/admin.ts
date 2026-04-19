@@ -23,6 +23,7 @@ import {
   upsertCategoryMapping,
   deleteCategoryMapping,
   toggleCategoryMapping,
+  syncCategoryMappings,
 } from '../controllers/adminController';
 import {
   getAnalytics,
@@ -84,6 +85,7 @@ router.post('/vendor-weekly-billing/mark-paid', markWeeklyInvoicePaid);
 // Category → Fulfiller mapping routes
 router.get('/category-mappings', getCategoryMappings);
 router.post('/category-mappings', upsertCategoryMapping);
+router.post('/category-mappings/sync', syncCategoryMappings);
 router.delete('/category-mappings/:id', deleteCategoryMapping);
 router.patch('/category-mappings/:id/toggle', toggleCategoryMapping);
 
