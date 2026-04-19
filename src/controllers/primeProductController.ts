@@ -247,6 +247,22 @@ export const toggleAvailability = async (
     listing.isAvailable = !listing.isAvailable;
     await listing.save();
 
+    // Sync the main Product.inStock so customers see the "Out of Stock" badge
+    if (listing.product_id) {
+      const updatedProduct = await Product.findByIdAndUpdate(
+        listing.product_id,
+        { $set: { inStock: listing.isAvailable } },
+        { new: true }
+      );
+      logger.info(`[PrimeProduct] Synced Product ${listing.product_id} inStock=${updatedProduct?.inStock} (found=${!!updatedProduct})`);
+    } else {
+      logger.warn(`[PrimeProduct] Listing ${id} has no product_id — cannot sync inStock`);
+    }
+
+    // Clear product cache so customers immediately see the updated badge
+    clearCache('/products');
+    clearCache('/prime-products');
+
     logger.info(`[PrimeProduct] Listing ${id} availability toggled to ${listing.isAvailable}`);
 
     res.status(200).json({
