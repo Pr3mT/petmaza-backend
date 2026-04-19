@@ -244,7 +244,37 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
     const existingProduct = await Product.findById(req.params.id);
     const wasInactive = existingProduct && !existingProduct.isActive;
     const wasOutOfStock = existingProduct && existingProduct.inStock === false;
-    
+
+    // ── When admin changes subCategory, re-assign addedBy to the correct fulfiller ──
+    // This ensures the product appears for the RIGHT WAREHOUSE_FULFILLER and disappears
+    // from the old one's list as soon as the category is updated.
+    if (user.role === 'admin' && req.body.subCategory) {
+      const newSubCat = req.body.subCategory.trim();
+      const oldSubCat = (existingProduct as any)?.subCategory || '';
+      if (newSubCat.toLowerCase() !== oldSubCat.toLowerCase()) {
+        const newMainCat = (req.body.mainCategory || (existingProduct as any)?.mainCategory || '').trim();
+        const newMapping =
+          await CategoryFulfillerMapping.findOne({
+            mainCategory: newMainCat,
+            subCategory: newSubCat,
+            isActive: true,
+          }) ||
+          await CategoryFulfillerMapping.findOne({
+            mainCategory: newMainCat,
+            subCategory: null,
+            isActive: true,
+          });
+        if (newMapping) {
+          req.body.addedBy = newMapping.fulfiller_id;
+          console.log(`[updateProduct] ✅ subCategory changed '${oldSubCat}' -> '${newSubCat}', re-assigning addedBy to fulfiller ${newMapping.fulfiller_id}`);
+        } else {
+          // No fulfiller mapped for this subcategory — clear ownership
+          req.body.addedBy = null;
+          console.log(`[updateProduct] ⚠️ No fulfiller mapped for '${newSubCat}', clearing addedBy`);
+        }
+      }
+    }
+
     const product = await ProductService.updateProduct(req.params.id, req.body);
     
     // If product was inactive/out-of-stock and now is active/in-stock, notify waiting customers

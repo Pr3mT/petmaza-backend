@@ -3,6 +3,7 @@ import VendorProductPricing from '../models/VendorProductPricing';
 import Product from '../models/Product';
 import Order from '../models/Order';
 import User from '../models/User';
+import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import { notifyWaitingCustomers } from './productNotificationController';
@@ -93,14 +94,43 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
       });
     }
 
-    // MY_SHOP and WAREHOUSE vendors
-    // WAREHOUSE_FULFILLER vendors only see products they created (addedBy)
-    // MY_SHOP vendors see ALL non-PRIME products
-    const productFilter: any = { isPrime: false };
+    // WAREHOUSE_FULFILLER sees only their own products:
+    //   1. Products explicitly assigned (addedBy = vendor._id)
+    //   2. OR products whose subCategory is in their VendorDetails.assignedSubcategories
+    // MY_SHOP sees all non-prime products.
+    let productFilter: any;
+
     if (vendor.vendorType === 'WAREHOUSE_FULFILLER') {
-      productFilter.addedBy = vendor._id;
-      console.log(`🔒 WAREHOUSE_FULFILLER filter: addedBy=${vendor._id}, name=${vendor.name}`);
+      // Collect subcategories assigned to this fulfiller
+      const vendorDetails = await VendorDetails.findOne({ vendor_id: vendor._id });
+      const assignedSubcategories: string[] = vendorDetails?.assignedSubcategories || [];
+
+      // Get IDs of ALL warehouse fulfillers so we can exclude products already owned by another
+      const allFulfillers = await User.find({ vendorType: 'WAREHOUSE_FULFILLER' }).select('_id');
+      const allFulfillerIds = allFulfillers.map((f: any) => f._id);
+
+      if (assignedSubcategories.length > 0) {
+        // NEVER show prime products to a WAREHOUSE_FULFILLER.
+        // Show:
+        //   a) Non-prime products explicitly assigned to THIS fulfiller (addedBy = vendor._id)
+        //   b) Non-prime products not yet owned by ANY fulfiller, whose subCategory matches
+        productFilter = {
+          isPrime: false,
+          $or: [
+            { addedBy: vendor._id },
+            {
+              addedBy: { $nin: allFulfillerIds },
+              subCategory: { $in: assignedSubcategories },
+            },
+          ],
+        };
+      } else {
+        // No subcategories assigned — show only explicitly owned non-prime products
+        productFilter = { isPrime: false, addedBy: vendor._id };
+      }
+      console.log(`🔓 WAREHOUSE_FULFILLER ${vendor.name} - assignedSubcategories: ${assignedSubcategories.length}`);
     } else {
+      productFilter = { isPrime: false };
       console.log(`🔓 ${vendor.vendorType} vendor - showing all non-prime products`);
     }
 
@@ -152,21 +182,31 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
               : undefined,
           });
         } else {
+          let needsSave = false;
           // Only initialize variantStock if product has variants but vendor pricing doesn't
           if (!vendorProduct.variantStock && product.hasVariants && product.variants?.length > 0) {
-            // Initialize variantStock if product has variants but vendor doesn't
-              vendorProduct.variantStock = product.variants.map((variant: any) => ({
-                weight: variant.weight,
-                unit: variant.unit,
-                size: variant.size,
-                displayWeight: variant.displayWeight,
-                availableStock: 0,
-                totalSoldWebsite: 0,
-                totalSoldStore: 0,
-                isActive: variant.isActive,
-              }));
-            await vendorProduct.save();
+            vendorProduct.variantStock = product.variants.map((variant: any) => ({
+              weight: variant.weight,
+              unit: variant.unit,
+              size: variant.size,
+              displayWeight: variant.displayWeight,
+              availableStock: 0,
+              totalSoldWebsite: 0,
+              totalSoldStore: 0,
+              isActive: variant.isActive,
+            }));
+            needsSave = true;
           }
+          // For MY_SHOP and WAREHOUSE_FULFILLER, sync isActive from product.inStock so the badge is always correct
+          const isMyShopVendor = ['WAREHOUSE', 'MY_SHOP', 'WAREHOUSE_FULFILLER'].includes(vendor.vendorType);
+          if (isMyShopVendor && !product.hasVariants) {
+            const expectedActive = product.inStock !== false;
+            if (vendorProduct.isActive !== expectedActive) {
+              vendorProduct.isActive = expectedActive;
+              needsSave = true;
+            }
+          }
+          if (needsSave) await vendorProduct.save();
         }
 
         // Populate product_id with full product data
@@ -483,16 +523,22 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
       return next(new AppError('Please provide a valid status (true/false)', 400));
     }
 
-    // Check if this vendor is MY SHOP (main warehouse)
+    // Check if this vendor is MY SHOP or WAREHOUSE_FULFILLER (both update Product directly)
     const vendor = await User.findById(req.user._id);
-    const isMyShop = vendor && ['WAREHOUSE', 'MY_SHOP'].includes(vendor.vendorType);
+    const isMyShop = vendor && ['WAREHOUSE', 'MY_SHOP', 'WAREHOUSE_FULFILLER'].includes(vendor.vendorType);
 
     if (isMyShop) {
-      // For MY SHOP, directly update the product's variant isActive status
+      // For MY_SHOP / WAREHOUSE_FULFILLER, directly update the product's inStock / variant status
       const product = await Product.findById(id);
       
       if (!product) {
         return next(new AppError('Product not found', 404));
+      }
+
+      // WAREHOUSE_FULFILLER can only update products they own
+      if (vendor.vendorType === 'WAREHOUSE_FULFILLER' &&
+          product.addedBy?.toString() !== vendor._id.toString()) {
+        return next(new AppError('You can only update products you own', 403));
       }
 
       // Check if this is a variant product
@@ -534,6 +580,12 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
         // Clear product cache so customers see updated stock status immediately
         clearCache('/api/products');
         clearCache('/products');
+
+        // Also sync VendorProductPricing.isActive so the vendor list badge reflects correctly
+        await VendorProductPricing.updateMany(
+          { product_id: id },
+          { isActive }
+        );
       }
 
       await product.populate('brand_id', 'name _id');
