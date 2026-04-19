@@ -161,53 +161,63 @@ productSchema.pre('save', function (next) {
   // Handle variants - prices are primary, calculate percentages from them
   if (this.hasVariants && this.variants && this.variants.length > 0) {
     this.variants.forEach((variant: any) => {
+      // Always round prices to integers
+      if (variant.mrp !== undefined) variant.mrp = Math.round(variant.mrp);
       const mrp = variant.mrp;
       if (!mrp) return;
 
       if (variant.sellingPrice !== undefined && variant.sellingPrice !== null) {
-        // Price is primary: calculate percentage and discount from price
+        // Price is primary: round then calculate percentage and discount from price
+        variant.sellingPrice = Math.round(variant.sellingPrice);
         variant.sellingPercentage = mrp > 0 ? Math.round((variant.sellingPrice / mrp) * 100 * 100) / 100 : 0;
-        variant.discount = mrp > 0 ? Math.round(((mrp - variant.sellingPrice) / mrp) * 100 * 100) / 100 : 0;
+        variant.discount = mrp > 0 ? Math.round(((mrp - variant.sellingPrice) / mrp) * 100) : 0;
       } else if (variant.sellingPercentage !== undefined) {
         // Fallback: calculate price from percentage
-        variant.sellingPrice = Math.round(mrp * (variant.sellingPercentage / 100) * 100) / 100;
-        variant.discount = mrp > 0 ? Math.round(((mrp - variant.sellingPrice) / mrp) * 100 * 100) / 100 : 0;
+        variant.sellingPrice = Math.round(mrp * (variant.sellingPercentage / 100));
+        variant.discount = mrp > 0 ? Math.round(((mrp - variant.sellingPrice) / mrp) * 100) : 0;
       }
 
       if (variant.purchasePrice !== undefined && variant.purchasePrice !== null) {
+        variant.purchasePrice = Math.round(variant.purchasePrice);
         variant.purchasePercentage = mrp > 0 ? Math.round((variant.purchasePrice / mrp) * 100 * 100) / 100 : 0;
       } else if (variant.purchasePercentage !== undefined) {
-        variant.purchasePrice = Math.round(mrp * (variant.purchasePercentage / 100) * 100) / 100;
+        variant.purchasePrice = Math.round(mrp * (variant.purchasePercentage / 100));
       }
     });
   }
 
   // Handle single product (no variants)
+  const rawMrp = this.get('mrp') as number;
+  if (rawMrp) this.set('mrp', Math.round(rawMrp));
   const mrp = this.get('mrp') as number;
   if (mrp && !this.hasVariants) {
-    const sellingPrice = this.get('sellingPrice') as number;
-    const purchasePrice = this.get('purchasePrice') as number;
+    const rawSP = this.get('sellingPrice') as number;
+    const rawPP = this.get('purchasePrice') as number;
+    const sellingPrice = rawSP !== undefined && rawSP !== null ? Math.round(rawSP) : undefined;
+    const purchasePrice = rawPP !== undefined && rawPP !== null ? Math.round(rawPP) : undefined;
 
     if (sellingPrice !== undefined && sellingPrice !== null) {
-      // Price is primary: calculate percentage and discount
+      // Price is primary: round then calculate percentage and discount
+      this.set('sellingPrice', sellingPrice);
       this.set('sellingPercentage', mrp > 0 ? Math.round((sellingPrice / mrp) * 100 * 100) / 100 : 0);
-      this.set('discount', mrp > 0 ? Math.round(((mrp - sellingPrice) / mrp) * 100 * 100) / 100 : 0);
+      this.set('discount', mrp > 0 ? Math.round(((mrp - sellingPrice) / mrp) * 100) : 0);
     } else {
       // Fallback: calculate price from percentage
       const sellingPercentage = this.get('sellingPercentage') as number;
       if (sellingPercentage !== undefined) {
-        const sp = Math.round(mrp * (sellingPercentage / 100) * 100) / 100;
+        const sp = Math.round(mrp * (sellingPercentage / 100));
         this.set('sellingPrice', sp);
-        this.set('discount', mrp > 0 ? Math.round(((mrp - sp) / mrp) * 100 * 100) / 100 : 0);
+        this.set('discount', mrp > 0 ? Math.round(((mrp - sp) / mrp) * 100) : 0);
       }
     }
 
     if (purchasePrice !== undefined && purchasePrice !== null) {
+      this.set('purchasePrice', purchasePrice);
       this.set('purchasePercentage', mrp > 0 ? Math.round((purchasePrice / mrp) * 100 * 100) / 100 : 0);
     } else {
       const purchasePercentage = this.get('purchasePercentage') as number;
       if (purchasePercentage !== undefined) {
-        this.set('purchasePrice', Math.round(mrp * (purchasePercentage / 100) * 100) / 100);
+        this.set('purchasePrice', Math.round(mrp * (purchasePercentage / 100)));
       }
     }
   }
@@ -220,45 +230,56 @@ productSchema.pre('findOneAndUpdate', function (next) {
   const update = this.getUpdate() as any;
   
   // Handle variant products
-  if (update.hasVariants || update.variants) {
-    if (update.variants && Array.isArray(update.variants)) {
-      update.variants = update.variants.map((variant: any) => {
+  if (update.hasVariants || update.variants || (update.$set && update.$set.variants)) {
+    const variants = (update.$set && update.$set.variants) ? update.$set.variants : update.variants;
+    if (variants && Array.isArray(variants)) {
+      const rounded = variants.map((variant: any) => {
+        if (variant.mrp !== undefined) variant.mrp = Math.round(variant.mrp);
         const mrp = variant.mrp;
         if (!mrp) return variant;
 
         if (variant.sellingPrice !== undefined && variant.sellingPrice !== null) {
+          variant.sellingPrice = Math.round(variant.sellingPrice);
           variant.sellingPercentage = mrp > 0 ? Math.round((variant.sellingPrice / mrp) * 100 * 100) / 100 : 0;
-          variant.discount = Math.round(((mrp - variant.sellingPrice) / mrp) * 100 * 100) / 100;
+          variant.discount = mrp > 0 ? Math.round(((mrp - variant.sellingPrice) / mrp) * 100) : 0;
         } else if (variant.sellingPercentage !== undefined) {
-          variant.sellingPrice = Math.round(mrp * (variant.sellingPercentage / 100) * 100) / 100;
-          variant.discount = Math.round(((mrp - variant.sellingPrice) / mrp) * 100 * 100) / 100;
+          variant.sellingPrice = Math.round(mrp * (variant.sellingPercentage / 100));
+          variant.discount = mrp > 0 ? Math.round(((mrp - variant.sellingPrice) / mrp) * 100) : 0;
         }
 
         if (variant.purchasePrice !== undefined && variant.purchasePrice !== null) {
+          variant.purchasePrice = Math.round(variant.purchasePrice);
           variant.purchasePercentage = mrp > 0 ? Math.round((variant.purchasePrice / mrp) * 100 * 100) / 100 : 0;
         } else if (variant.purchasePercentage !== undefined) {
-          variant.purchasePrice = Math.round(mrp * (variant.purchasePercentage / 100) * 100) / 100;
+          variant.purchasePrice = Math.round(mrp * (variant.purchasePercentage / 100));
         }
 
         return variant;
       });
+      if (update.$set && update.$set.variants) {
+        update.$set.variants = rounded;
+      } else {
+        update.variants = rounded;
+      }
     }
   } else {
-    const mrp = update.mrp;
+    const mrp = update.mrp ? Math.round(update.mrp) : undefined;
     if (mrp) {
+      update.mrp = mrp;
       if (update.sellingPrice !== undefined && update.sellingPrice !== null) {
+        update.sellingPrice = Math.round(update.sellingPrice);
         update.sellingPercentage = mrp > 0 ? Math.round((update.sellingPrice / mrp) * 100 * 100) / 100 : 0;
-        update.discount = Math.round(((mrp - update.sellingPrice) / mrp) * 100 * 100) / 100;
+        update.discount = mrp > 0 ? Math.round(((mrp - update.sellingPrice) / mrp) * 100) : 0;
       } else if (update.sellingPercentage !== undefined) {
-        const sp = Math.round(mrp * (update.sellingPercentage / 100) * 100) / 100;
-        update.sellingPrice = sp;
-        update.discount = Math.round(((mrp - sp) / mrp) * 100 * 100) / 100;
+        update.sellingPrice = Math.round(mrp * (update.sellingPercentage / 100));
+        update.discount = mrp > 0 ? Math.round(((mrp - update.sellingPrice) / mrp) * 100) : 0;
       }
 
       if (update.purchasePrice !== undefined && update.purchasePrice !== null) {
+        update.purchasePrice = Math.round(update.purchasePrice);
         update.purchasePercentage = mrp > 0 ? Math.round((update.purchasePrice / mrp) * 100 * 100) / 100 : 0;
       } else if (update.purchasePercentage !== undefined) {
-        update.purchasePrice = Math.round(mrp * (update.purchasePercentage / 100) * 100) / 100;
+        update.purchasePrice = Math.round(mrp * (update.purchasePercentage / 100));
       }
     }
   }

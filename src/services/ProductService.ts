@@ -281,15 +281,18 @@ export class ProductService {
       if (data.variants && Array.isArray(data.variants)) {
         // Calculate prices for all variants (including single variant)
         data.variants = data.variants.map((variant: any) => {
+          if (variant.mrp !== undefined) variant.mrp = Math.round(variant.mrp);
           if (variant.mrp && variant.sellingPercentage !== undefined) {
               const sp = variant.mrp * (variant.sellingPercentage / 100);
-              variant.sellingPrice = Math.round(sp * 100) / 100;
-              variant.discount = Math.round(((variant.mrp - variant.sellingPrice) / variant.mrp) * 100 * 100) / 100;
+              variant.sellingPrice = Math.round(sp);
+              variant.discount = Math.round(((variant.mrp - variant.sellingPrice) / variant.mrp) * 100);
             }
+          if (variant.sellingPrice !== undefined) variant.sellingPrice = Math.round(variant.sellingPrice);
             if (variant.mrp && variant.purchasePercentage !== undefined) {
               const pp = variant.mrp * (variant.purchasePercentage / 100);
-              variant.purchasePrice = Math.round(pp * 100) / 100;
+              variant.purchasePrice = Math.round(pp);
             }
+          if (variant.purchasePrice !== undefined) variant.purchasePrice = Math.round(variant.purchasePrice);
           return variant;
         });
         
@@ -334,14 +337,17 @@ export class ProductService {
     // Only calculate if we have valid values
     if (mrp && sellingPercentage !== undefined) {
       const sp = mrp * (sellingPercentage / 100);
-      data.sellingPrice = Math.round(sp * 100) / 100;
-      data.discount = Math.round(((mrp - data.sellingPrice) / mrp) * 100 * 100) / 100;
+      data.sellingPrice = Math.round(sp);
+      data.discount = Math.round(((mrp - data.sellingPrice) / mrp) * 100);
     }
+    if (data.sellingPrice !== undefined) data.sellingPrice = Math.round(data.sellingPrice);
+    if (mrp) data.mrp = Math.round(mrp);
 
     if (mrp && purchasePercentage !== undefined) {
       const pp = mrp * (purchasePercentage / 100);
-      data.purchasePrice = Math.round(pp * 100) / 100;
+      data.purchasePrice = Math.round(pp);
     }
+    if (data.purchasePrice !== undefined) data.purchasePrice = Math.round(data.purchasePrice);
 
     const product = await Product.findByIdAndUpdate(id, data, {
       new: true,
