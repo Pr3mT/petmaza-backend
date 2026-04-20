@@ -535,11 +535,7 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
         return next(new AppError('Product not found', 404));
       }
 
-      // WAREHOUSE_FULFILLER can only update products they own
-      if (vendor.vendorType === 'WAREHOUSE_FULFILLER' &&
-          product.addedBy?.toString() !== vendor._id.toString()) {
-        return next(new AppError('You can only update products you own', 403));
-      }
+      // WAREHOUSE_FULFILLER can update status of any product visible in their assigned listings
 
       // Check if this is a variant product
       if ((size !== undefined) || (weight !== undefined && unit !== undefined)) {
