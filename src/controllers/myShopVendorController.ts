@@ -3,6 +3,7 @@ import { AuthRequest } from '../middlewares/auth';
 import Order from '../models/Order';
 import User from '../models/User';
 import { AppError } from '../middlewares/errorHandler';
+import { sanitizeOrdersForVendor, sanitizeOrderForVendor } from '../utils/vendorOrderSanitizer';
 import { 
   sendOrderAcceptedEmail, 
   sendOrderShippedEmail,
@@ -31,7 +32,7 @@ export const getMyShopOrders = async (req: AuthRequest, res: Response, next: Nex
 
     res.status(200).json({
       success: true,
-      data: { orders },
+      data: { orders: sanitizeOrdersForVendor(orders.map(o => o.toObject())) },
     });
   } catch (error: any) {
     next(error);

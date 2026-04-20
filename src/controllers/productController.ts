@@ -277,15 +277,23 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
 
     const product = await ProductService.updateProduct(req.params.id, req.body);
     
-    // If product was inactive/out-of-stock and now is active/in-stock, notify waiting customers
-    if ((wasInactive && product.isActive) || (wasOutOfStock && product.inStock !== false)) {
-      console.log('🔔 Product became active - checking for waiting customers');
-      // Run notification in background (don't await)
-      notifyWaitingCustomers(
-        product._id.toString(),
-        product.name,
-        product.images && product.images.length > 0 ? product.images[0] : undefined
-      ).catch(err => console.error('Error notifying customers:', err));
+    // Detect stock state change: out-of-stock → in-stock (via either isActive or inStock flag)
+    const nowActive    = !!(wasInactive    && product.isActive);
+    const nowInStock   = !!(wasOutOfStock  && product.inStock !== false);
+
+    if (nowActive || nowInStock) {
+      const reason = nowActive ? 'isActive false→true' : 'inStock false→true';
+      console.log(`🔔 [Notify Me] Product "${product.name}" became available (${reason}) — sending notifications`);
+      try {
+        await notifyWaitingCustomers(
+          product._id.toString(),
+          product.name,
+          product.images && product.images.length > 0 ? product.images[0] : undefined
+        );
+      } catch (err) {
+        // Log but don't fail the product update response
+        console.error('❌ [Notify Me] Error during customer notification:', err);
+      }
     }
     
     // Clear product cache so customers see the updated product immediately

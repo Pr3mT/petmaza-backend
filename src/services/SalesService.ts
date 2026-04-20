@@ -16,7 +16,7 @@ export class SalesService {
     order_id?: string; // For website sales
     sellingPrice?: number; // For website sales
     notes?: string; // For store sales
-    selectedVariant?: { weight: number; unit: string; displayWeight?: string }; // For variant products
+    selectedVariant?: { weight?: number; unit?: string; size?: string; displayWeight?: string }; // For variant products
   }) {
     const {
       vendor_id,
@@ -131,7 +131,7 @@ export class SalesService {
     product_id: string;
     quantity: number;
     order_id?: string;
-    selectedVariant?: { weight: number; unit: string };
+    selectedVariant?: { weight?: number; unit?: string; size?: string };
   }) {
     const { vendor_id, product_id, quantity, order_id, selectedVariant } = params;
 

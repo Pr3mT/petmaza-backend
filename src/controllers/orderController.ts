@@ -10,6 +10,7 @@ import Coupon from '../models/Coupon';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
+import { sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 import {
   sendOrderConfirmationEmail,
   sendOrderStatusUpdateEmail,
@@ -230,6 +231,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       order.shippingCharges = Math.round(charges.shippingCharges / orders.length);
       order.platformFee = Math.round(charges.platformFee / orders.length);
       order.total = order.subtotalBeforeCharges - order.discountAmount + order.shippingCharges + order.platformFee;
+      order.grandTotal = order.total;
       await order.save();
       
       // Debug logging  
@@ -610,7 +612,7 @@ export const getVendorOrders = async (req: AuthRequest, res: Response, next: Nex
     
     res.status(200).json({
       success: true,
-      data: { orders },
+      data: { orders: sanitizeOrdersForVendor(orders.map(o => o.toObject())) },
     });
   } catch (error: any) {
     console.error('[getVendorOrders] Error:', error);

@@ -6,6 +6,57 @@ import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import logger from '../config/logger';
 import { sendOrderStatusUpdateEmail, sendOrderRejectionEmail } from '../services/emailer';
+import { sanitizeOrderForVendor, sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
+
+/**
+ * Fix orders where purchasePrice was stored as 0 (e.g., prime listing had no purchasePrice set).
+ * Falls back to PrimeProduct listing price, then Product.purchasePrice.
+ */
+async function enrichMissingPurchasePrices(orderObjects: any[], vendorId: string): Promise<any[]> {
+  return Promise.all(orderObjects.map(async (order) => {
+    if (!Array.isArray(order.items)) return order;
+
+    let needsRecalc = false;
+    const enrichedItems = await Promise.all(order.items.map(async (item: any) => {
+      if (item.purchasePrice && item.purchasePrice > 0) return item;
+
+      // purchasePrice is 0 or missing — look up from PrimeProduct listing first
+      const productId = item.product_id?._id?.toString() || item.product_id?.toString();
+      if (!productId) return item;
+
+      needsRecalc = true;
+
+      const primeListing = await PrimeProduct.findOne({
+        vendor_id: vendorId,
+        product_id: productId,
+        isActive: true,
+      }).select('purchasePrice').lean();
+
+      let price = primeListing?.purchasePrice || 0;
+
+      // Fall back to the product's own purchasePrice
+      if (!price && item.product_id && typeof item.product_id === 'object') {
+        price = (item.product_id as any).purchasePrice || 0;
+      }
+
+      if (!price) return item;
+
+      return {
+        ...item,
+        purchasePrice: price,
+        purchaseSubtotal: price * item.quantity,
+      };
+    }));
+
+    if (!needsRecalc) return order;
+
+    const totalPurchasePrice = enrichedItems.reduce(
+      (sum: number, i: any) => sum + (i.purchaseSubtotal || i.purchasePrice * i.quantity || 0), 0
+    );
+
+    return { ...order, items: enrichedItems, totalPurchasePrice };
+  }));
+}
 
 // Get Prime Vendor Orders
 export const getPrimeVendorOrders = async (
@@ -30,17 +81,22 @@ export const getPrimeVendorOrders = async (
 
     const orders = await Order.find(query)
       .populate('customer_id', 'name email phone')
-      .populate('items.product_id', 'name images')
+      .populate('items.product_id', 'name images purchasePrice')
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
 
     const total = await Order.countDocuments(query);
 
+    const rawOrders = await enrichMissingPurchasePrices(
+      orders.map(o => o.toObject()),
+      vendor_id.toString()
+    );
+
     res.status(200).json({
       success: true,
       data: {
-        orders,
+        orders: sanitizeOrdersForVendor(rawOrders),
         pagination: {
           currentPage: Number(page),
           totalPages: Math.ceil(total / Number(limit)),
@@ -71,16 +127,21 @@ export const getPrimeOrderDetails = async (
       isPrime: true,
     })
       .populate('customer_id', 'name email phone address')
-      .populate('items.product_id', 'name images mainCategory subCategory')
+      .populate('items.product_id', 'name images mainCategory subCategory purchasePrice')
       .populate('items.primeProduct_id');
 
     if (!order) {
       return next(new AppError('Order not found', 404));
     }
 
+    const [enriched] = await enrichMissingPurchasePrices(
+      [order.toObject()],
+      vendor_id.toString()
+    );
+
     res.status(200).json({
       success: true,
-      data: { order },
+      data: { order: sanitizeOrderForVendor(enriched) },
     });
   } catch (error: any) {
     logger.error('[PrimeVendor] Error fetching order details:', error);

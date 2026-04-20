@@ -25,8 +25,9 @@ export const registerForNotification = async (req: Request, res: Response, next:
       return next(new AppError('Product not found', 404));
     }
 
-    // Check if product is already in stock (use inStock field, fall back to isActive for legacy docs)
-    const productInStock = product.inStock !== undefined ? product.inStock !== false : product.isActive !== false;
+    // Product is in stock only if BOTH isActive and inStock are not false
+    // (admin marks products unavailable via isActive:false; inStock:false is set explicitly for stock-outs)
+    const productInStock = product.isActive !== false && product.inStock !== false;
     if (productInStock) {
       return res.status(200).json({
         success: true,
@@ -66,44 +67,47 @@ export const registerForNotification = async (req: Request, res: Response, next:
 };
 
 export const notifyWaitingCustomers = async (productId: string, productName: string, productImage?: string) => {
-  try {
-    // Find all customers waiting for this product who haven't been notified yet
-    const notifications = await ProductNotification.find({
-      product_id: productId,
-      isNotified: false,
-    });
+  // Find all customers waiting for this product who haven't been notified yet
+  const notifications = await ProductNotification.find({
+    product_id: productId,
+    isNotified: false,
+  });
 
-    if (notifications.length === 0) {
-      return;
-    }
-
-    console.log(`📧 Notifying ${notifications.length} customers about product: ${productName}`);
-
-    // Send emails to all waiting customers
-    const emailPromises = notifications.map(async (notification) => {
-      try {
-        await sendProductAvailableEmail({
-          email: notification.email,
-          name: notification.name || 'Customer',
-          productName,
-          productId,
-          productImage,
-        });
-
-        // Mark as notified
-        notification.isNotified = true;
-        notification.notifiedAt = new Date();
-        await notification.save();
-
-        console.log(`✅ Notified: ${notification.email}`);
-      } catch (error) {
-        console.error(`❌ Failed to notify ${notification.email}:`, error);
-      }
-    });
-
-    await Promise.allSettled(emailPromises);
-    console.log(`📬 Notification process completed for product: ${productName}`);
-  } catch (error) {
-    console.error('Error notifying waiting customers:', error);
+  if (notifications.length === 0) {
+    console.log(`📭 [Notify Me] No pending subscribers for product "${productName}" (${productId})`);
+    return;
   }
+
+  console.log(`📧 [Notify Me] Sending notifications to ${notifications.length} subscriber(s) for "${productName}"`);
+
+  let successCount = 0;
+  let failCount = 0;
+
+  // Send emails sequentially to avoid rate-limiting issues with ZeptoMail
+  for (const notification of notifications) {
+    try {
+      console.log(`📨 [Notify Me] Emailing: ${notification.email}`);
+      await sendProductAvailableEmail({
+        email: notification.email,
+        name: notification.name || 'Customer',
+        productName,
+        productId,
+        productImage,
+      });
+
+      // Mark as notified only after successful email delivery
+      notification.isNotified = true;
+      notification.notifiedAt = new Date();
+      await notification.save();
+
+      console.log(`✅ [Notify Me] Notified: ${notification.email}`);
+      successCount++;
+    } catch (error: any) {
+      console.error(`❌ [Notify Me] Failed to notify ${notification.email}:`, error?.message || error);
+      failCount++;
+      // Continue to next subscriber even if this one fails
+    }
+  }
+
+  console.log(`📬 [Notify Me] Done for "${productName}": ${successCount} sent, ${failCount} failed`);
 };

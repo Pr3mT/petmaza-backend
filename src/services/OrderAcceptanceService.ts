@@ -3,6 +3,7 @@ import VendorProductPricing from '../models/VendorProductPricing';
 import { AppError } from '../middlewares/errorHandler';
 import { SalesService } from './SalesService';
 import logger from '../config/logger';
+import { sanitizeOrderForVendor, sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 
 export class OrderAcceptanceService {
   /**
@@ -73,19 +74,19 @@ export class OrderAcceptanceService {
         .populate('customer_id', 'name email phone')
         .populate({
           path: 'items.product_id',
-          select: 'name images mrp sellingPrice subCategory',
+          select: 'name images subCategory',
         })
         .sort({ createdAt: -1 })
         .lean();
 
       console.log(`[getPendingOrders] Found ${broadcastOrders.length} broadcast orders for WAREHOUSE_FULFILLER`);
 
-      // Add acceptance deadline and competitor count info
-      const eligibleOrders = broadcastOrders.map(order => ({
+      // Add acceptance deadline and competitor count info; strip vendor-hidden financial fields
+      const eligibleOrders = sanitizeOrdersForVendor(broadcastOrders.map(order => ({
         ...order,
         acceptanceDeadline: order.acceptanceDeadline,
         isCompetitive: true,
-      }));
+      })));
 
       console.log(`[getPendingOrders] Returning ${eligibleOrders.length} eligible broadcast orders`);
       return eligibleOrders;
@@ -109,7 +110,7 @@ export class OrderAcceptanceService {
       .populate('customer_id', 'name email phone')
       .populate({
         path: 'items.product_id',
-        select: 'name images mrp sellingPrice brand_id isPrime',
+        select: 'name images brand_id isPrime',
         populate: {
           path: 'brand_id',
           select: 'name _id'
@@ -180,7 +181,7 @@ export class OrderAcceptanceService {
     }
 
     console.log(`[getPendingOrders] Returning ${eligibleOrders.length} eligible Prime orders after filtering`);
-    return eligibleOrders;
+    return sanitizeOrdersForVendor(eligibleOrders);
   }
 
   // Accept order - first come first serve
@@ -664,10 +665,13 @@ export class OrderAcceptanceService {
 
     const earnings = totalPurchasePrice; // Purchase price vendor will receive
 
-    return {
+    // Strip customer-facing financial fields before returning to vendor
+    return sanitizeOrderForVendor({
       ...order.toObject(),
       earnings,
-    };
+      // Expose total vendor earnings clearly
+      totalVendorEarnings: earnings,
+    });
   }
 }
 

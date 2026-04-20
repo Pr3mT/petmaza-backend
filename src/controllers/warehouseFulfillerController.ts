@@ -4,6 +4,7 @@ import User from '../models/User';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
+import { sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 import { 
   sendOrderAcceptedEmail,
   sendOrderShippedEmail,
@@ -131,7 +132,7 @@ export const getWarehouseFulfillerOrders = async (
 
     res.status(200).json({
       success: true,
-      data: { orders: ordersWithMetadata },
+      data: { orders: sanitizeOrdersForVendor(ordersWithMetadata) },
     });
   } catch (error: any) {
     logger.error('[getWarehouseFulfillerOrders] Error:', error);

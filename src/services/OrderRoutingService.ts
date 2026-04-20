@@ -125,7 +125,10 @@ export class OrderRoutingService {
         });
 
         const sellingPrice = primeListing?.vendorPrice ?? product.sellingPrice ?? 0;
-        const purchasePrice = primeListing?.purchasePrice ?? 0;
+        // Use prime listing purchase price; fall back to product's purchasePrice if not set on listing
+        const purchasePrice = (primeListing?.purchasePrice && primeListing.purchasePrice > 0)
+          ? primeListing.purchasePrice
+          : (product.purchasePrice && product.purchasePrice > 0 ? product.purchasePrice : 0);
 
         if (sellingPrice === 0) {
           throw new AppError(`Product ${product.name} has invalid pricing`, 400);

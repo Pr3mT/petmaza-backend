@@ -245,6 +245,14 @@ export class ProductService {
       brand_id: data.brand_id,
       hasVariants: data.hasVariants
     });
+
+    // Sync inStock with isActive: if admin marks product inactive, also mark it out-of-stock
+    // so the "Notify Me" feature works correctly (frontend checks inStock field)
+    if (data.isActive === false && data.inStock === undefined) {
+      data.inStock = false;
+    } else if (data.isActive === true && data.inStock === undefined) {
+      data.inStock = true;
+    }
     
     // Validate category_id only if provided (for backward compatibility)
     if (data.category_id) {
