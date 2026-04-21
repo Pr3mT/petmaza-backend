@@ -223,8 +223,8 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
   try {
     const user = req.user;
     
-    // Check permissions: Admin can update any, vendors can update their own
-    if (user.role !== 'admin' && user.vendorType !== 'MY_SHOP' && user.vendorType !== 'WAREHOUSE_FULFILLER') {
+    // Check permissions: Admin can update any, vendors (MY_SHOP, PRIME, WAREHOUSE_FULFILLER) can update their own
+    if (user.role !== 'admin' && !['MY_SHOP', 'PRIME', 'WAREHOUSE_FULFILLER'].includes(user.vendorType)) {
       return next(new AppError('Only Admin and vendors can update products', 403));
     }
     
@@ -331,6 +331,8 @@ export const deleteProduct = async (req: AuthRequest, res: Response, next: NextF
     
     // Clear product cache so customers don't see the deleted product
     clearCache('/products');
+    // Also clear the specific product cache entry
+    clearCache(`/products/${req.params.id}`);
     
     res.status(200).json({
       success: true,

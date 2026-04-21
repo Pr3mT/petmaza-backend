@@ -1,4 +1,5 @@
 import { SendMailClient } from 'zeptomail';
+import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import EmailLog from '../models/EmailLog';
 import logger from '../config/logger';
@@ -15,7 +16,29 @@ const zeptoClient = new SendMailClient({
   token: zeptoToken,
 });
 
-logger.info(`[Emailer] ZeptoMail client initialized (host=${zeptoHost}, token=${zeptoToken ? '****' : 'MISSING'})`);
+// Determine email sending method
+const useZeptoMail = !!zeptoToken;
+
+// SMTP (nodemailer) transporter — used when ZeptoMail token is not configured
+const smtpTransporter = !useZeptoMail && process.env.SMTP_HOST
+  ? nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    })
+  : null;
+
+if (useZeptoMail) {
+  logger.info(`[Emailer] Using ZeptoMail (host=${zeptoHost}, token=****)`);
+} else if (smtpTransporter) {
+  logger.info(`[Emailer] ZeptoMail token missing — using SMTP fallback (host=${process.env.SMTP_HOST}, user=${process.env.SMTP_USER})`);
+} else {
+  logger.warn('[Emailer] ⚠️  No email provider configured! Set ZEPTOMAIL_TOKEN or SMTP_HOST in .env');
+}
 
 export interface EmailOptions {
   to: string;
@@ -40,27 +63,51 @@ export async function sendEmail(options: EmailOptions) {
   try {
     const { to, cc, bcc, subject, html, trigger, orderId, userId, attachments } = options;
 
-    // Send email via ZeptoMail HTTPS API
-    const resp = await zeptoClient.sendMail({
-      from: {
-        address: process.env.ZEPTOMAIL_FROM_ADDRESS || 'noreply@petmaza.com',
-        name: process.env.ZEPTOMAIL_FROM_NAME || 'PETMAZA',
-      },
-      to: [{ email_address: { address: to, name: to } }],
-      ...(cc?.length ? { cc: cc.map(addr => ({ email_address: { address: addr, name: addr } })) } : {}),
-      ...(bcc?.length ? { bcc: bcc.map(addr => ({ email_address: { address: addr, name: addr } })) } : {}),
-      subject,
-      htmlbody: html,
-      ...(attachments?.length ? {
-        attachments: attachments.map(a => ({
-          content: a.content.toString('base64'),
-          mime_type: a.contentType,
-          name: a.filename,
-        })),
-      } : {}),
-    } as any);
+    let messageId = '';
 
-    const messageId = (resp as any)?.request_id || '';
+    if (useZeptoMail) {
+      // Send via ZeptoMail HTTPS API
+      const resp = await zeptoClient.sendMail({
+        from: {
+          address: process.env.ZEPTOMAIL_FROM_ADDRESS || 'noreply@petmaza.com',
+          name: process.env.ZEPTOMAIL_FROM_NAME || 'PETMAZA',
+        },
+        to: [{ email_address: { address: to, name: to } }],
+        ...(cc?.length ? { cc: cc.map(addr => ({ email_address: { address: addr, name: addr } })) } : {}),
+        ...(bcc?.length ? { bcc: bcc.map(addr => ({ email_address: { address: addr, name: addr } })) } : {}),
+        subject,
+        htmlbody: html,
+        ...(attachments?.length ? {
+          attachments: attachments.map(a => ({
+            content: a.content.toString('base64'),
+            mime_type: a.contentType,
+            name: a.filename,
+          })),
+        } : {}),
+      } as any);
+      messageId = (resp as any)?.request_id || '';
+    } else if (smtpTransporter) {
+      // Fallback: Send via SMTP (nodemailer)
+      const fromAddress = `"${process.env.EMAIL_FROM_NAME || 'PETMAZA'}" <${process.env.SMTP_USER}>`;
+      const info = await smtpTransporter.sendMail({
+        from: fromAddress,
+        to,
+        ...(cc?.length ? { cc: cc.join(',') } : {}),
+        ...(bcc?.length ? { bcc: bcc.join(',') } : {}),
+        subject,
+        html,
+        ...(attachments?.length ? {
+          attachments: attachments.map(a => ({
+            filename: a.filename,
+            content: a.content,
+            contentType: a.contentType,
+          })),
+        } : {}),
+      });
+      messageId = info.messageId || '';
+    } else {
+      throw new Error('No email provider configured. Set ZEPTOMAIL_TOKEN or SMTP_HOST in .env');
+    }
     logger.info(`Email sent successfully: ${subject} to ${to}`);
 
     // Log successful email (non-blocking, don't fail email if logging fails)
