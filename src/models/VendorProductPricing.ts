@@ -73,7 +73,7 @@ vendorProductPricingSchema.pre('save', async function (next) {
     if (product) {
       const mrp = (product as any).mrp as number;
       const purchasePercentage = this.get('purchasePercentage') as number;
-      this.set('purchasePrice', mrp * (purchasePercentage / 100));
+      this.set('purchasePrice', Math.round(mrp * (purchasePercentage / 100)));
     }
   }
   next();

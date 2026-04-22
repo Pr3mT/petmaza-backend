@@ -31,7 +31,7 @@ export class VendorProductPricingService {
     }
 
     // Calculate purchase price
-    const purchasePrice = product.mrp * (data.purchasePercentage / 100);
+    const purchasePrice = Math.round(product.mrp * (data.purchasePercentage / 100));
 
     // Check if pricing already exists
     const existing = await VendorProductPricing.findOne({
@@ -123,7 +123,7 @@ export class VendorProductPricingService {
         throw new AppError('Product not found', 404);
       }
       vendorProductPricing.purchasePercentage = data.purchasePercentage;
-      vendorProductPricing.purchasePrice = product.mrp * (data.purchasePercentage / 100);
+      vendorProductPricing.purchasePrice = Math.round(product.mrp * (data.purchasePercentage / 100));
     }
 
     if (data.availableStock !== undefined) {
@@ -190,7 +190,7 @@ export class VendorProductPricingService {
     // Create/update VendorProductPricing entries for all products
     const assignments = [];
     for (const product of products) {
-      const purchasePrice = product.mrp * (data.purchasePercentage / 100);
+      const purchasePrice = Math.round(product.mrp * (data.purchasePercentage / 100));
 
       const existing = await VendorProductPricing.findOne({
         vendor_id: data.vendor_id,
@@ -259,7 +259,7 @@ export class VendorProductPricingService {
     // Create/update VendorProductPricing entries
     const assignments = [];
     for (const product of products) {
-      const purchasePrice = product.mrp * (data.purchasePercentage / 100);
+      const purchasePrice = Math.round(product.mrp * (data.purchasePercentage / 100));
 
       const existing = await VendorProductPricing.findOne({
         vendor_id: data.vendor_id,

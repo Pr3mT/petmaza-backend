@@ -234,7 +234,7 @@ export const bulkAddToWarehouse = async (req: AuthRequest, res: Response, next: 
               results.success.push({ product_id, action: 'updated' });
             } else {
               // Create new
-              const purchasePrice = product.mrp * (purchasePercentage / 100);
+              const purchasePrice = Math.round(product.mrp * (purchasePercentage / 100));
               await VendorProductPricing.create({
                 vendor_id: warehouse._id,
                 product_id,

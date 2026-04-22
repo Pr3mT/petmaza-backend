@@ -42,7 +42,7 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
               purchasePercentage: product.purchasePercentage || 60,
               purchasePrice: product.hasVariants && product.variants?.length > 0 
                 ? 0 
-                : (product.mrp || 0) * ((product.purchasePercentage || 60) / 100),
+                : Math.round((product.mrp || 0) * ((product.purchasePercentage || 60) / 100)),
               availableStock: 0,
               isActive: false,
               variantStock: product.hasVariants && product.variants?.length > 0
@@ -171,7 +171,7 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
             purchasePercentage: product.purchasePercentage || 60,
             purchasePrice: product.hasVariants && product.variants?.length > 0 
               ? 0 
-              : (product.mrp || 0) * ((product.purchasePercentage || 60) / 100),
+              : Math.round((product.mrp || 0) * ((product.purchasePercentage || 60) / 100)),
             availableStock: 0,
             isActive: initialActive, // Sync with product.inStock so newly added products are Available
             variantStock: product.hasVariants && product.variants?.length > 0
