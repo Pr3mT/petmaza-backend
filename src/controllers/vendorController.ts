@@ -76,10 +76,11 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
           // Populate product_id with full product data
           await vendorProduct.populate({
             path: 'product_id',
-            populate: {
-              path: 'brand_id',
-              select: 'name _id',
-            },
+            populate: [
+              { path: 'brand_id', select: 'name _id' },
+              { path: 'addedBy', select: 'name _id vendorType' },
+              { path: 'primeVendor_id', select: 'name _id vendorType' },
+            ],
           });
 
           return vendorProduct;
@@ -218,20 +219,80 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
         // Populate product_id with full product data
         await vendorProduct.populate({
           path: 'product_id',
-          populate: {
-            path: 'brand_id',
-            select: 'name _id',
-          },
+          populate: [
+            { path: 'brand_id', select: 'name _id' },
+            { path: 'addedBy', select: 'name _id vendorType' },
+            { path: 'primeVendor_id', select: 'name _id vendorType' },
+          ],
         });
 
         return vendorProduct;
       })
     );
 
+    // For MY_SHOP: determine which vendor "owns" each non-prime product
+    // Primary: match product.subCategory against VendorDetails.assignedSubcategories
+    // Fallback: check VendorProductPricing for other vendors
+    const productOwnerMap = new Map<string, { name: string; vendorType: string }>();
+    if (vendor.vendorType === 'MY_SHOP') {
+      // Step 1: Build subCategory → fulfiller map from VendorDetails
+      const fulfillerUsers = await User.find({ vendorType: 'WAREHOUSE_FULFILLER' }).select('_id name vendorType');
+      const fulfillerIds = fulfillerUsers.map((f: any) => f._id);
+      const allVendorDetails = await VendorDetails.find({ vendor_id: { $in: fulfillerIds } }).select('vendor_id assignedSubcategories');
+
+      const subCatToVendor = new Map<string, { name: string; vendorType: string }>();
+      for (const vd of allVendorDetails) {
+        const fUser = fulfillerUsers.find((f: any) => f._id.equals(vd.vendor_id));
+        if (fUser) {
+          for (const subCat of (vd.assignedSubcategories || [])) {
+            if (!subCatToVendor.has(subCat)) {
+              subCatToVendor.set(subCat, { name: (fUser as any).name, vendorType: (fUser as any).vendorType });
+            }
+          }
+        }
+      }
+
+      // Step 2: Map each product to its owner by subCategory
+      for (const p of allProducts) {
+        const pid = p._id.toString();
+        const subCat = (p as any).subCategory;
+        if (subCat && subCatToVendor.has(subCat)) {
+          productOwnerMap.set(pid, subCatToVendor.get(subCat)!);
+        }
+      }
+
+      // Step 3: Also check VendorProductPricing as fallback for any unmatched products
+      const unmatchedIds = allProducts
+        .filter(p => !productOwnerMap.has(p._id.toString()))
+        .map(p => p._id);
+
+      if (unmatchedIds.length > 0) {
+        const otherPricings = await VendorProductPricing.find({
+          product_id: { $in: unmatchedIds },
+          vendor_id: { $ne: vendor._id },
+        }).populate('vendor_id', 'name vendorType _id');
+
+        for (const vp of otherPricings) {
+          const pid = (vp.product_id as any).toString();
+          const v = (vp.vendor_id as any);
+          if (v?.name && !productOwnerMap.has(pid)) {
+            productOwnerMap.set(pid, { name: v.name, vendorType: v.vendorType || '' });
+          }
+        }
+      }
+    }
+
+    const responseProducts = productsWithPricing.map((item) => {
+      const obj = item.toObject({ virtuals: true }) as any;
+      const pid = obj.product_id?._id?.toString() || obj.product_id?.toString();
+      if (pid) obj.ownerVendor = productOwnerMap.get(pid) || null;
+      return obj;
+    });
+
     res.status(200).json({
       success: true,
       data: {
-        products: productsWithPricing,
+        products: responseProducts,
       },
     });
   } catch (error: any) {
