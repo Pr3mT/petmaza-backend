@@ -9,6 +9,7 @@ import VendorDetails from '../models/VendorDetails';
 import { clearCache } from '../middlewares/cache';
 import { notifyWaitingCustomers } from './productNotificationController';
 import CategoryFulfillerMapping from '../models/CategoryFulfillerMapping';
+import VendorProductPricing from '../models/VendorProductPricing';
 
 export const createProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -131,9 +132,42 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     
     // Clear product cache so customers see the new product immediately
     clearCache('/products');
-    
-    // VendorProductPricing removed - all data now in Products collection
-    
+
+    // When admin creates a non-prime product assigned to a WAREHOUSE_FULFILLER,
+    // pre-create the VendorProductPricing record with isActive:true so the
+    // product immediately shows as "Available" in the fulfiller's dashboard.
+    if (user.role === 'admin' && !product.isPrime && product.addedBy) {
+      const fulfillerId = product.addedBy;
+      const existingPricing = await VendorProductPricing.findOne({
+        vendor_id: fulfillerId,
+        product_id: product._id,
+      });
+      if (!existingPricing) {
+        await VendorProductPricing.create({
+          vendor_id: fulfillerId,
+          product_id: product._id,
+          purchasePercentage: product.purchasePercentage || 60,
+          purchasePrice: product.hasVariants && product.variants?.length > 0
+            ? 0
+            : (product.mrp || 0) * ((product.purchasePercentage || 60) / 100),
+          availableStock: 0,
+          isActive: true, // Product is inStock by default, show as Available immediately
+          variantStock: product.hasVariants && product.variants?.length > 0
+            ? product.variants.map((v: any) => ({
+                weight: v.weight,
+                unit: v.unit,
+                size: v.size,
+                displayWeight: v.displayWeight,
+                availableStock: 0,
+                totalSoldWebsite: 0,
+                totalSoldStore: 0,
+                isActive: v.isActive !== false,
+              }))
+            : undefined,
+        });
+      }
+    }
+
     res.status(201).json({
       success: true,
       message: 'Product created successfully',

@@ -23,8 +23,16 @@ export const getMyShopOrders = async (req: AuthRequest, res: Response, next: Nex
       return next(new AppError('Access denied. Only MY_SHOP vendors can access this.', 403));
     }
 
+    // MY_SHOP manager sees ALL orders:
+    // 1. Orders directly assigned to them
+    // 2. Prime product orders (isPrime: true)
+    // 3. Broadcast warehouse fulfiller orders not yet claimed (assignedVendorId: null)
     const orders = await Order.find({
-      assignedVendorId: vendor._id,
+      $or: [
+        { assignedVendorId: vendor._id },
+        { isPrime: true },
+        { assignedVendorId: null },
+      ],
     })
       .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images')

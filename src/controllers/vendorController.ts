@@ -129,6 +129,10 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
         productFilter = { isPrime: false, addedBy: vendor._id };
       }
       console.log(`🔓 WAREHOUSE_FULFILLER ${vendor.name} - assignedSubcategories: ${assignedSubcategories.length}`);
+    } else if (vendor.vendorType === 'MY_SHOP') {
+      // MY_SHOP manager sees ALL products — both non-prime and prime
+      productFilter = {}; // no filter — full catalog visibility
+      console.log(`🔓 MY_SHOP vendor - showing all products (prime + non-prime)`);
     } else {
       productFilter = { isPrime: false };
       console.log(`🔓 ${vendor.vendorType} vendor - showing all non-prime products`);
@@ -159,6 +163,8 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
         // If no pricing entry exists, create one
         if (!vendorProduct) {
           console.log('⚠️ No VendorProductPricing found. Creating new one with 0 stock.');
+          // Sync isActive with product.inStock so newly added products show as Available immediately
+          const initialActive = product.inStock !== false;
           vendorProduct = await VendorProductPricing.create({
             vendor_id: vendor._id,
             product_id: product._id,
@@ -167,7 +173,7 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
               ? 0 
               : (product.mrp || 0) * ((product.purchasePercentage || 60) / 100),
             availableStock: 0,
-            isActive: false, // Vendor needs to mark as available
+            isActive: initialActive, // Sync with product.inStock so newly added products are Available
             variantStock: product.hasVariants && product.variants?.length > 0
               ? product.variants.map((variant: any) => ({
                   weight: variant.weight,
@@ -177,7 +183,7 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
                   availableStock: 0,
                   totalSoldWebsite: 0,
                   totalSoldStore: 0,
-                  isActive: false,
+                  isActive: variant.isActive !== false, // Sync with variant's active status
                 }))
               : undefined,
           });
