@@ -62,6 +62,7 @@ interface BulkRow {
    */
   prime_vendor_id?:  string;
   image_url?:        string;
+  stock?:            string;
 }
 
 interface RowError {
@@ -156,6 +157,7 @@ export const generateBulkTemplate = async (
       { header: 'mrp',            key: 'mrp',            width: 12 },
       { header: 'purchase_price', key: 'purchase_price', width: 16 },
       { header: 'selling_price',  key: 'selling_price',  width: 16 },
+      { header: 'stock',          key: 'stock',          width: 12 },
       { header: 'profit_margin',  key: 'profit_margin',  width: 16 },
       { header: 'vendor_type',      key: 'vendor_type',      width: 14 },
       { header: 'prime_vendor_id',   key: 'prime_vendor_id',   width: 18 },
@@ -214,11 +216,6 @@ export const generateBulkTemplate = async (
     const mainCategoryInline = `"${VALID_MAIN_CATEGORIES.join(',')}"`;
     const statusInline       = '"Active,Inactive"';
 
-    // vendor_name: Excel caps inline list at 255 chars total
-    const rawVendorList    = vendorNameOptions.join(',');
-    const safeVendorList   = rawVendorList.length <= 253 ? rawVendorList : rawVendorList.substring(0, 253);
-    const vendorNameInline = `"${safeVendorList}"`;
-
     sheet.dataValidations.add(range('vendor_type'), {
       type:             'list',
       allowBlank:       true,
@@ -228,14 +225,18 @@ export const generateBulkTemplate = async (
       error:            'Please select: normal or prime',
     });
 
-    if (vendorNameOptions.length > 0) {
-      sheet.dataValidations.add(range('vendor_name'), {
+    // Prime vendor ID dropdown — numeric codes only (Excel inline list capped at 255 chars)
+    if (primeVendorCodeOptions.length > 0) {
+      const rawCodes      = primeVendorCodeOptions.join(',');
+      const safeCodes     = rawCodes.length <= 253 ? rawCodes : rawCodes.substring(0, 253);
+      const primeIdInline = `"${safeCodes}"`;
+      sheet.dataValidations.add(range('prime_vendor_id'), {
         type:             'list',
         allowBlank:       true,
-        formulae:         [vendorNameInline],
+        formulae:         [primeIdInline],
         showErrorMessage: true,
-        errorTitle:       'Invalid vendor',
-        error:            'Please select a vendor from the dropdown list',
+        errorTitle:       'Invalid prime vendor ID',
+        error:            'Please enter a valid prime vendor ID from the Instructions sheet.',
       });
     }
 
@@ -292,12 +293,21 @@ export const generateBulkTemplate = async (
       ['COLUMN RULES'],
       ['main_category   : Must be one of: Dog, Cat, Fish, Bird, Small Animals'],
       ['sub_category    : Free text, e.g. "Dog Food", "Cat Accessories"'],
+      ['size            : Optional. Size variant label, e.g. S, M, L, XL, 2XL'],
+      ['weight          : Optional. Numeric weight value, e.g. 100'],
       ['weight_unit     : Must be one of: g, kg, ml, l'],
       ['mrp             : Numeric, must be > 0'],
       ['purchase_price  : Numeric'],
       ['selling_price   : Numeric'],
+      ['stock           : Optional. Initial stock quantity for this variant (default: 0)'],
       ['profit_margin   : Auto-calculated if left blank'],
       ['status          : Active or Inactive'],
+      [''],
+      ['MULTI-VARIANT PRODUCTS'],
+      ['Add multiple rows with the SAME product_name + main_category + brand_name to define variants.'],
+      ['Each row becomes one variant (size-based or weight-based).'],
+      ['If no size/weight is provided, a single default variant is created.'],
+      ['Same product_name in a DIFFERENT main_category is treated as a separate product.'],
       [''],
       ['NOTE: Images are NOT uploaded via this template. Use the inline image upload in the upload dialog.'],
     ];
@@ -384,13 +394,42 @@ export const bulkUploadProducts = async (
       categoryFulfillerMap.set(key, (m.fulfiller_id as any)._id.toString());
     });
 
-    // ── Validate & prepare rows ────────────────────────────────────────────
-    const validatedProducts: Array<Record<string, any>> = [];
-    const rowErrors: RowError[] = [];
+    // ── Phase 1: Validate each row individually ───────────────────────────
+    interface ValidatedRow {
+      rowNum:             number;
+      productName:        string;
+      brandId:            string;
+      mainCat:            string;
+      subCat:             string;
+      mrp:                number;
+      purchasePrice:      number;
+      sellingPrice:       number;
+      purchasePct:        number;
+      sellingPct:         number;
+      statusVal:          string;
+      weight?:            number;
+      weightUnit?:        string;
+      size?:              string;
+      stock:              number;
+      description?:       string;
+      imageUrl?:          string;
+      assignedVendorId:   string | null;
+      assignedVendorType: 'WAREHOUSE_FULFILLER' | 'PRIME' | null;
+    }
+
+    const validRows:  ValidatedRow[] = [];
+    const rowErrors:  RowError[]     = [];
 
     for (let i = 0; i < records.length; i++) {
       const row    = records[i];
-      const rowNum = i + 2; // 1-based row, +1 for header
+      const rowNum = i + 2; // 1-based row number, +1 for header
+
+      // Skip completely empty rows
+      const hasAnyValue = Object.values(row).some(
+        v => v !== undefined && v !== null && String(v).trim() !== ''
+      );
+      if (!hasAnyValue) continue;
+
       const errors: string[] = [];
 
       // Required fields
@@ -419,6 +458,10 @@ export const bulkUploadProducts = async (
       if (isNaN(sellingPrice) || sellingPrice < 0)
         errors.push("'selling_price' must be a non-negative number");
 
+      // Stock (optional, defaults to 0)
+      const stockRaw = row.stock ? parseInt(String(row.stock), 10) : 0;
+      const stock    = isNaN(stockRaw) || stockRaw < 0 ? 0 : stockRaw;
+
       // Category
       const mainCat = row.main_category.trim();
       if (!VALID_MAIN_CATEGORIES.includes(mainCat))
@@ -441,7 +484,6 @@ export const bulkUploadProducts = async (
       if (vendorType && !['normal', 'prime'].includes(vendorType))
         errors.push("'vendor_type' must be 'normal' or 'prime'");
 
-      // Prime vendor ID required for prime type
       if (vendorType === 'prime') {
         const codeStr = row.prime_vendor_id?.trim();
         if (!codeStr) {
@@ -466,88 +508,124 @@ export const bulkUploadProducts = async (
         continue;
       }
 
-      // ── Resolve vendor assignment ────────────────────────────────────────
-      let assignedVendorId:   string | null                   = null;
+      // ── Resolve vendor assignment ──────────────────────────────────────
+      let assignedVendorId:   string | null                          = null;
       let assignedVendorType: 'WAREHOUSE_FULFILLER' | 'PRIME' | null = null;
 
       if (vendorType === 'prime') {
         assignedVendorId   = primeVendorMap.get(row.prime_vendor_id!.trim()) || null;
         assignedVendorType = 'PRIME';
       } else if (vendorType === 'normal') {
-        // Subcategory-specific mapping takes priority over category wildcard
         const subKey  = `${mainCat.toLowerCase()}:::${row.sub_category.trim().toLowerCase()}`;
         const wildKey = `${mainCat.toLowerCase()}:::*`;
         assignedVendorId   = categoryFulfillerMap.get(subKey) || categoryFulfillerMap.get(wildKey) || null;
         assignedVendorType = 'WAREHOUSE_FULFILLER';
       }
 
-      // ── Build product document ───────────────────────────────────────────
-      // Do NOT round the percentages — the pre-save hook recalculates prices from them,
-      // so rounding (e.g. 87.5 → 88) would produce wrong prices (3500 → 3520).
+      // Do NOT round percentages — pre-save hook recalculates prices from them.
       const purchasePct = mrp > 0 ? (purchasePrice / mrp) * 100 : 60;
       const sellingPct  = mrp > 0 ? (sellingPrice  / mrp) * 100 : 80;
 
-      const productData: Record<string, any> = {
-        name:               row.product_name.trim(),
-        brand_id:           brandId,
-        mainCategory:       mainCat,
-        subCategory:        row.sub_category.trim(),
-        isPrime:            assignedVendorType === 'PRIME',
-        ...(assignedVendorType === 'PRIME' && assignedVendorId ? { primeVendor_id: assignedVendorId } : {}),
+      validRows.push({
+        rowNum,
+        productName:        row.product_name.trim(),
+        brandId:            brandId!,
+        mainCat,
+        subCat:             row.sub_category.trim(),
         mrp,
         purchasePrice,
-        purchasePercentage: purchasePct,
         sellingPrice,
-        sellingPercentage:  sellingPct,
-        isActive:           statusVal === 'active',
-        addedBy:            user._id,
-        images: row.image_url?.trim()
-          ? [row.image_url.trim()]
-          : [
-              CATEGORY_DEFAULT_IMAGES[mainCat] ||
-              'https://placehold.co/400x400/e8f4ea/333333?text=Product+Image',
-            ],
-        // Internal metadata used for post-insert vendor assignment (stripped before DB insert)
-        _assignedVendorId:   assignedVendorId,
-        _assignedVendorType: assignedVendorType,
-      };
-
-      if (row.description?.trim()) productData.description = row.description.trim();
-
-      if (weight !== undefined && !isNaN(weight)) {
-        const unit = (row.weight_unit?.trim().toLowerCase() || 'g') as 'g' | 'kg' | 'ml' | 'l';
-        productData.weight        = weight;
-        productData.unit          = unit;
-        productData.displayWeight = `${weight}${unit}`;
-      }
-
-      if (row.size?.trim()) {
-        productData.hasVariants = true;
-        productData.variants    = [
-          {
-            size:               row.size.trim(),
-            weight,
-            unit:               row.weight_unit?.trim().toLowerCase() || 'g',
-            mrp,
-            sellingPrice,
-            sellingPercentage:  sellingPct,
-            purchasePrice,
-            purchasePercentage: purchasePct,
-            isActive:           statusVal === 'active',
-          },
-        ];
-      }
-
-      validatedProducts.push(productData);
+        purchasePct,
+        sellingPct,
+        statusVal,
+        weight:             weight !== undefined && !isNaN(weight) ? weight : undefined,
+        weightUnit:         row.weight_unit?.trim().toLowerCase() || undefined,
+        size:               row.size?.trim() || undefined,
+        stock,
+        description:        row.description?.trim() || undefined,
+        imageUrl:           row.image_url?.trim()   || undefined,
+        assignedVendorId,
+        assignedVendorType,
+      });
     }
 
-    // ── Bulk insert ────────────────────────────────────────────────────────
+    // ── Phase 2: Group rows by productName + mainCategory + brandId ────────
+    // Rows sharing the same key become variants of ONE product.
+    // Same productName in a different mainCategory or different brand → separate product.
+    const groupMap = new Map<string, ValidatedRow[]>();
+    for (const vRow of validRows) {
+      const key = [
+        vRow.productName.toLowerCase(),
+        vRow.mainCat.toLowerCase(),
+        vRow.brandId,
+      ].join(':::');
+      if (!groupMap.has(key)) groupMap.set(key, []);
+      groupMap.get(key)!.push(vRow);
+    }
+
+    // ── Phase 3: Build one product document per group ──────────────────────
+    const productsToInsert: Array<Record<string, any>> = [];
+
+    for (const [, rows] of groupMap) {
+      const first = rows[0];
+
+      // Each row in the group becomes one variant entry
+      const variants = rows.map(r => {
+        const variantObj: Record<string, any> = {
+          mrp:                r.mrp,
+          sellingPrice:       r.sellingPrice,
+          sellingPercentage:  r.sellingPct,
+          purchasePrice:      r.purchasePrice,
+          purchasePercentage: r.purchasePct,
+          stock:              r.stock,
+          isActive:           r.statusVal === 'active',
+        };
+        if (r.size) variantObj.size = r.size;
+        if (r.weight !== undefined) {
+          const unit           = (r.weightUnit || 'g') as 'g' | 'kg' | 'ml' | 'l';
+          variantObj.weight       = r.weight;
+          variantObj.unit         = unit;
+          variantObj.displayWeight = `${r.weight}${unit}`;
+        }
+        return variantObj;
+      });
+
+      const productDoc: Record<string, any> = {
+        name:         first.productName,
+        brand_id:     first.brandId,
+        mainCategory: first.mainCat,
+        subCategory:  first.subCat,
+        isPrime:      first.assignedVendorType === 'PRIME',
+        ...(first.assignedVendorType === 'PRIME' && first.assignedVendorId
+          ? { primeVendor_id: first.assignedVendorId }
+          : {}),
+        hasVariants: true,
+        variants,
+        isActive: first.statusVal === 'active',
+        addedBy:  user._id,
+        images: first.imageUrl
+          ? [first.imageUrl]
+          : [
+              CATEGORY_DEFAULT_IMAGES[first.mainCat] ||
+              'https://placehold.co/400x400/e8f4ea/333333?text=Product+Image',
+            ],
+        // Vendor assignment metadata — stripped before DB insert
+        _assignedVendorId:   first.assignedVendorId,
+        _assignedVendorType: first.assignedVendorType,
+      };
+
+      if (first.description) productDoc.description = first.description;
+
+      productsToInsert.push(productDoc);
+    }
+
+    // ── Phase 4: Bulk insert ───────────────────────────────────────────────
     let insertedCount = 0;
     const insertErrors: RowError[] = [];
 
-    if (validatedProducts.length > 0) {
+    if (productsToInsert.length > 0) {
       const results = await Promise.allSettled(
-        validatedProducts.map(({ _assignedVendorId, _assignedVendorType, ...p }) =>
+        productsToInsert.map(({ _assignedVendorId, _assignedVendorType, ...p }) =>
           Product.create(p)
         )
       );
@@ -556,11 +634,13 @@ export const bulkUploadProducts = async (
         if (result.status === 'fulfilled') {
           insertedCount++;
           const insertedProduct  = (result as PromiseFulfilledResult<any>).value;
-          const vendorId         = validatedProducts[idx]._assignedVendorId;
-          const vendorTypeAssign = validatedProducts[idx]._assignedVendorType;
+          const vendorId         = productsToInsert[idx]._assignedVendorId;
+          const vendorTypeAssign = productsToInsert[idx]._assignedVendorType;
 
           if (vendorId) {
-            assignVendor(insertedProduct, vendorId, vendorTypeAssign).catch(err =>
+            // Use first variant's prices for vendor assignment record
+            const refVariant = insertedProduct.variants?.[0];
+            assignVendor(insertedProduct, vendorId, vendorTypeAssign, refVariant).catch(err =>
               console.error(`[BulkUpload] Vendor assignment failed for ${insertedProduct._id}:`, err)
             );
           }
@@ -568,7 +648,7 @@ export const bulkUploadProducts = async (
           const rejected = result as PromiseRejectedResult;
           insertErrors.push({
             row:          -1,
-            product_name: validatedProducts[idx].name,
+            product_name: productsToInsert[idx].name,
             errors:       [rejected.reason?.message || 'Database insert failed'],
           });
         }
@@ -586,7 +666,9 @@ export const bulkUploadProducts = async (
         totalRows:    records.length,
         errors:       allErrors,
       },
-      message: `Bulk upload complete: ${insertedCount} product(s) added, ${allErrors.length} failed.`,
+      message:
+        `Bulk upload complete: ${insertedCount} product(s) created from ` +
+        `${records.length} row(s), ${allErrors.length} error(s).`,
     });
   } catch (err: any) {
     next(err);
@@ -598,15 +680,16 @@ export const bulkUploadProducts = async (
 async function assignVendor(
   product: any,
   vendorId: string,
-  vendorType: 'WAREHOUSE_FULFILLER' | 'PRIME'
+  vendorType: 'WAREHOUSE_FULFILLER' | 'PRIME',
+  refVariant?: any,
 ): Promise<void> {
   if (vendorType === 'PRIME') {
     await PrimeProduct.create({
       vendor_id:        vendorId,
       product_id:       product._id,
-      vendorMRP:        product.mrp,
-      vendorPrice:      product.sellingPrice,
-      stock:            0,
+      vendorMRP:        refVariant?.mrp         ?? product.mrp         ?? 0,
+      vendorPrice:      refVariant?.sellingPrice ?? product.sellingPrice ?? 0,
+      stock:            refVariant?.stock        ?? 0,
       minOrderQuantity: 1,
       maxOrderQuantity: 100,
       deliveryTime:     '3-5 business days',
@@ -617,8 +700,8 @@ async function assignVendor(
     await VendorProductPricing.create({
       vendor_id:      vendorId,
       product_id:     product._id,
-      purchasePrice:  product.purchasePrice,
-      availableStock: 0,
+      purchasePrice:  refVariant?.purchasePrice ?? product.purchasePrice ?? 0,
+      availableStock: refVariant?.stock         ?? 0,
       isActive:       true,
     });
   }

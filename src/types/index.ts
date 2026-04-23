@@ -38,6 +38,7 @@ export interface IProductVariant {
   discount: number;
   purchasePercentage: number;
   purchasePrice: number;
+  stock?: number;
   isActive: boolean;
   totalSoldWebsite?: number;
   totalSoldStore?: number;

@@ -60,6 +60,7 @@ const productSchema = new Schema<IProduct>(
       discount: { type: Number, min: 0, max: 100 },
       purchasePercentage: { type: Number, min: 0, max: 100 },
       purchasePrice: { type: Number, min: 0 },
+      stock: { type: Number, default: 0, min: 0 },
       isActive: { type: Boolean, default: true },
       totalSoldWebsite: { type: Number, default: 0, min: 0 },
       totalSoldStore: { type: Number, default: 0, min: 0 },
