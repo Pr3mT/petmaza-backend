@@ -262,15 +262,27 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
       return next(new AppError('Only Admin and vendors can update products', 403));
     }
     
-    // If vendor, verify they own this product (check addedBy field)
+    // If vendor, verify they own this product
     if (user.role === 'vendor') {
       const existingProduct = await Product.findById(req.params.id);
       if (!existingProduct) {
         return next(new AppError('Product not found', 404));
       }
-      
-      if (existingProduct.addedBy?.toString() !== user._id.toString()) {
-        return next(new AppError('You can only update products you created', 403));
+
+      if (user.vendorType === 'PRIME') {
+        // PRIME vendors can edit any product they have a PrimeProduct listing for
+        const listing = await PrimeProduct.findOne({
+          product_id: req.params.id,
+          vendor_id: user._id,
+        });
+        if (!listing) {
+          return next(new AppError('You can only update products you have listed', 403));
+        }
+      } else {
+        // MY_SHOP / WAREHOUSE_FULFILLER: must be addedBy
+        if (existingProduct.addedBy?.toString() !== user._id.toString()) {
+          return next(new AppError('You can only update products you created', 403));
+        }
       }
     }
     
@@ -371,6 +383,40 @@ export const deleteProduct = async (req: AuthRequest, res: Response, next: NextF
     res.status(200).json({
       success: true,
       message: 'Product deleted successfully',
+      data: { product },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+export const deleteVariant = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id: productId, variantId } = req.params;
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    const variantIndex = (product.variants as any[]).findIndex(
+      (v: any) => v._id.toString() === variantId
+    );
+    if (variantIndex === -1) {
+      return res.status(404).json({ success: false, message: 'Variant not found' });
+    }
+
+    product.variants.splice(variantIndex, 1);
+    if (product.variants.length === 0) {
+      (product as any).hasVariants = false;
+    }
+    await product.save();
+
+    clearCache('/products');
+    clearCache(`/products/${productId}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Variant deleted successfully',
       data: { product },
     });
   } catch (error: any) {
