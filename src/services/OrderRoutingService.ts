@@ -5,8 +5,14 @@ import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { IOrderItem } from '../types';
-import { sendVendorOrderNotificationEmail } from './emailer';
+import { VendorNotificationData, SalesRecordData } from './OrderQueue';
 import logger from '../config/logger';
+
+export interface RouteOrderResult {
+  orders: any[];
+  notifications: VendorNotificationData[];
+  salesRecords: SalesRecordData[];
+}
 
 export class OrderRoutingService {
   /**
@@ -30,8 +36,12 @@ export class OrderRoutingService {
       state: string;
       pincode: string;
     };
-  }) {
+  }): Promise<RouteOrderResult> {
     const { customer_id, items, customerPincode, customerAddress } = data;
+
+    // Accumulators for background job payloads
+    const notifications: VendorNotificationData[] = [];
+    const salesRecords: SalesRecordData[] = [];
 
     // Fetch all products
     const productIds = items.map((item) => item.product_id);
@@ -58,22 +68,25 @@ export class OrderRoutingService {
       }
     }
 
-    const createdOrders = [];
+    const createdOrders: any[] = [];
 
     // Handle prime products (may create multiple orders for different vendors)
     if (primeItems.length > 0) {
-      const primeOrders = await this.routePrimeOrders(customer_id, primeItems, customerPincode, customerAddress, productMap);
+      const primeOrders = await this.routePrimeOrders(
+        customer_id, primeItems, customerPincode, customerAddress, productMap, notifications
+      );
       createdOrders.push(...(Array.isArray(primeOrders) ? primeOrders : [primeOrders]));
     }
 
     // Handle normal products
     if (normalItems.length > 0) {
-      const normalOrders = await this.routeNormalOrderToMyShop(customer_id, normalItems, customerPincode, customerAddress);
+      const normalOrders = await this.routeNormalOrderToMyShop(
+        customer_id, normalItems, customerPincode, customerAddress, notifications, salesRecords
+      );
       createdOrders.push(...(Array.isArray(normalOrders) ? normalOrders : [normalOrders]));
     }
 
-    // Return single order if only one, array if split
-    return createdOrders.length === 1 ? createdOrders[0] : createdOrders;
+    return { orders: createdOrders, notifications, salesRecords };
   }
 
   /**
@@ -85,7 +98,8 @@ export class OrderRoutingService {
     items: Array<{ product_id: string; quantity: number; selectedVariant?: any }>,
     customerPincode: string,
     customerAddress: any,
-    productMap: Map<string, any>
+    productMap: Map<string, any>,
+    notifications: VendorNotificationData[]
   ) {
     // Group items by prime vendor
     const vendorItemsMap = new Map<string, Array<{ product_id: string; quantity: number; selectedVariant?: any }>>();
@@ -97,7 +111,6 @@ export class OrderRoutingService {
       }
 
       const vendorId = product.primeVendor_id.toString();
-      
       if (!vendorItemsMap.has(vendorId)) {
         vendorItemsMap.set(vendorId, []);
       }
@@ -109,7 +122,17 @@ export class OrderRoutingService {
 
     // Create one order per vendor
     for (const [vendorId, vendorItems] of vendorItemsMap) {
-      // Build order items with prime-specific pricing (PrimeProduct.purchasePrice)
+      // ── Batch-fetch all PrimeProduct listings for this vendor in ONE query ──
+      const primeListings = await PrimeProduct.find({
+        vendor_id: vendorId,
+        product_id: { $in: vendorItems.map((i) => i.product_id) },
+        isActive: true,
+      }).lean();
+      const primeListingMap = new Map(
+        primeListings.map((pl: any) => [pl.product_id.toString(), pl])
+      );
+
+      // Build order items with prime-specific pricing
       const orderItems: IOrderItem[] = [];
       for (const item of vendorItems) {
         const product = productMap.get(item.product_id);
@@ -117,18 +140,15 @@ export class OrderRoutingService {
           throw new AppError(`Product ${item.product_id} not found`, 404);
         }
 
-        // Look up PrimeProduct listing for vendor-specific pricing
-        const primeListing = await PrimeProduct.findOne({
-          vendor_id: vendorId,
-          product_id: item.product_id,
-          isActive: true,
-        });
+        const primeListing = primeListingMap.get(item.product_id);
 
         const sellingPrice = primeListing?.vendorPrice ?? product.sellingPrice ?? 0;
-        // Use prime listing purchase price; fall back to product's purchasePrice if not set on listing
-        const purchasePrice = (primeListing?.purchasePrice && primeListing.purchasePrice > 0)
-          ? primeListing.purchasePrice
-          : (product.purchasePrice && product.purchasePrice > 0 ? product.purchasePrice : 0);
+        const purchasePrice =
+          primeListing?.purchasePrice && primeListing.purchasePrice > 0
+            ? primeListing.purchasePrice
+            : product.purchasePrice && product.purchasePrice > 0
+            ? product.purchasePrice
+            : 0;
 
         if (sellingPrice === 0) {
           throw new AppError(`Product ${product.name} has invalid pricing`, 400);
@@ -158,7 +178,7 @@ export class OrderRoutingService {
       const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
       const totalProfit = total - totalPurchasePrice;
 
-      // Create order - PENDING status (vendor must accept, like fulfiller flow)
+      // Create order - PENDING status (vendor must accept)
       const order = await Order.create({
         customer_id,
         assignedVendorId: vendorId,
@@ -166,7 +186,7 @@ export class OrderRoutingService {
         total,
         totalPurchasePrice,
         totalProfit,
-        status: 'PENDING',  // ✅ Prime vendor must accept order (like fulfiller flow)
+        status: 'PENDING',
         isPrime: true,
         isSplitShipment,
         customerPincode,
@@ -176,29 +196,17 @@ export class OrderRoutingService {
       createdOrders.push(order);
       logger.info(`[routePrimeOrders] ✅ Prime order ${order._id} created for vendor ${vendorId} (status: PENDING)`);
 
-      // Send vendor notification
-      try {
-        const vendor = await User.findById(vendorId);
-        const customer = await User.findById(customer_id);
-        
-        if (vendor) {
-          sendVendorOrderNotificationEmail(
-            vendor.email,
-            vendor.name || 'Prime Vendor',
-            `#${order._id.toString().slice(-8)}`,
-            {
-              customerName: customer?.name || 'Customer',
-              totalAmount: order.total,
-              customerAddress,
-              customerPincode,
-              items: orderItems,
-            }
-          ).then(() => logger.info('[routePrimeOrders] 📧 Vendor notification sent'))
-           .catch((e: any) => logger.error('[routePrimeOrders] Failed to send vendor notification:', e.message));
-        }
-      } catch (emailError: any) {
-        logger.error('[routePrimeOrders] Failed to send vendor notification:', emailError.message);
-      }
+      // Queue vendor notification for background processing (no blocking DB/email calls here)
+      notifications.push({
+        orderId: order._id.toString(),
+        customerId: customer_id,
+        vendorIds: [vendorId],
+        orderItems,
+        orderTotal: order.total,
+        customerAddress,
+        customerPincode,
+        isBroadcast: false,
+      });
     }
 
     return createdOrders.length === 1 ? createdOrders[0] : createdOrders;
@@ -213,7 +221,9 @@ export class OrderRoutingService {
     customer_id: string,
     items: Array<{ product_id: string; quantity: number; selectedVariant?: any }>,
     customerPincode: string,
-    customerAddress: any
+    customerAddress: any,
+    notifications: VendorNotificationData[],
+    salesRecords: SalesRecordData[]
   ) {
     // Fetch all products with subcategory information
     const productIds = items.map((item) => item.product_id);
@@ -351,36 +361,20 @@ export class OrderRoutingService {
         createdOrders.push(order);
         logger.info(`[routeNormalOrderToMyShop] ✅ Broadcast order ${order._id} created for ${subcategory} (${eligibleFulfillers.length} competing fulfillers)`);
 
-        // Broadcast notification to ALL eligible fulfillers for this subcategory
-        try {
-          const populatedOrder = await order.populate('customer_id');
-          const customer = populatedOrder.customer_id as any;
-
-          for (const fulfiller of eligibleFulfillers) {
-            try {
-              sendVendorOrderNotificationEmail(
-                fulfiller.email,
-                fulfiller.name || 'Warehouse Fulfiller',
-                `#${order._id.toString().slice(-8)}`,
-                {
-                  customerName: customer?.name || 'Customer',
-                  totalAmount: order.total,
-                  customerAddress: customerAddress,
-                  customerPincode: customerPincode,
-                  items: orderItems,
-                  isCompetitive: true,
-                  competitorCount: eligibleFulfillers.length,
-                  acceptanceDeadline: acceptanceDeadline.toISOString(),
-                }
-              ).then(() => logger.info(`[routeNormalOrderToMyShop] 📢 Broadcast notification sent to ${fulfiller.name} (${fulfiller.email})`))
-               .catch((e: any) => logger.error(`[routeNormalOrderToMyShop] Failed to notify ${fulfiller.email}:`, e.message));
-            } catch (emailError: any) {
-              logger.error(`[routeNormalOrderToMyShop] Failed to notify ${fulfiller.email}:`, emailError.message);
-            }
-          }
-        } catch (emailError: any) {
-          logger.error('[routeNormalOrderToMyShop] Failed to broadcast order notifications:', emailError.message);
-        }
+        // Queue broadcast notification for background processing (no blocking populate/email calls)
+        notifications.push({
+          orderId: order._id.toString(),
+          customerId: customer_id,
+          vendorIds: eligibleFulfillers.map((f: any) => f._id.toString()),
+          orderItems,
+          orderTotal: order.total,
+          customerAddress,
+          customerPincode,
+          isBroadcast: true,
+          isCompetitive: true,
+          competitorCount: eligibleFulfillers.length,
+          acceptanceDeadline: acceptanceDeadline.toISOString(),
+        });
       }
 
       // Handle unassigned items - route to MY_SHOP
@@ -416,24 +410,13 @@ export class OrderRoutingService {
           createdOrders.push(order);
           logger.info(`[routeNormalOrderToMyShop] ✅ MY_SHOP order ${order._id} created (${unassignedItems.length} items, ₹${total})`);
 
-          // Record sales for MY_SHOP items
-          const { SalesService } = await import('./SalesService');
-          for (const item of order.items) {
-            try {
-              await SalesService.recordSale({
-                vendor_id: myShopVendor._id.toString(),
-                product_id: (item.product_id as any)._id.toString(),
-                quantity: item.quantity,
-                salePrice: item.price,
-                purchasePrice: item.purchasePrice,
-                profit: item.profit,
-                customer_id,
-                order_id: order._id.toString(),
-              });
-            } catch (error: any) {
-              logger.error('[routeNormalOrderToMyShop] Failed to record sale:', error.message);
-            }
-          }
+          // Queue sales recording for background processing
+          salesRecords.push({
+            orderId: order._id.toString(),
+            vendorId: myShopVendor._id.toString(),
+            customerId: customer_id,
+            items: order.items,
+          });
         }
       }
 
@@ -481,28 +464,13 @@ export class OrderRoutingService {
       customerAddress,
     });
 
-    // Import SalesService at runtime to avoid circular dependency
-    const { SalesService } = await import('./SalesService');
-
-    // Record sales in history for each item and reduce stock
-    for (const item of order.items) {
-      try {
-        await SalesService.recordSale({
-          vendor_id: myShopVendor._id.toString(),
-          product_id: item.product_id.toString(),
-          quantity: item.quantity,
-          saleType: 'WEBSITE',
-          soldBy: myShopVendor._id.toString(), // MY_SHOP vendor
-          order_id: order._id.toString(),
-          sellingPrice: item.sellingPrice,
-          selectedVariant: item.selectedVariant,
-        });
-      } catch (error) {
-        logger.error(`Failed to record sale for product ${item.product_id}:`, error);
-        // Log error but allow order creation to continue
-        // Stock reduction failure shouldn't block the order
-      }
-    }
+    // Queue sales recording for background processing
+    salesRecords.push({
+      orderId: order._id.toString(),
+      vendorId: myShopVendor._id.toString(),
+      customerId: customer_id,
+      items: order.items,
+    });
 
     logger.info(`Order ${order._id} routed directly to MY_SHOP ${myShopVendor._id}`);
     return order;

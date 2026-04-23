@@ -16,19 +16,13 @@ import {
   sendOrderStatusUpdateEmail,
   sendVendorOrderNotificationEmail,
   sendPaymentSuccessEmail,
-  sendAdminOrderNotificationEmail,
 } from '../services/emailer';
+import { orderQueue } from '../services/OrderQueue';
 
 // Create order (customer)
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { items, customerPincode, customerAddress, couponCode } = req.body;
-
-    // DEBUG: Log initial request
-    console.log('\n========== DEBUG: Order Creation Started ==========');
-    console.log('Coupon Code Received:', couponCode);
-    console.log('Items:', items.length);
-    console.log('===================================================\n');
 
     if (!items || items.length === 0) {
       return next(new AppError('Order must have at least one item', 400));
@@ -38,324 +32,171 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       return next(new AppError('Pincode and address are required', 400));
     }
 
-    // Create order through routing service (may return single order or array of split orders)
-    const orderResult = await OrderRoutingService.routeOrder({
+    // ── Route order: creates DB documents, returns notification/sales metadata ─
+    const { orders, notifications, salesRecords } = await OrderRoutingService.routeOrder({
       customer_id: req.user._id.toString(),
       items,
       customerPincode,
       customerAddress,
     });
 
-    // Handle both single order and split orders
-    const orders = Array.isArray(orderResult) ? orderResult : [orderResult];
     const isSplitShipment = orders.length > 1;
-
     logger.info(`[createOrder] ${orders.length} order(s) created (split: ${isSplitShipment})`);
 
-    // Calculate combined subtotal across all orders
-    const combinedSubtotal = orders.reduce((sum, order) => sum + order.total, 0);
-    
-    console.log('\n===== DEBUG: Before Coupon Validation =====');
-    console.log('Combined Subtotal:', combinedSubtotal);
-    console.log('Coupon Code:', couponCode);
-    console.log('Has Coupon Code:', !!couponCode);
-    console.log('==========================================\n');
-    
-    // Validate and apply coupon if provided
+    // ── Coupon validation (still synchronous – affects the response amount) ──
+    const combinedSubtotal = orders.reduce((sum: number, order: any) => sum + order.total, 0);
     let discountAmount = 0;
-    let appliedCouponData = null;
-    
+    let appliedCouponData: { couponId: any; code: string; discount: number } | null = null;
+
     if (couponCode) {
-      try {
-        logger.info(`[createOrder] Validating coupon: ${couponCode}`);
-        
-        // Collect products with brands and subcategories for validation
-        const productsInOrder = await Promise.all(
-          items.map(async (item: any) => {
-            const product: any = await Product.findById(item.product_id).populate('brand_id');
-            return {
-              productId: product?._id,
-              brandId: product?.brand_id?._id,
-              subcategory: product?.subCategory,
-              quantity: item.quantity,
-            };
-          })
-        );
-        
-        // Validate coupon
-        const coupon = await Coupon.findOne({ code: couponCode.toUpperCase(), isActive: true });
-        
-        if (!coupon) {
-          logger.warn(`[createOrder] Invalid or inactive coupon: ${couponCode}`);
-          return next(new AppError('Invalid or inactive coupon code', 400));
-        }
-        
-        // Check if coupon is within valid date range
-        const now = new Date();
-        if (coupon.validFrom && now < coupon.validFrom) {
-          return next(new AppError('Coupon is not yet valid', 400));
-        }
-        if (coupon.validTo && now > coupon.validTo) {
-          return next(new AppError('Coupon has expired', 400));
-        }
-        
-        // Check minimum order value
-        if (coupon.minOrderValue && combinedSubtotal < coupon.minOrderValue) {
-          return next(new AppError(`Minimum order value of ₹${coupon.minOrderValue} required`, 400));
-        }
-        
-        // Check if first-time customer only
-        if (coupon.isFirstTimeOnly) {
-          const previousOrders = await Order.countDocuments({ customer_id: req.user._id });
-          if (previousOrders > 0) {
-            return next(new AppError('This coupon is only valid for first-time customers', 400));
-          }
-        }
-        
-        // Check usage limits
-        if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
-          return next(new AppError('Coupon usage limit has been reached', 400));
-        }
-        
-        // Check per-user usage limit
-        if (coupon.usagePerUser) {
-          const userUsage = coupon.usedBy.find(
-            (usage: any) => usage.user_id.toString() === req.user._id.toString()
-          );
-          if (userUsage && userUsage.usageCount >= coupon.usagePerUser) {
-            return next(new AppError('You have reached the usage limit for this coupon', 400));
-          }
-        }
-        
-        // Check brand/category applicability
-        if (coupon.applicableFor === 'SPECIFIC_BRANDS') {
-          const hasApplicableProduct = productsInOrder.some((p: any) =>
-            coupon.brands.some((brandId: any) => brandId.toString() === p.brandId?.toString())
-          );
-          if (!hasApplicableProduct) {
-            return next(new AppError('Coupon not applicable to products in cart', 400));
-          }
-        } else if (coupon.applicableFor === 'SPECIFIC_CATEGORIES') {
-          const hasApplicableProduct = productsInOrder.some((p: any) =>
-            coupon.categories.includes(p.subcategory)
-          );
-          if (!hasApplicableProduct) {
-            return next(new AppError('Coupon not applicable to products in cart', 400));
-          }
-        }
-        
-        // Calculate discount
-        if (coupon.discountType === 'PERCENTAGE') {
-          discountAmount = Math.round((combinedSubtotal * coupon.discountValue) / 100);
-          if (coupon.maxDiscount && discountAmount > coupon.maxDiscount) {
-            discountAmount = coupon.maxDiscount;
-          }
-        } else {
-          discountAmount = coupon.discountValue;
-        }
-        
-        // Ensure discount doesn't exceed subtotal
-        discountAmount = Math.min(discountAmount, combinedSubtotal);
-        
-        appliedCouponData = {
-          couponId: coupon._id,
-          code: coupon.code,
-          discount: discountAmount,
-        };
-        
-        console.log('\n===== DEBUG: Coupon Applied Successfully =====');
-        console.log('Coupon Code:', coupon.code);
-        console.log('Discount Type:', coupon.discountType);
-        console.log('Discount Value:', coupon.discountValue);
-        console.log('Calculated Discount Amount:', discountAmount);
-        console.log('==============================================\n');
-        
-        logger.info(`[createOrder] ✅ Coupon ${couponCode} applied - Discount: ₹${discountAmount}`);
-        
-      } catch (couponError: any) {
-        console.log('\n===== DEBUG: Coupon Validation ERROR =====');
-        console.log('Error:', couponError.message);
-        console.log('==========================================\n');
-        logger.error('[createOrder] Coupon validation error:', couponError.message);
-        return next(new AppError(couponError.message || 'Error validating coupon', 400));
+      logger.info(`[createOrder] Validating coupon: ${couponCode}`);
+
+      const productsInOrder = await Promise.all(
+        items.map(async (item: any) => {
+          const product: any = await Product.findById(item.product_id).populate('brand_id');
+          return {
+            productId: product?._id,
+            brandId: product?.brand_id?._id,
+            subcategory: product?.subCategory,
+            quantity: item.quantity,
+          };
+        })
+      );
+
+      const coupon = await Coupon.findOne({ code: couponCode.toUpperCase(), isActive: true });
+      if (!coupon) return next(new AppError('Invalid or inactive coupon code', 400));
+
+      const now = new Date();
+      if (coupon.validFrom && now < coupon.validFrom)
+        return next(new AppError('Coupon is not yet valid', 400));
+      if (coupon.validTo && now > coupon.validTo)
+        return next(new AppError('Coupon has expired', 400));
+      if (coupon.minOrderValue && combinedSubtotal < coupon.minOrderValue)
+        return next(new AppError(`Minimum order value of ₹${coupon.minOrderValue} required`, 400));
+
+      if (coupon.isFirstTimeOnly) {
+        const previousOrders = await Order.countDocuments({ customer_id: req.user._id });
+        if (previousOrders > 0)
+          return next(new AppError('This coupon is only valid for first-time customers', 400));
       }
-    } else {
-      console.log('\n===== DEBUG: No Coupon Code Provided =====');
-      console.log('=========================================\n');
+
+      if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit)
+        return next(new AppError('Coupon usage limit has been reached', 400));
+
+      if (coupon.usagePerUser) {
+        const userUsage = coupon.usedBy.find(
+          (usage: any) => usage.user_id.toString() === req.user._id.toString()
+        );
+        if (userUsage && userUsage.usageCount >= coupon.usagePerUser)
+          return next(new AppError('You have reached the usage limit for this coupon', 400));
+      }
+
+      if (coupon.applicableFor === 'SPECIFIC_BRANDS') {
+        const ok = productsInOrder.some((p: any) =>
+          coupon.brands.some((brandId: any) => brandId.toString() === p.brandId?.toString())
+        );
+        if (!ok) return next(new AppError('Coupon not applicable to products in cart', 400));
+      } else if (coupon.applicableFor === 'SPECIFIC_CATEGORIES') {
+        const ok = productsInOrder.some((p: any) => coupon.categories.includes(p.subcategory));
+        if (!ok) return next(new AppError('Coupon not applicable to products in cart', 400));
+      }
+
+      if (coupon.discountType === 'PERCENTAGE') {
+        discountAmount = Math.round((combinedSubtotal * coupon.discountValue) / 100);
+        if (coupon.maxDiscount && discountAmount > coupon.maxDiscount)
+          discountAmount = coupon.maxDiscount;
+      } else {
+        discountAmount = coupon.discountValue;
+      }
+      discountAmount = Math.min(discountAmount, combinedSubtotal);
+
+      appliedCouponData = { couponId: coupon._id, code: coupon.code, discount: discountAmount };
+      logger.info(`[createOrder] ✅ Coupon ${couponCode} applied – Discount: ₹${discountAmount}`);
     }
 
-    // Check if order contains Prime products and/or Normal products
-    const hasPrimeProducts = orders.some(order => order.isPrime);
-    const hasNormalProducts = orders.some(order => !order.isPrime);
+    // ── Shipping / platform fee ───────────────────────────────────────────────
+    const hasPrimeProducts = orders.some((o: any) => o.isPrime);
+    const hasNormalProducts = orders.some((o: any) => !o.isPrime);
     const isMixedOrder = hasPrimeProducts && hasNormalProducts;
 
-    // Calculate shipping charges and platform fee based on combined total
     let charges = await ShippingService.calculateCharges(combinedSubtotal);
-    
-    // For orders with Prime products, always apply ₹10 platform fee
-    if (hasPrimeProducts) {
-      charges.platformFee = 10;
-    }
-    
-    // For mixed orders (prime + normal), ensure shipping charges apply to ALL orders
-    // Prime products get delivery charges when mixed with normal products
-    if (isMixedOrder) {
-      logger.info(`[createOrder] Mixed order detected - applying delivery charges to prime products`);
-      // Ensure minimum shipping charge for mixed orders
-      if (charges.shippingCharges === 0) {
-        charges.shippingCharges = 50; // Apply standard shipping for mixed orders
-      }
-    }
-    
-    // Apply discount before calculating final total
+    if (hasPrimeProducts) charges.platformFee = 10;
+    if (isMixedOrder && charges.shippingCharges === 0) charges.shippingCharges = 50;
+
     const subtotalAfterDiscount = combinedSubtotal - discountAmount;
     charges.total = subtotalAfterDiscount + charges.shippingCharges + charges.platformFee;
-    
-    console.log('\n===== DEBUG: Calculating Final Totals =====');
-    console.log('Combined Subtotal:', combinedSubtotal);
-    console.log('Discount Amount:', discountAmount);
-    console.log('Subtotal After Discount:', subtotalAfterDiscount);
-    console.log('Shipping Charges:', charges.shippingCharges);
-    console.log('Platform Fee:', charges.platformFee);
-    console.log('Final Total:', charges.total);
-    console.log('Number of Orders:', orders.length);
-    console.log('==========================================\n');
-    
-    // Distribute charges AND discount EQUALLY across all orders
-    const discountPerOrder = Math.round(discountAmount / orders.length);
-    
-    for (const order of orders) {
-      order.subtotalBeforeCharges = order.total;
-      order.discountAmount = discountPerOrder;
-      order.couponCode = couponCode ? couponCode.toUpperCase() : undefined;
-      order.shippingCharges = Math.round(charges.shippingCharges / orders.length);
-      order.platformFee = Math.round(charges.platformFee / orders.length);
-      order.total = order.subtotalBeforeCharges - order.discountAmount + order.shippingCharges + order.platformFee;
-      order.grandTotal = order.total;
-      await order.save();
-      
-      // Debug logging  
-      console.log('DEBUG - createOrder - Saved order with discount:', {
-        orderId: order._id,
-        discountAmount: order.discountAmount,
-        couponCode: order.couponCode,
-        subtotalBeforeCharges: order.subtotalBeforeCharges,
-        total: order.total,
-      });
-      
-      if (order.isPrime && isMixedOrder) {
-        logger.info(`[createOrder] Prime order ${order._id} charged ₹${order.shippingCharges} delivery (mixed order)`);
-      }
-      if (order.discountAmount > 0) {
-        logger.info(`[createOrder] Order ${order._id} applied discount: ₹${order.discountAmount}`);
-      }
-    }
 
-    // Populate all orders with product details for email
-    const populatedOrders = await Promise.all(
-      orders.map(order => order.populate('items.product_id'))
+    // ── Apply charges to all orders in parallel ───────────────────────────────
+    const discountPerOrder = Math.round(discountAmount / orders.length);
+    await Promise.all(
+      orders.map(async (order: any) => {
+        order.subtotalBeforeCharges = order.total;
+        order.discountAmount = discountPerOrder;
+        order.couponCode = couponCode ? couponCode.toUpperCase() : undefined;
+        order.shippingCharges = Math.round(charges.shippingCharges / orders.length);
+        order.platformFee = Math.round(charges.platformFee / orders.length);
+        order.total =
+          order.subtotalBeforeCharges -
+          order.discountAmount +
+          order.shippingCharges +
+          order.platformFee;
+        order.grandTotal = order.total;
+        return order.save();
+      })
     );
 
-    // Collect all items from all orders for customer email
-    const allItems = populatedOrders.flatMap(order => order.items);
-    const totalAmount = orders.reduce((sum, order) => sum + order.total, 0);
+    const totalAmount = orders.reduce((sum: number, o: any) => sum + o.total, 0);
 
-    console.log('\n===== DEBUG: Final Order Summary =====');
-    console.log('Total Amount (sum of all orders):', totalAmount);
-    console.log('Total Discount Applied:', discountAmount);
-    console.log('Coupon Code:', couponCode);
-    console.log('======================================\n');
-
-    // Send order confirmation email to customer directly (non-blocking fire-and-forget)
-    // NOTE: Using direct call (not queue) so email is attempted immediately and survives server restarts
-    logger.info(`[createOrder] Sending order confirmation email to: ${req.user.email}`);
-    sendOrderConfirmationEmail(
-      req.user.email,
-      req.user.name,
-      `#${orders[0]._id.toString().slice(-8)}${isSplitShipment ? ` (+${orders.length - 1} more)` : ''}`,
-      {
-        totalAmount: totalAmount,
-        items: allItems, // ALL items from ALL split orders
-        customerAddress: orders[0].customerAddress,
-        shippingCharges: charges.shippingCharges,
-        platformFee: charges.platformFee,
-        subtotal: combinedSubtotal,
-        subtotalBeforeCharges: combinedSubtotal,
-        discountAmount: discountAmount || 0,
-        couponCode: couponCode || undefined,
-        isSplitShipment: isSplitShipment,
-        splitOrderCount: orders.length,
-        splitOrderIds: orders.map(o => `#${o._id.toString().slice(-8)}`),
-      }
-    ).then(() => {
-      logger.info(`[createOrder] ✅ Order confirmation email sent to ${req.user.email}`);
-    }).catch((emailError: any) => {
-      logger.error('[createOrder] ❌ Order confirmation email failed:', emailError.message);
-      // Don't fail the order creation if email fails
-    });
-
-    // Notify admin of new order (non-blocking)
-    const adminEmails = process.env.ADMIN_EMAILS;
-    if (adminEmails) {
-      adminEmails.split(',').forEach(adminEmail => {
-        sendAdminOrderNotificationEmail(
-          adminEmail.trim(),
-          `#${orders[0]._id.toString().slice(-8)}`,
-          {
-            customerName: req.user.name,
-            totalAmount: totalAmount,
-            items: allItems,
-          }
-        ).catch((err: any) => logger.error('[createOrder] Admin notification email failed:', err.message));
-      });
-    }
-
-    // Record coupon usage if coupon was applied
-    if (appliedCouponData) {
-      try {
-        logger.info(`[createOrder] Recording coupon usage: ${appliedCouponData.code}`);
-        
-        const coupon = await Coupon.findById(appliedCouponData.couponId);
-        if (coupon) {
-          // Increment global usage count
-          coupon.usedCount += 1;
-          
-          // Track per-user usage
-          const existingUsage = coupon.usedBy.find(
-            (usage: any) => usage.user_id.toString() === req.user._id.toString()
-          );
-          
-          if (existingUsage) {
-            existingUsage.usageCount += 1;
-            existingUsage.lastUsedAt = new Date();
-          } else {
-            coupon.usedBy.push({
-              user_id: req.user._id,
-              usageCount: 1,
-              lastUsedAt: new Date(),
-            });
-          }
-          
-          await coupon.save();
-          logger.info(`[createOrder] ✅ Coupon usage recorded for ${appliedCouponData.code}`);
-        }
-      } catch (couponUsageError: any) {
-        logger.error('[createOrder] Failed to record coupon usage:', couponUsageError.message);
-        // Don't fail the order if coupon usage recording fails
-      }
-    }
-
+    // ── Respond immediately ───────────────────────────────────────────────────
     res.status(201).json({
       success: true,
-      message: isSplitShipment 
+      message: isSplitShipment
         ? `Order created successfully! Your items will arrive in ${orders.length} separate shipments.`
         : 'Order created successfully',
-      data: { 
-        orders,
-        isSplitShipment,
-        totalAmount,
-      },
+      data: { orders, isSplitShipment, totalAmount },
     });
+
+    // ── Emit background events (after response is sent) ───────────────────────
+
+    // 1. Customer confirmation + admin emails
+    const adminEmails = process.env.ADMIN_EMAILS
+      ? process.env.ADMIN_EMAILS.split(',').map((e) => e.trim()).filter(Boolean)
+      : [];
+
+    orderQueue.emit('order:created', {
+      userEmail: req.user.email,
+      userName: req.user.name,
+      userId: req.user._id.toString(),
+      orderIds: orders.map((o: any) => o._id.toString()),
+      isSplitShipment,
+      combinedSubtotal,
+      shippingCharges: charges.shippingCharges,
+      platformFee: charges.platformFee,
+      discountAmount,
+      couponCode: couponCode || undefined,
+      customerAddress: orders[0].customerAddress,
+      adminEmails,
+      totalAmount,
+    });
+
+    // 2. Vendor / fulfiller notifications
+    for (const notif of notifications) {
+      orderQueue.emit('order:vendor-notify', notif);
+    }
+
+    // 3. Sales recording for MY_SHOP orders
+    for (const sale of salesRecords) {
+      orderQueue.emit('order:record-sales', sale);
+    }
+
+    // 4. Coupon usage recording
+    if (appliedCouponData) {
+      orderQueue.emit('order:record-coupon', {
+        couponId: appliedCouponData.couponId.toString(),
+        userId: req.user._id.toString(),
+        couponCode: appliedCouponData.code,
+      });
+    }
   } catch (error: any) {
     next(error);
   }

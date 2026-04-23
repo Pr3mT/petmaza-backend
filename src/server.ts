@@ -17,6 +17,9 @@ import { initializeWebSocket } from './websocket/server';
 import { requestTimeout } from './middlewares/timeout';
 import { performanceMonitor } from './middlewares/performance';
 
+// Register background order processing workers (must be imported before routes)
+import './services/OrderWorkers';
+
 // Load environment variables
 dotenv.config();
 
