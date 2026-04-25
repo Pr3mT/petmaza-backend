@@ -12,6 +12,7 @@ import {
   removeVendorProductAssignment,
   cleanupVariantProducts,
   reseedVariantProduct,
+  createVendor,
   createFulfiller,
   getFulfillers,
   updateFulfiller,
@@ -48,6 +49,9 @@ router.put('/users/:id/approve', approveVendor);
 router.get('/users/:id', getUserById);
 router.get('/stats', getAdminStats);
 router.get('/orders', getAllOrders);
+
+// Admin vendor creation
+router.post('/vendors', createVendor);
 
 // Vendor-Product Assignment routes
 router.post('/vendors/:id/assign-brands', assignBrandsToVendor);

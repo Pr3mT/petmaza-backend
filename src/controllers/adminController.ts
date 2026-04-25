@@ -492,6 +492,79 @@ export const reseedVariantProduct = async (req: Request, res: Response, next: Ne
   }
 };
 
+// ==================== VENDOR CREATION BY ADMIN ====================
+
+export const createVendor = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, email, password, vendorType, phone } = req.body;
+
+    if (!name || !email || !password || !vendorType) {
+      return next(new AppError('Please provide name, email, password and vendor type', 400));
+    }
+
+    if (!['PRIME', 'MY_SHOP'].includes(vendorType)) {
+      return next(new AppError('Invalid vendor type. Must be PRIME or MY_SHOP', 400));
+    }
+
+    const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existingUser) {
+      return next(new AppError('A user with this email already exists', 400));
+    }
+
+    let primeVendorCode: number | undefined;
+    if (vendorType === 'PRIME') {
+      const highest = await User.findOne({ primeVendorCode: { $exists: true, $ne: null } })
+        .sort({ primeVendorCode: -1 })
+        .select('primeVendorCode')
+        .lean();
+      primeVendorCode = ((highest as any)?.primeVendorCode || 0) + 1;
+    }
+
+    const userData: any = {
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      password,
+      phone: phone?.trim() || '0000000000',
+      role: 'vendor',
+      vendorType,
+      isApproved: true,
+      isEmailVerified: true,
+    };
+
+    if (primeVendorCode !== undefined) {
+      userData.primeVendorCode = primeVendorCode;
+    }
+
+    const user = await User.create(userData);
+
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    await VendorDetails.create({
+      vendor_id: user._id,
+      vendorType,
+      shopName: `${name.trim()}'s Shop`,
+      pickupAddress: {
+        street: 'TBD',
+        city: 'TBD',
+        state: 'TBD',
+        pincode: '000000',
+      },
+      isApproved: true,
+      approvedBy: req.user._id,
+      approvedAt: new Date(),
+    });
+
+    const userResponse = await User.findById(user._id).select('-password');
+
+    res.status(201).json({
+      success: true,
+      message: 'Vendor created successfully',
+      data: { user: userResponse },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
 // ==================== FULFILLER MANAGEMENT ====================
 
 /**

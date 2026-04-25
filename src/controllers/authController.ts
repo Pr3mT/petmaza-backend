@@ -127,7 +127,7 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
     }
 
     // Find user and include password for comparison
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password');
 
     if (!user || !(await (user as any).comparePassword(password))) {
       return next(new AppError('Invalid email or password', 401));
