@@ -3,7 +3,6 @@ import ExcelJS from 'exceljs';
 import Product from '../models/Product';
 import Brand from '../models/Brand';
 import User from '../models/User';
-import PrimeProduct from '../models/PrimeProduct';
 import VendorProductPricing from '../models/VendorProductPricing';
 import CategoryFulfillerMapping from '../models/CategoryFulfillerMapping';
 import { AppError } from '../middlewares/errorHandler';
@@ -684,17 +683,21 @@ async function assignVendor(
   refVariant?: any,
 ): Promise<void> {
   if (vendorType === 'PRIME') {
-    await PrimeProduct.create({
-      vendor_id:        vendorId,
-      product_id:       product._id,
-      vendorMRP:        refVariant?.mrp         ?? product.mrp         ?? 0,
-      vendorPrice:      refVariant?.sellingPrice ?? product.sellingPrice ?? 0,
-      stock:            refVariant?.stock        ?? 0,
-      minOrderQuantity: 1,
-      maxOrderQuantity: 100,
-      deliveryTime:     '3-5 business days',
-      isActive:         true,
-      isAvailable:      true,
+    // After unification, mark the Product itself as prime instead of creating a separate listing
+    const stockVal = refVariant?.stock ?? 0;
+    await Product.findByIdAndUpdate(product._id, {
+      $set: {
+        isPrime:          true,
+        primeVendor_id:   vendorId,
+        mrp:              refVariant?.mrp         ?? product.mrp         ?? 0,
+        sellingPrice:     refVariant?.sellingPrice ?? product.sellingPrice ?? 0,
+        stock:            stockVal,
+        minOrderQuantity: 1,
+        maxOrderQuantity: 100,
+        deliveryTime:     '3-5 business days',
+        isActive:         true,
+        isAvailable:      stockVal > 0,
+      },
     });
   } else {
     await VendorProductPricing.create({

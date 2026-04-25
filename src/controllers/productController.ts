@@ -4,7 +4,6 @@ import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import Product from '../models/Product';
 import Brand from '../models/Brand';
-import PrimeProduct from '../models/PrimeProduct';
 import VendorDetails from '../models/VendorDetails';
 import { clearCache } from '../middlewares/cache';
 import { notifyWaitingCustomers } from './productNotificationController';
@@ -100,35 +99,6 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
       })), null, 2));
     }
     console.log('[createProduct] =============================================\n');
-    
-    // Determine the prime vendor ID for listing creation
-    const primeVendorId = user.vendorType === 'PRIME'
-      ? user._id
-      : (product.isPrime && product.primeVendor_id ? product.primeVendor_id : null);
-
-    // If product is prime (created by prime vendor OR admin with isPrime: true), auto-create PrimeProduct listing
-    if (primeVendorId) {
-      await PrimeProduct.create({
-        vendor_id: primeVendorId,
-        product_id: product._id,
-        vendorMRP: product.mrp || (product.variants && product.variants.length > 0 ? product.variants[0].mrp : 0),
-        vendorPrice: product.sellingPrice || (product.variants && product.variants.length > 0 ? product.variants[0].sellingPrice : 0),
-        stock: 0,
-        minOrderQuantity: 1,
-        maxOrderQuantity: 100,
-        deliveryTime: '3-5 business days',
-        isActive: true,
-        isAvailable: true,
-        variant_id: undefined,
-        selectedVariant: product.hasVariants && product.variants && product.variants.length > 0
-          ? {
-              weight: product.variants[0].weight,
-              unit: product.variants[0].unit,
-              displayWeight: product.variants[0].displayWeight,
-            }
-          : undefined,
-      });
-    }
     
     // Clear product cache so customers see the new product immediately
     clearCache('/products');
@@ -270,12 +240,9 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
       }
 
       if (user.vendorType === 'PRIME') {
-        // PRIME vendors can edit any product they have a PrimeProduct listing for
-        const listing = await PrimeProduct.findOne({
-          product_id: req.params.id,
-          vendor_id: user._id,
-        });
-        if (!listing) {
+        // PRIME vendors can only edit their own prime products (primeVendor_id must match)
+        const existingCheck = await Product.findById(req.params.id);
+        if (!existingCheck || !existingCheck.isPrime || existingCheck.primeVendor_id?.toString() !== user._id.toString()) {
           return next(new AppError('You can only update products you have listed', 403));
         }
       } else {
@@ -370,9 +337,6 @@ export const deleteProduct = async (req: AuthRequest, res: Response, next: NextF
       }
     }
 
-    // Also delete any PrimeProduct listings that reference this product
-    await PrimeProduct.deleteMany({ product_id: req.params.id });
-
     const product = await ProductService.deleteProduct(req.params.id);
     
     // Clear product cache so customers don't see the deleted product
@@ -433,44 +397,42 @@ export const getPrimeListingsForProduct = async (req: Request, res: Response, ne
     const { productId } = req.params;
     const { variantId } = req.query;
 
-    // Build query
-    const query: any = { 
-      product_id: productId, 
-      isActive: true, 
-      isAvailable: true 
-    };
+    // After unification, a prime product IS the Product document.
+    // Look up the product and return it as a single-element listing array.
+    const product = await Product.findOne({
+      _id: productId,
+      isPrime: true,
+      isActive: true,
+      isAvailable: true,
+    }).populate('primeVendor_id', 'name shopName email phone');
 
-    if (variantId) {
-      query.variant_id = variantId;
+    if (!product) {
+      return res.status(200).json({ success: true, data: [], count: 0 });
     }
 
-    // Get prime listings with vendor details
-    const primeListings = await PrimeProduct.find(query)
-      .populate('product_id', 'name images category subcategory')
-      .populate({
-        path: 'vendor_id',
-        select: 'name shopName email phone',
-      })
-      .sort({ vendorPrice: 1 }); // Sort by price ascending
+    const vendorDetails = await VendorDetails.findOne({
+      vendor_id: product.primeVendor_id,
+    }).select('rating totalOrders averageDeliveryTime returnPolicy shopName');
 
-    // Get vendor details for each listing
-    const listingsWithVendorDetails = await Promise.all(
-      primeListings.map(async (listing) => {
-        const vendorDetails = await VendorDetails.findOne({ 
-          vendor_id: listing.vendor_id 
-        }).select('rating totalOrders averageDeliveryTime returnPolicy shopName');
-
-        return {
-          ...listing.toObject(),
-          vendorDetails,
-        };
-      })
-    );
+    const listing = {
+      _id: product._id,
+      product_id: product,
+      vendor_id: product.primeVendor_id,
+      vendorPrice: product.sellingPrice || 0,
+      vendorMRP: product.mrp || 0,
+      purchasePrice: product.purchasePrice || 0,
+      stock: product.stock || 0,
+      isAvailable: product.isAvailable !== false,
+      isActive: product.isActive,
+      deliveryTime: product.deliveryTime,
+      vendorImages: product.vendorImages || [],
+      vendorDetails,
+    };
 
     res.status(200).json({
       success: true,
-      data: listingsWithVendorDetails,
-      count: listingsWithVendorDetails.length,
+      data: [listing],
+      count: 1,
     });
 
   } catch (error: any) {
@@ -480,17 +442,17 @@ export const getPrimeListingsForProduct = async (req: Request, res: Response, ne
 
 /**
  * Get Prime Products by Category
- * Browse all prime products in a category with vendor information
+ * After unification: queries Product directly (isPrime=true) instead of PrimeProduct.
  */
 export const getPrimeProductsByCategory = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { category, subcategory } = req.query;
-    const { 
-      page = 1, 
+    const {
+      page = 1,
       limit = 20,
       minPrice,
       maxPrice,
-      sortBy = 'vendorPrice',
+      sortBy = 'sellingPrice',
       sortOrder = 'asc',
     } = req.query;
 
@@ -498,58 +460,46 @@ export const getPrimeProductsByCategory = async (req: Request, res: Response, ne
       return next(new AppError('Category is required', 400));
     }
 
-    // Build product filter
-    const productFilter: any = { category };
-    if (subcategory) {
-      productFilter.subcategory = subcategory;
-    }
-
-    // Find products matching category
-    const products = await ProductService.getAllProducts({ 
-      mainCategory: productFilter.category,
-      subCategory: productFilter.subcategory
-    });
-
-    const productIds = products.map((p: any) => p._id);
-
-    // Build prime product query
+    // Query Products directly — no PrimeProduct join needed after unification
     const primeQuery: any = {
-      product_id: { $in: productIds },
+      isPrime: true,
       isActive: true,
       isAvailable: true,
+      mainCategory: category,
     };
-
-    if (minPrice) primeQuery.vendorPrice = { $gte: Number(minPrice) };
+    if (subcategory) primeQuery.subCategory = subcategory;
+    if (minPrice) primeQuery.sellingPrice = { $gte: Number(minPrice) };
     if (maxPrice) {
-      primeQuery.vendorPrice = primeQuery.vendorPrice 
-        ? { ...primeQuery.vendorPrice, $lte: Number(maxPrice) }
+      primeQuery.sellingPrice = primeQuery.sellingPrice
+        ? { ...primeQuery.sellingPrice, $lte: Number(maxPrice) }
         : { $lte: Number(maxPrice) };
     }
 
-    // Pagination
     const skip = (Number(page) - 1) * Number(limit);
     const sortOptions: any = {};
     sortOptions[sortBy as string] = sortOrder === 'asc' ? 1 : -1;
 
-    // Get prime listings
-    const primeProducts = await PrimeProduct.find(primeQuery)
-      .populate('product_id', 'name images category subcategory')
-      .populate('vendor_id', 'name shopName')
+    const primeProducts = await Product.find(primeQuery)
+      .populate('primeVendor_id', 'name shopName')
       .sort(sortOptions)
       .skip(skip)
       .limit(Number(limit));
 
-    const total = await PrimeProduct.countDocuments(primeQuery);
+    const total = await Product.countDocuments(primeQuery);
 
-    // Get vendor details for each listing
+    // Attach vendor rating/details to each product
     const productsWithVendorDetails = await Promise.all(
-      primeProducts.map(async (listing) => {
-        const vendorDetails = await VendorDetails.findOne({ 
-          vendor_id: listing.vendor_id 
+      primeProducts.map(async (product) => {
+        const vendorDetails = await VendorDetails.findOne({
+          vendor_id: product.primeVendor_id,
         }).select('rating totalOrders averageDeliveryTime shopName');
 
         return {
-          ...listing.toObject(),
+          ...product.toObject(),
+          // Compatibility aliases for old frontend code that reads vendorPrice / vendorMRP
+          vendorPrice: product.sellingPrice || 0,
+          vendorMRP: product.mrp || 0,
+          vendor_id: product.primeVendor_id,
           vendorDetails,
         };
       })
@@ -565,7 +515,6 @@ export const getPrimeProductsByCategory = async (req: Request, res: Response, ne
         itemsPerPage: Number(limit),
       },
     });
-
   } catch (error: any) {
     next(error);
   }

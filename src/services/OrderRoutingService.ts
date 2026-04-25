@@ -1,6 +1,5 @@
 import Order from '../models/Order';
 import Product from '../models/Product';
-import PrimeProduct from '../models/PrimeProduct';
 import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
@@ -53,7 +52,10 @@ export class OrderRoutingService {
     const sellingPrice =
       variant.sellingPrice || Math.round((variant.mrp * (variant.sellingPercentage / 100)) * 100) / 100;
     const purchasePrice =
-      variant.purchasePrice || Math.round((variant.mrp * (variant.purchasePercentage / 100)) * 100) / 100;
+      variant.purchasePrice ||
+      Math.round((variant.mrp * (variant.purchasePercentage / 100)) * 100) / 100 ||
+      // If purchasePercentage is not set either, default earnings = sellingPrice.
+      sellingPrice;
 
     return { sellingPrice, purchasePrice };
   }
@@ -165,15 +167,9 @@ export class OrderRoutingService {
 
     // Create one order per vendor
     for (const [vendorId, vendorItems] of vendorItemsMap) {
-      // ── Batch-fetch all PrimeProduct listings for this vendor in ONE query ──
-      const primeListings = await PrimeProduct.find({
-        vendor_id: vendorId,
-        product_id: { $in: vendorItems.map((i) => i.product_id) },
-        isActive: true,
-      }).lean();
-      const primeListingMap = new Map(
-        primeListings.map((pl: any) => [pl.product_id.toString(), pl])
-      );
+      // After unification, the Product IS the prime listing — pricing comes directly
+      // from Product.sellingPrice (= vendorPrice) and Product.purchasePrice.
+      // No separate PrimeProduct batch-fetch needed.
 
       // Build order items with prime-specific pricing
       const orderItems: IOrderItem[] = [];
@@ -182,8 +178,6 @@ export class OrderRoutingService {
         if (!product) {
           throw new AppError(`Product ${item.product_id} not found`, 404);
         }
-
-        const primeListing = primeListingMap.get(item.product_id);
 
         let sellingPrice: number;
         let purchasePrice: number;
@@ -199,13 +193,13 @@ export class OrderRoutingService {
           sellingPrice = variantPrices.sellingPrice;
           purchasePrice = variantPrices.purchasePrice;
         } else {
-          sellingPrice = primeListing?.vendorPrice ?? product.sellingPrice ?? 0;
+          // Prime product: sellingPrice IS the vendor's set price; purchasePrice is their cost.
+          sellingPrice = product.sellingPrice ?? 0;
           purchasePrice =
-            primeListing?.purchasePrice && primeListing.purchasePrice > 0
-              ? primeListing.purchasePrice
-              : product.purchasePrice && product.purchasePrice > 0
+            product.purchasePrice && product.purchasePrice > 0
               ? product.purchasePrice
-              : 0;
+              // For prime vendors, if no explicit purchase price is set, earnings = sellingPrice.
+              : sellingPrice;
         }
 
         if (sellingPrice === 0) {

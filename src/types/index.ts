@@ -72,6 +72,17 @@ export interface IProduct extends Document {
   averageRating?: number; // Average rating from reviews (0-5)
   totalReviews?: number; // Total number of reviews
   inStock?: boolean;
+  // ── Prime-product-specific fields (only used when isPrime = true) ──────────
+  stock?: number;            // Current stock level managed by prime vendor
+  deliveryTime?: string;     // e.g. '3-5 business days'
+  deliveryNotes?: string;    // Extra delivery info from vendor
+  vendorImages?: string[];   // Additional images the vendor can add
+  isAvailable?: boolean;     // Vendor can mark temporarily unavailable
+  ordersCount?: number;      // How many orders this product has received
+  soldQuantity?: number;     // Total units sold through prime vendor
+  minOrderQuantity?: number; // Minimum qty per order (default 1)
+  maxOrderQuantity?: number; // Maximum qty per order (default 100)
+  views?: number;            // View/impression count
   createdAt: Date;
   updatedAt: Date;
 }

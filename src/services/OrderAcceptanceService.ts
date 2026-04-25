@@ -229,15 +229,16 @@ export class OrderAcceptanceService {
 
     // Check if vendor has all products available
     if (order.isPrime) {
-      // Prime orders: validate via PrimeProduct listings
-      const PrimeProductModel = (await import('../models/PrimeProduct')).default;
+      // After unification, Product IS the prime listing — check directly
+      const ProductModel = (await import('../models/Product')).default;
       for (const item of order.items) {
-        const listing = await PrimeProductModel.findOne({
-          vendor_id,
-          product_id: item.product_id,
+        const product = await ProductModel.findOne({
+          _id: item.product_id,
+          primeVendor_id: vendor_id,
+          isPrime: true,
           isActive: true,
         });
-        if (!listing) {
+        if (!product) {
           throw new AppError(`Product ${item.product_id} not available`, 400);
         }
       }
@@ -264,20 +265,21 @@ export class OrderAcceptanceService {
     let newTotalProfit = 0;
 
     if (order.isPrime) {
-      // Prime orders: use PrimeProduct pricing (vendorPrice as sellingPrice, purchasePrice from listing)
-      const PrimeProductModel = (await import('../models/PrimeProduct')).default;
+      // After unification, Product IS the prime listing — read pricing directly
+      const ProductModel = (await import('../models/Product')).default;
       for (const item of order.items) {
-        const listing = await PrimeProductModel.findOne({
-          vendor_id,
-          product_id: item.product_id,
+        const product = await ProductModel.findOne({
+          _id: item.product_id,
+          primeVendor_id: vendor_id,
+          isPrime: true,
           isActive: true,
         });
-        if (!listing) {
+        if (!product) {
           throw new AppError(`Product ${item.product_id} not available from vendor`, 404);
         }
 
-        const sellingPrice = listing.vendorPrice;
-        const purchasePrice = listing.purchasePrice || 0;
+        const sellingPrice = product.sellingPrice ?? 0;
+        const purchasePrice = product.purchasePrice || 0;
         const subtotal = sellingPrice * item.quantity;
         const purchaseSubtotal = purchasePrice * item.quantity;
         const profit = subtotal - purchaseSubtotal;
@@ -596,15 +598,16 @@ export class OrderAcceptanceService {
       console.log(`[getOrderDetails] Order is pending/unassigned, checking vendor eligibility`);
 
       if (order.isPrime) {
-        // Prime orders: check via PrimeProduct listings
-        const PrimeProductModel = (await import('../models/PrimeProduct')).default;
+        // After unification, Product IS the prime listing — check directly
+        const ProductModel = (await import('../models/Product')).default;
         for (const item of order.items) {
-          const listing = await PrimeProductModel.findOne({
-            vendor_id: vendorObjectId,
-            product_id: item.product_id,
+          const product = await ProductModel.findOne({
+            _id: item.product_id,
+            primeVendor_id: vendorObjectId,
+            isPrime: true,
             isActive: true,
           });
-          if (!listing) {
+          if (!product) {
             throw new AppError(`Vendor does not have product ${item.product_id} available`, 403);
           }
         }
@@ -644,15 +647,16 @@ export class OrderAcceptanceService {
     let totalPurchasePrice = 0;
 
     if (order.isPrime) {
-      // Prime orders: use PrimeProduct.purchasePrice
-      const PrimeProductModel = (await import('../models/PrimeProduct')).default;
+      // After unification, Product IS the prime listing — read purchasePrice directly
+      const ProductModel = (await import('../models/Product')).default;
       for (const item of order.items) {
-        const listing = await PrimeProductModel.findOne({
-          vendor_id: vendorObjectId,
-          product_id: item.product_id,
+        const product = await ProductModel.findOne({
+          _id: item.product_id,
+          primeVendor_id: vendorObjectId,
+          isPrime: true,
         });
-        if (listing) {
-          totalPurchasePrice += (listing.purchasePrice || 0) * item.quantity;
+        if (product) {
+          totalPurchasePrice += (product.purchasePrice || 0) * item.quantity;
         }
       }
     } else {

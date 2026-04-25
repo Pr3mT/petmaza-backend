@@ -151,6 +151,55 @@ const productSchema = new Schema<IProduct>(
       default: 0,
       min: 0,
     },
+    // ── Prime-product-specific fields (only populated when isPrime = true) ───
+    // These replace the now-defunct PrimeProduct collection.  All vendor-facing
+    // listing data lives here so the system uses a single Product document.
+    stock: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    deliveryTime: {
+      type: String,
+      default: '3-5 business days',
+    },
+    deliveryNotes: {
+      type: String,
+      trim: true,
+    },
+    vendorImages: {
+      type: [String],
+      default: [],
+    },
+    isAvailable: {
+      type: Boolean,
+      default: true,
+    },
+    ordersCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    soldQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    minOrderQuantity: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+    maxOrderQuantity: {
+      type: Number,
+      default: 100,
+      min: 1,
+    },
+    views: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,
@@ -300,6 +349,7 @@ productSchema.index({ createdAt: -1 }); // For sorting by newest
 productSchema.index({ category_id: 1, isActive: 1 }); // Compound index
 productSchema.index({ brand_id: 1, isActive: 1 }); // Compound index
 productSchema.index({ isPrime: 1, isActive: 1 }); // Compound index
+productSchema.index({ primeVendor_id: 1, isPrime: 1, isActive: 1, isAvailable: 1 }); // Prime vendor queries
 productSchema.index({ name: 'text', description: 'text' }); // Text search index
 
 const Product = mongoose.model<IProduct>('Product', productSchema);

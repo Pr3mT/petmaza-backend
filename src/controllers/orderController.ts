@@ -4,7 +4,6 @@ import { OrderAcceptanceService } from '../services/OrderAcceptanceService';
 import { ShippingService } from '../services/ShippingService';
 import Order from '../models/Order';
 import User from '../models/User';
-import PrimeProduct from '../models/PrimeProduct';
 import Product from '../models/Product';
 import Coupon from '../models/Coupon';
 import { AppError } from '../middlewares/errorHandler';
@@ -713,10 +712,9 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
       return next(new AppError('Pincode and address are required', 400));
     }
 
-    // Get prime product listing
-    const primeListing = await PrimeProduct.findById(primeProductId)
-      .populate('product_id')
-      .populate('vendor_id', 'name email shopName');
+    // After unification, the Product IS the prime listing
+    const primeListing = await Product.findOne({ _id: primeProductId, isPrime: true })
+      .populate('primeVendor_id', 'name email shopName pincodesServed');
 
     if (!primeListing) {
       return next(new AppError('Prime product listing not found', 404));
@@ -741,7 +739,7 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
     }
 
     // Check if vendor serves this pincode
-    const vendor = await User.findById(primeListing.vendor_id);
+    const vendor = await User.findById(primeListing.primeVendor_id);
     if (!vendor) {
       return next(new AppError('Vendor not found', 404));
     }
@@ -750,8 +748,8 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
       return next(new AppError('Vendor does not deliver to this pincode', 400));
     }
 
-    // Calculate order total
-    const itemTotal = primeListing.vendorPrice * quantity;
+    // Calculate order total — sellingPrice IS the vendor price after unification
+    const itemTotal = (primeListing.sellingPrice ?? 0) * quantity;
     const platformFee = 10; // Fixed ₹10 for prime orders
     const shippingCharges = 0; // Free shipping for prime
     const grandTotal = itemTotal + platformFee + shippingCharges;
@@ -760,11 +758,10 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
     const order = await Order.create({
       customer_id: req.user._id,
       items: [{
-        product_id: primeListing.product_id,
-        primeProduct_id: primeListing._id,
-        originalPrice: primeListing.vendorMRP,
+        product_id: primeListing._id,
+        originalPrice: primeListing.mrp,
         quantity: quantity,
-        priceAtPurchase: primeListing.vendorPrice,
+        priceAtPurchase: primeListing.sellingPrice,
         subtotal: itemTotal,
         fulfillmentType: 'PRIME_VENDOR',
         variant_id: null,
@@ -773,7 +770,7 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
       platformFee: platformFee,
       shippingCharges: shippingCharges,
       grandTotal: grandTotal,
-      assignedVendorId: primeListing.vendor_id,
+      assignedVendorId: primeListing.primeVendor_id,
       customerPincode: customerPincode,
       customerAddress: customerAddress,
       status: 'ASSIGNED', // Direct to vendor
@@ -782,11 +779,10 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
       orderType: 'PRIME',
     });
 
-    // Update prime product stock and analytics
-    primeListing.stock -= quantity;
-    primeListing.ordersCount += 1;
-    primeListing.soldQuantity += quantity;
-    await primeListing.save();
+    // Update prime product stock and analytics atomically
+    await Product.findByIdAndUpdate(primeProductId, {
+      $inc: { stock: -quantity, ordersCount: 1, soldQuantity: quantity },
+    });
 
     // Populate order for response
     await order.populate('items.product_id');
@@ -807,7 +803,7 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
           subtotal: itemTotal,
           isSplitShipment: false,
           isPrimeOrder: true,
-          vendorName: (primeListing.vendor_id as any).shopName || (primeListing.vendor_id as any).name,
+          vendorName: (primeListing.primeVendor_id as any).shopName || (primeListing.primeVendor_id as any).name,
         }
       ).then(() => logger.info('[createPrimeOrder] ✅ Order confirmation email sent'))
        .catch((e: any) => logger.error('[createPrimeOrder] ❌ Order confirmation email failed:', e.message));
@@ -817,10 +813,10 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
 
     // Queue vendor notification email (non-blocking)
     try {
-      const vendorEmail = (primeListing.vendor_id as any).email;
+      const vendorEmail = (primeListing.primeVendor_id as any).email;
       sendVendorOrderNotificationEmail(
         vendorEmail,
-        (primeListing.vendor_id as any).shopName || (primeListing.vendor_id as any).name,
+        (primeListing.primeVendor_id as any).shopName || (primeListing.primeVendor_id as any).name,
         order._id.toString(),
         {
           items: order.items,
@@ -840,7 +836,7 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
       data: { 
         order,
         isPrimeOrder: true,
-        deliveryTime: primeListing.deliveryTime,
+        deliveryTime: (primeListing as any).deliveryTime,
       },
     });
 

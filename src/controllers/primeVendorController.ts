@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middlewares/auth';
 import Order from '../models/Order';
-import PrimeProduct from '../models/PrimeProduct';
+import Product from '../models/Product';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import logger from '../config/logger';
@@ -9,8 +9,8 @@ import { sendOrderStatusUpdateEmail, sendOrderRejectionEmail } from '../services
 import { sanitizeOrderForVendor, sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 
 /**
- * Fix orders where purchasePrice was stored as 0 (e.g., prime listing had no purchasePrice set).
- * Falls back to PrimeProduct listing price, then Product.purchasePrice.
+ * Fix orders where purchasePrice was stored as 0.
+ * After unification, reads purchasePrice directly from the Product document.
  */
 async function enrichMissingPurchasePrices(orderObjects: any[], vendorId: string): Promise<any[]> {
   return Promise.all(orderObjects.map(async (order) => {
@@ -20,24 +20,25 @@ async function enrichMissingPurchasePrices(orderObjects: any[], vendorId: string
     const enrichedItems = await Promise.all(order.items.map(async (item: any) => {
       if (item.purchasePrice && item.purchasePrice > 0) return item;
 
-      // purchasePrice is 0 or missing — look up from PrimeProduct listing first
-      const productId = item.product_id?._id?.toString() || item.product_id?.toString();
-      if (!productId) return item;
-
       needsRecalc = true;
 
-      const primeListing = await PrimeProduct.findOne({
-        vendor_id: vendorId,
-        product_id: productId,
-        isActive: true,
-      }).select('purchasePrice').lean();
-
-      let price = primeListing?.purchasePrice || 0;
-
-      // Fall back to the product's own purchasePrice
-      if (!price && item.product_id && typeof item.product_id === 'object') {
+      // Read purchasePrice directly from the populated product object if available
+      let price = 0;
+      if (item.product_id && typeof item.product_id === 'object') {
         price = (item.product_id as any).purchasePrice || 0;
       }
+
+      // Otherwise look it up from the DB
+      if (!price) {
+        const productId = item.product_id?._id?.toString() || item.product_id?.toString();
+        if (productId) {
+          const product = await Product.findById(productId).select('purchasePrice sellingPrice').lean();
+          price = (product as any)?.purchasePrice || 0;
+        }
+      }
+
+      // Final fallback: prime vendor earnings = sellingPrice (they set their own price)
+      if (!price) price = item.sellingPrice || 0;
 
       if (!price) return item;
 
@@ -130,7 +131,7 @@ export const getPrimeOrderDetails = async (
     })
       .populate('customer_id', 'name email phone address')
       .populate('items.product_id', 'name images mainCategory subCategory purchasePrice')
-      .populate('items.primeProduct_id');
+;
 
     if (!order) {
       return next(new AppError('Order not found', 404));
@@ -176,14 +177,12 @@ export const acceptPrimeOrder = async (
     order.status = 'ACCEPTED';
     await order.save();
 
-    // Update prime product stats
+    // Update prime product stats directly on the Product document
     for (const item of order.items) {
-      if (item.primeProduct_id) {
-        await PrimeProduct.findByIdAndUpdate(item.primeProduct_id, {
-          $inc: {
-            ordersCount: 1,
-            soldQuantity: item.quantity,
-          },
+      const productId = (item.product_id as any)?._id || item.product_id;
+      if (productId) {
+        await Product.findByIdAndUpdate(productId, {
+          $inc: { ordersCount: 1, soldQuantity: item.quantity },
         });
       }
     }
@@ -254,10 +253,11 @@ export const rejectPrimeOrder = async (
     order.rejectionReason = reason || 'Vendor rejected the order';
     await order.save();
 
-    // Return stock to prime listing
+    // Return stock to the Product document
     for (const item of order.items) {
-      if (item.primeProduct_id) {
-        await PrimeProduct.findByIdAndUpdate(item.primeProduct_id, {
+      const productId = (item.product_id as any)?._id || item.product_id;
+      if (productId) {
+        await Product.findByIdAndUpdate(productId, {
           $inc: { stock: item.quantity },
         });
       }
