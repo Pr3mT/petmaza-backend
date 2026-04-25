@@ -37,9 +37,9 @@ async function enrichMissingPurchasePrices(orderObjects: any[], vendorId: string
         }
       }
 
-      // Final fallback: prime vendor earnings = sellingPrice (they set their own price)
-      if (!price) price = item.sellingPrice || 0;
-
+      // If purchasePrice is still 0 after DB lookup, do NOT fall back to sellingPrice.
+      // Showing sellingPrice as payout would leak customer pricing to the vendor.
+      // The admin must correctly set purchasePrice on the product.
       if (!price) return item;
 
       return {
