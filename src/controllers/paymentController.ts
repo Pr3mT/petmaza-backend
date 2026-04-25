@@ -10,7 +10,10 @@ import logger from '../config/logger';
 
 export const createPaymentOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { amount, currency = 'INR', receipt } = req.body;
+    // db_order_id is the MongoDB Order _id — passed by the frontend when
+    // initiating payment. It is stored in Razorpay notes and also saved back
+    // on the Order so the webhook can find the DB order from the Razorpay event.
+    const { amount, currency = 'INR', receipt, db_order_id } = req.body;
 
     if (!amount || amount <= 0) {
       return next(new AppError('Invalid amount', 400));
@@ -38,17 +41,29 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response, next: 
       });
     }
 
-    const options = {
+    const options: any = {
       amount: amount * 100, // Convert to paise
       currency,
       receipt: receipt || `receipt_${Date.now()}`,
     };
 
-    const order = await razorpay.orders.create(options);
+    // Attach db_order_id in notes so the webhook can resolve the DB order
+    if (db_order_id) {
+      options.notes = { db_order_id };
+    }
+
+    const razorpayOrder = await razorpay.orders.create(options);
+
+    // Store the Razorpay order_id on the DB Order so the webhook can look it up
+    if (db_order_id && razorpayOrder?.id) {
+      await Order.findByIdAndUpdate(db_order_id, {
+        $set: { razorpay_order_id: razorpayOrder.id },
+      });
+    }
 
     res.status(200).json({
       success: true,
-      data: order,
+      data: razorpayOrder,
     });
   } catch (error: any) {
     next(new AppError(error.message || 'Failed to create payment order', 500));
@@ -155,6 +170,8 @@ export const generatePaymentLink = async (req: AuthRequest, res: Response, next:
         email: true,
       },
       reminder_enable: true,
+      // Pass db order_id in notes so the webhook can resolve the DB order
+      notes: { db_order_id: order_id },
     };
 
     const paymentLink = await razorpay.paymentLink.create(options);
@@ -309,7 +326,7 @@ export const handlePaymentFailure = async (req: AuthRequest, res: Response, next
           customerEmail,
           customerName || 'Customer',
           order_id,
-          order.totalAmount || 0,
+          order.total || 0,
           reason || 'Payment was declined by your bank'
         );
       }

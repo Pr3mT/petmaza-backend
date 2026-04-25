@@ -134,6 +134,13 @@ const orderSchema = new Schema<IOrder>(
     payment_id: {
       type: String,
     },
+    // Razorpay order_id (order_xxx) returned when creating a payment order.
+    // Stored here so the webhook can look up the DB order from the Razorpay event.
+    razorpay_order_id: {
+      type: String,
+      index: true,
+      sparse: true,
+    },
     payment_link: {
       type: String,
     },

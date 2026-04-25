@@ -91,6 +91,13 @@ app.use(performanceMonitor);
 // Add compression middleware (should be early in middleware chain)
 app.use(compression());
 
+// ── Razorpay Webhook ─────────────────────────────────────────────────────────
+// MUST be registered BEFORE express.json() so the handler receives the raw
+// Buffer needed for HMAC-SHA256 signature verification.
+import webhookRoutes from './routes/webhook';
+app.use('/api/webhooks', webhookRoutes);
+// ─────────────────────────────────────────────────────────────────────────────
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
