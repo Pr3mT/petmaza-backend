@@ -15,6 +15,49 @@ export interface RouteOrderResult {
 }
 
 export class OrderRoutingService {
+  private static findMatchingVariant(product: any, selectedVariant?: any) {
+    if (!product?.hasVariants || !product?.variants?.length || !selectedVariant) {
+      return null;
+    }
+
+    // Prefer _id matching because labels like "2 way" / "3 way" don't map to size or weight+unit.
+    if (selectedVariant._id) {
+      const byId = product.variants.find((v: any) =>
+        v?._id?.toString() === selectedVariant._id?.toString()
+      );
+      if (byId) return byId;
+    }
+
+    if (selectedVariant.size) {
+      const bySize = product.variants.find((v: any) => v?.size === selectedVariant.size);
+      if (bySize) return bySize;
+    }
+
+    if (selectedVariant.weight !== undefined && selectedVariant.unit) {
+      const byWeightAndUnit = product.variants.find(
+        (v: any) => v?.weight === selectedVariant.weight && v?.unit === selectedVariant.unit
+      );
+      if (byWeightAndUnit) return byWeightAndUnit;
+    }
+
+    if (selectedVariant.displayWeight) {
+      return (
+        product.variants.find((v: any) => v?.displayWeight === selectedVariant.displayWeight) || null
+      );
+    }
+
+    return null;
+  }
+
+  private static getVariantPrices(variant: any) {
+    const sellingPrice =
+      variant.sellingPrice || Math.round((variant.mrp * (variant.sellingPercentage / 100)) * 100) / 100;
+    const purchasePrice =
+      variant.purchasePrice || Math.round((variant.mrp * (variant.purchasePercentage / 100)) * 100) / 100;
+
+    return { sellingPrice, purchasePrice };
+  }
+
   /**
    * UPDATED Route order logic:
    * 1. Prime products → Prime Vendor (direct assignment to vendor who added product)
@@ -142,13 +185,28 @@ export class OrderRoutingService {
 
         const primeListing = primeListingMap.get(item.product_id);
 
-        const sellingPrice = primeListing?.vendorPrice ?? product.sellingPrice ?? 0;
-        const purchasePrice =
-          primeListing?.purchasePrice && primeListing.purchasePrice > 0
-            ? primeListing.purchasePrice
-            : product.purchasePrice && product.purchasePrice > 0
-            ? product.purchasePrice
-            : 0;
+        let sellingPrice: number;
+        let purchasePrice: number;
+
+        // For variant products, always calculate from the selected variant.
+        if (product.hasVariants && item.selectedVariant) {
+          const variant = this.findMatchingVariant(product, item.selectedVariant);
+          if (!variant) {
+            throw new AppError(`Variant not found for product ${product.name}`, 404);
+          }
+
+          const variantPrices = this.getVariantPrices(variant);
+          sellingPrice = variantPrices.sellingPrice;
+          purchasePrice = variantPrices.purchasePrice;
+        } else {
+          sellingPrice = primeListing?.vendorPrice ?? product.sellingPrice ?? 0;
+          purchasePrice =
+            primeListing?.purchasePrice && primeListing.purchasePrice > 0
+              ? primeListing.purchasePrice
+              : product.purchasePrice && product.purchasePrice > 0
+              ? product.purchasePrice
+              : 0;
+        }
 
         if (sellingPrice === 0) {
           throw new AppError(`Product ${product.name} has invalid pricing`, 400);
@@ -562,17 +620,14 @@ export class OrderRoutingService {
       let purchasePrice = 0;
       
       if (item.selectedVariant && product.hasVariants && product.variants) {
-        // Check specific variant availability (support size or weight+unit)
-        const variant = product.variants.find((v: any) => {
-          if (item.selectedVariant.size && v.size) return v.size === item.selectedVariant.size;
-          if (item.selectedVariant.weight !== undefined && item.selectedVariant.unit) return v.weight === item.selectedVariant.weight && v.unit === item.selectedVariant.unit;
-          return false;
-        });
+        // Check specific variant availability using id/size/weight+unit/display label.
+        const variant = this.findMatchingVariant(product, item.selectedVariant);
         
         if (variant && variant.isActive && product.isActive) {
           isAvailable = true;
-          sellingPrice = variant.sellingPrice || Math.round((variant.mrp * (variant.sellingPercentage / 100)) * 100) / 100;
-          purchasePrice = Math.round((variant.mrp * (variant.purchasePercentage / 100)) * 100) / 100;
+          const variantPrices = this.getVariantPrices(variant);
+          sellingPrice = variantPrices.sellingPrice;
+          purchasePrice = variantPrices.purchasePrice;
         }
       } else if (product.hasVariants && product.variants && product.variants.length > 0) {
         // No specific variant selected, check if any variant is active
@@ -670,19 +725,16 @@ export class OrderRoutingService {
       let purchasePrice: number;
       
       if (item.selectedVariant && product.hasVariants) {
-        // Use variant pricing - support size-based variants or weight+unit
-        const variant = product.variants?.find(v => {
-          if (item.selectedVariant.size && v.size) return v.size === item.selectedVariant.size;
-          if (item.selectedVariant.weight !== undefined && item.selectedVariant.unit) return v.weight === item.selectedVariant.weight && v.unit === item.selectedVariant.unit;
-          return false;
-        });
+        // Use variant pricing with robust matching (id/size/weight+unit/display label).
+        const variant = this.findMatchingVariant(product, item.selectedVariant);
 
         if (!variant) {
           throw new AppError(`Variant not found for product ${product.name}`, 404);
         }
 
-        sellingPrice = variant.sellingPrice || Math.round((variant.mrp * (variant.sellingPercentage / 100)) * 100) / 100;
-        purchasePrice = Math.round((variant.mrp * (variant.purchasePercentage / 100)) * 100) / 100;
+        const variantPrices = this.getVariantPrices(variant);
+        sellingPrice = variantPrices.sellingPrice;
+        purchasePrice = variantPrices.purchasePrice;
       } else {
         // Use product-level pricing
         sellingPrice = product.sellingPrice || 
