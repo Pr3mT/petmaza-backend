@@ -28,6 +28,7 @@ export const getMyShopOrders = async (req: AuthRequest, res: Response, next: Nex
     // 2. Prime product orders (isPrime: true)
     // 3. Broadcast warehouse fulfiller orders not yet claimed (assignedVendorId: null)
     const orders = await Order.find({
+      payment_status: 'Paid',
       $or: [
         { assignedVendorId: vendor._id },
         { isPrime: true },
@@ -88,6 +89,11 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
     if (order.status !== 'PENDING') {
       console.log('[myShop:acceptOrder] Order not pending:', order.status);
       return next(new AppError(`Order is already ${order.status}`, 400));
+    }
+
+    if (order.payment_status !== 'Paid') {
+      console.log('[myShop:acceptOrder] Order payment is not completed:', order.payment_status);
+      return next(new AppError('Order cannot be accepted before successful payment', 400));
     }
 
     // Record sales when MY_SHOP accepts (all products in Products collection)

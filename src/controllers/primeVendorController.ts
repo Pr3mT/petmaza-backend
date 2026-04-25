@@ -71,6 +71,7 @@ export const getPrimeVendorOrders = async (
     const query: any = {
       assignedVendorId: vendor_id,
       isPrime: true,
+      payment_status: 'Paid',
     };
 
     if (status) {
@@ -125,6 +126,7 @@ export const getPrimeOrderDetails = async (
       _id: id,
       assignedVendorId: vendor_id,
       isPrime: true,
+      payment_status: 'Paid',
     })
       .populate('customer_id', 'name email phone address')
       .populate('items.product_id', 'name images mainCategory subCategory purchasePrice')
@@ -164,6 +166,7 @@ export const acceptPrimeOrder = async (
       assignedVendorId: vendor_id,
       isPrime: true,
       status: 'PENDING',
+      payment_status: 'Paid',
     });
 
     if (!order) {

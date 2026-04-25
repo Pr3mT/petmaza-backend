@@ -72,6 +72,7 @@ export const getWarehouseFulfillerOrders = async (
     const allBroadcastOrders = await Order.find({
       assignedVendorId: null,
       status: 'PENDING',
+      payment_status: 'Paid',
     }).select('_id items.product_id total').lean();
     
     logger.info(`[getWarehouseFulfillerOrders] Total broadcast orders in DB: ${allBroadcastOrders.length}`);
@@ -96,6 +97,7 @@ export const getWarehouseFulfillerOrders = async (
         // Case 1: Orders explicitly assigned to THIS fulfiller (show all statuses)
         {
           assignedVendorId: fulfiller._id,
+          payment_status: 'Paid',
           status: {
             $in: ['PENDING', 'ACCEPTED', 'PACKED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED'],
           },
@@ -104,6 +106,7 @@ export const getWarehouseFulfillerOrders = async (
         {
           assignedVendorId: null,
           status: 'PENDING',
+          payment_status: 'Paid',
           'items.product_id': { $in: subcategoryProductIds },
         },
       ],
@@ -192,6 +195,11 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
     if (!order) {
       logger.warn('[acceptOrder] Order not found:', orderId);
       return next(new AppError('Order not found', 404));
+    }
+
+    if (order.payment_status !== 'Paid') {
+      logger.warn('[acceptOrder] Order payment is not completed:', order.payment_status);
+      return next(new AppError('Order cannot be accepted before successful payment', 400));
     }
 
     logger.info('[acceptOrder] Order found:', {

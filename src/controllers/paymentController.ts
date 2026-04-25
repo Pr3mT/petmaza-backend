@@ -284,8 +284,18 @@ export const handlePaymentFailure = async (req: AuthRequest, res: Response, next
       return next(new AppError('Access denied', 403));
     }
 
+    if (order.payment_status === 'Paid') {
+      return next(new AppError('Paid orders cannot be marked as failed', 400));
+    }
+
     // Update order payment status
     order.payment_status = 'Failed';
+    if (order.status === 'PENDING') {
+      order.status = 'CANCELLED';
+    }
+    order.assignedVendorId = null as any;
+    order.assignedVendors = [] as any;
+    order.acceptanceDeadline = undefined;
 
     await order.save();
 

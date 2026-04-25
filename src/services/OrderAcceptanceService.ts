@@ -68,6 +68,7 @@ export class OrderAcceptanceService {
       // Get PENDING broadcast orders (assignedVendorId: null) with products from these subcategories
       const broadcastOrders = await Order.find({
         status: 'PENDING',
+        payment_status: 'Paid',
         assignedVendorId: null, // Broadcast orders only
         'items.product_id': { $in: subcategoryProductIds },
       })
@@ -100,6 +101,7 @@ export class OrderAcceptanceService {
     // 2. Assigned to this specific vendor
     const allPendingOrders = await Order.find({
       status: 'PENDING',
+      payment_status: 'Paid',
       isPrime: true,
       $or: [
         { assignedVendorId: { $exists: false } },
@@ -191,6 +193,10 @@ export class OrderAcceptanceService {
 
     if (!order) {
       throw new AppError('Order not found', 404);
+    }
+
+    if (order.payment_status !== 'Paid') {
+      throw new AppError('Order cannot be accepted before successful payment', 400);
     }
 
     // Check if order is still pending or assigned (not already accepted)

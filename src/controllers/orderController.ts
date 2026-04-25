@@ -179,15 +179,8 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       totalAmount,
     });
 
-    // 2. Vendor / fulfiller notifications
-    for (const notif of notifications) {
-      orderQueue.emit('order:vendor-notify', notif);
-    }
-
-    // 3. Sales recording for MY_SHOP orders
-    for (const sale of salesRecords) {
-      orderQueue.emit('order:record-sales', sale);
-    }
+    // 2. Vendor notifications and sales recording are intentionally deferred.
+    // Orders must not reach vendor workflows until payment is successful.
 
     // 4. Coupon usage recording
     if (appliedCouponData) {
@@ -223,12 +216,14 @@ export const getCustomerOrders = async (req: AuthRequest, res: Response, next: N
 export const updateOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
-    const { payment_id, payment_status } = req.body;
+    const { payment_id, payment_status, cancelOrder } = req.body;
 
     const order = await Order.findById(id);
     if (!order) {
       return next(new AppError('Order not found', 404));
     }
+
+    const wasPaidBeforeUpdate = order.payment_status === 'Paid';
 
     // Check if user owns this order
     let customerId: string;
@@ -246,12 +241,46 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
     if (payment_id) {
       order.payment_id = payment_id;
     }
+
+    if (payment_status === 'Failed' && wasPaidBeforeUpdate) {
+      return next(new AppError('Paid orders cannot be marked as failed', 400));
+    }
+
     if (payment_status && ['Pending', 'Paid', 'Failed', 'Refunded'].includes(payment_status)) {
       order.payment_status = payment_status;
       
       // Payment completion does NOT change order status to ASSIGNED
       // Order should remain PENDING until vendor accepts it
       // ASSIGNED status is set when vendor accepts the order
+    }
+
+    // Allow customer/admin to cancel unpaid orders when payment is cancelled/failed.
+    if (cancelOrder === true) {
+      if (wasPaidBeforeUpdate) {
+        return next(new AppError('Paid orders cannot be cancelled from payment flow', 400));
+      }
+
+      if (order.status !== 'PENDING') {
+        return next(new AppError('Only pending orders can be cancelled from payment flow', 400));
+      }
+
+      order.status = 'CANCELLED';
+      order.assignedVendorId = null as any;
+      order.assignedVendors = [] as any;
+      order.acceptanceDeadline = undefined;
+      if (!payment_status) {
+        order.payment_status = 'Failed';
+      }
+    }
+
+    // Any failed payment order must be unassigned from vendor workflow.
+    if (order.payment_status === 'Failed' && !wasPaidBeforeUpdate) {
+      if (order.status === 'PENDING') {
+        order.status = 'CANCELLED';
+      }
+      order.assignedVendorId = null as any;
+      order.assignedVendors = [] as any;
+      order.acceptanceDeadline = undefined;
     }
 
     await order.save();
@@ -443,6 +472,7 @@ export const getVendorOrders = async (req: AuthRequest, res: Response, next: Nex
     
     const orders = await Order.find({
       assignedVendorId: vendorObjectId,
+      payment_status: 'Paid',
       status: { $ne: 'PENDING' }, // Exclude pending orders (those are in pending orders page)
     })
       .populate('customer_id', 'name email phone')
