@@ -1247,7 +1247,7 @@ export async function sendRefundInitiatedEmail(
         
         <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #1976d2;">
           <h4 style="margin-top: 0;">⏱️ Refund Timeline</h4>
-          <p style="margin: 5px 0;">Your refund has been <strong>initiated</strong> and will be credited to your account within <strong>6-7 working days</strong>.</p>
+          <p style="margin: 5px 0;">Your refund has been <strong>initiated</strong> and will be credited to your account within <strong>4-5 working days</strong>.</p>
           <p style="margin: 10px 0 5px 0; font-size: 14px;">The amount will be refunded to:</p>
           <p style="margin: 5px 0;">✓ Original payment method used during purchase</p>
           <p style="margin: 5px 0;">✓ Same account/card used for payment</p>
@@ -1255,9 +1255,9 @@ export async function sendRefundInitiatedEmail(
         
         <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
           <h4 style="margin-top: 0;">📝 Important Information</h4>
-          <p style="margin: 5px 0;">• Refund processing time: 6-7 working days</p>
+          <p style="margin: 5px 0;">• Refund processing time: 4-5 working days</p>
           <p style="margin: 5px 0;">• You will receive a confirmation once the refund is credited</p>
-          <p style="margin: 5px 0;">• If you don't receive the refund within 10 working days, please contact us</p>
+          <p style="margin: 5px 0;">• If you don't receive the refund within 7 working days, please contact us</p>
           <p style="margin: 5px 0;">• We apologize for the inconvenience caused</p>
         </div>
         

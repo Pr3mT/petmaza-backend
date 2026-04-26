@@ -441,7 +441,7 @@ export const markNotAvailable = async (
   }
 };
 
-// Initiate Refund for a Not-Available Prime Order
+// Initiate Refund for a Prime Order (one-step: works from PENDING, ASSIGNED, or NOT_AVAILABLE)
 export const initiateRefund = async (
   req: AuthRequest,
   res: Response,
@@ -455,17 +455,29 @@ export const initiateRefund = async (
       _id: id,
       assignedVendorId: vendor_id,
       isPrime: true,
-      status: 'NOT_AVAILABLE',
+      status: { $in: ['PENDING', 'ASSIGNED', 'NOT_AVAILABLE'] },
     }).populate('customer_id', 'name email');
 
     if (!order) {
-      return next(new AppError('Order not found or not eligible for refund. Status must be NOT_AVAILABLE.', 404));
+      return next(new AppError('Order not found or not eligible for refund.', 404));
+    }
+
+    // Restore stock (if not already done)
+    if (order.status !== 'NOT_AVAILABLE') {
+      for (const item of order.items) {
+        const productId = (item.product_id as any)?._id || item.product_id;
+        if (productId) {
+          await Product.findByIdAndUpdate(productId, {
+            $inc: { stock: item.quantity },
+          });
+        }
+      }
     }
 
     order.status = 'REFUND_INITIATED';
     order.refundStatus = 'PENDING';
-    order.refundAmount = order.total;
-    order.refundReason = order.rejectionReason || 'Product not available';
+    order.refundAmount = order.total;  // full amount customer paid
+    order.refundReason = 'Product not available from vendor';
     await order.save();
 
     logger.info(`[PrimeVendor] Refund initiated for order ${id} by vendor ${vendor_id}`);
@@ -482,7 +494,7 @@ export const initiateRefund = async (
           order.total || 0,
           order.refundReason || 'Product not available'
         );
-        logger.info(`[PrimeVendor] Refund initiated email sent to ${customer.email} for order ${orderId}`);
+        logger.info(`[PrimeVendor] Refund email sent to ${customer.email} for order ${orderId}`);
       }
     } catch (emailError: any) {
       logger.error(`[PrimeVendor] Failed to send refund email: ${emailError.message}`);
