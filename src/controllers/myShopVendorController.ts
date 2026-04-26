@@ -39,9 +39,28 @@ export const getMyShopOrders = async (req: AuthRequest, res: Response, next: Nex
       .populate('items.product_id', 'name images')
       .sort({ createdAt: -1 });
 
+    // Sanitize vendor-sensitive pricing but preserve customerPaidTotal
+    // grandTotal = full customer payment (item subtotal + fees - discount)
+    // For createPrimeOrder: total = item subtotal, grandTotal = item + fees
+    // For createOrder (normal): total = grandTotal = item + fees
+    // For old orders where grandTotal wasn't set: reconstruct from parts
+    const sanitized = orders.map(o => {
+      const plain = o.toObject();
+      const sanitizedOrder = sanitizeOrderForVendor(plain);
+      // Use grandTotal if properly set; otherwise reconstruct: total + platformFee + shippingCharges - discountAmount
+      const grandTotal = (plain.grandTotal ?? 0);
+      const reconstructed =
+        (plain.total || 0) +
+        (plain.shippingCharges || 0) +
+        (plain.platformFee || 0) -
+        (plain.discountAmount || 0);
+      sanitizedOrder.customerPaidTotal = grandTotal > 0 ? grandTotal : Math.max(reconstructed, plain.total || 0);
+      return sanitizedOrder;
+    });
+
     res.status(200).json({
       success: true,
-      data: { orders: sanitizeOrdersForVendor(orders.map(o => o.toObject())) },
+      data: { orders: sanitized },
     });
   } catch (error: any) {
     next(error);
@@ -223,9 +242,17 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
     order.refundedAt = new Date();
     
     // If payment was made, mark for refund processing
+    // Use grandTotal (includes platform fee + shipping) = actual customer payment
+    // Reconstruct if grandTotal not set: total + platformFee + shippingCharges - discountAmount
     if (order.payment_status === 'Paid') {
       order.refundStatus = 'PENDING';
-      order.refundAmount = order.total;
+      const gt = (order.grandTotal ?? 0);
+      const reconstructedTotal =
+        (order.total || 0) +
+        (order.shippingCharges || 0) +
+        (order.platformFee || 0) -
+        (order.discountAmount || 0);
+      order.refundAmount = gt > 0 ? gt : Math.max(reconstructedTotal, order.total || 0);
     }
 
     await order.save();
@@ -240,7 +267,7 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
           customer.email,
           customer.name || 'Customer',
           `#${order._id.toString().slice(-8)}`,
-          order.total || 0,
+          order.refundAmount || order.total || 0,
           order.refundReason || 'Product not available'
         );
       }
