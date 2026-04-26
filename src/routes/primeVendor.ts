@@ -5,6 +5,8 @@ import {
   acceptPrimeOrder,
   rejectPrimeOrder,
   updatePrimeOrderStatus,
+  markNotAvailable,
+  initiateRefund,
 } from '../controllers/primeVendorController';
 import { verifyToken, checkPrimeVendor } from '../middlewares/auth';
 
@@ -19,6 +21,8 @@ router.get('/orders', getPrimeVendorOrders);
 router.get('/orders/:id', getPrimeOrderDetails);
 router.post('/orders/:id/accept', acceptPrimeOrder);
 router.post('/orders/:id/reject', rejectPrimeOrder);
+router.post('/orders/:id/not-available', markNotAvailable);
+router.post('/orders/:id/refund', initiateRefund);
 router.put('/orders/:id/status', updatePrimeOrderStatus);
 
 export default router;

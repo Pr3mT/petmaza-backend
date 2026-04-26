@@ -5,7 +5,7 @@ import Product from '../models/Product';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import logger from '../config/logger';
-import { sendOrderStatusUpdateEmail, sendOrderRejectionEmail } from '../services/emailer';
+import { sendOrderStatusUpdateEmail, sendOrderRejectionEmail, sendRefundInitiatedEmail } from '../services/emailer';
 import { sanitizeOrderForVendor, sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 
 /**
@@ -387,6 +387,115 @@ export const updatePrimeOrderStatus = async (
     });
   } catch (error: any) {
     logger.error('[PrimeVendor] Error updating order status:', error);
+    next(error);
+  }
+};
+
+// Mark Prime Order as Not Available (product out of stock)
+export const markNotAvailable = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const vendor_id = req.user._id;
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const order = await Order.findOne({
+      _id: id,
+      assignedVendorId: vendor_id,
+      isPrime: true,
+      status: { $in: ['PENDING', 'ASSIGNED'] },
+      payment_status: 'Paid',
+    }).populate('customer_id', 'name email');
+
+    if (!order) {
+      return next(new AppError('Order not found or cannot be marked as not available', 404));
+    }
+
+    order.status = 'NOT_AVAILABLE';
+    order.rejectionReason = reason || 'Product is currently out of stock';
+    await order.save();
+
+    // Restore stock
+    for (const item of order.items) {
+      const productId = (item.product_id as any)?._id || item.product_id;
+      if (productId) {
+        await Product.findByIdAndUpdate(productId, {
+          $inc: { stock: item.quantity },
+        });
+      }
+    }
+
+    logger.info(`[PrimeVendor] Order ${id} marked NOT_AVAILABLE by vendor ${vendor_id}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Order marked as not available. Please initiate refund.',
+      data: { order },
+    });
+  } catch (error: any) {
+    logger.error('[PrimeVendor] Error marking order not available:', error);
+    next(error);
+  }
+};
+
+// Initiate Refund for a Not-Available Prime Order
+export const initiateRefund = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const vendor_id = req.user._id;
+    const { id } = req.params;
+
+    const order = await Order.findOne({
+      _id: id,
+      assignedVendorId: vendor_id,
+      isPrime: true,
+      status: 'NOT_AVAILABLE',
+    }).populate('customer_id', 'name email');
+
+    if (!order) {
+      return next(new AppError('Order not found or not eligible for refund. Status must be NOT_AVAILABLE.', 404));
+    }
+
+    order.status = 'REFUND_INITIATED';
+    order.refundStatus = 'PENDING';
+    order.refundAmount = order.total;
+    order.refundReason = order.rejectionReason || 'Product not available';
+    await order.save();
+
+    logger.info(`[PrimeVendor] Refund initiated for order ${id} by vendor ${vendor_id}`);
+
+    // Send refund email to customer
+    try {
+      const customer = order.customer_id as any;
+      if (customer?.email && customer?.name) {
+        const orderId = order._id.toString().slice(-8).toUpperCase();
+        await sendRefundInitiatedEmail(
+          customer.email,
+          customer.name,
+          orderId,
+          order.total || 0,
+          order.refundReason || 'Product not available'
+        );
+        logger.info(`[PrimeVendor] Refund initiated email sent to ${customer.email} for order ${orderId}`);
+      }
+    } catch (emailError: any) {
+      logger.error(`[PrimeVendor] Failed to send refund email: ${emailError.message}`);
+      // Don't fail the refund if email fails
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Refund initiated successfully. Customer has been notified via email.',
+      data: { order },
+    });
+  } catch (error: any) {
+    logger.error('[PrimeVendor] Error initiating refund:', error);
     next(error);
   }
 };
