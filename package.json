@@ -21,6 +21,7 @@
     "debug:orders": "ts-node-dev --transpile-only src/scripts/debugPendingOrders.ts",
     "test:pending": "ts-node-dev --transpile-only src/scripts/testPendingOrders.ts",
     "fix:vendor-billing": "ts-node --transpile-only fix-vendor-billing.ts",
+    "backup": "npx ts-node backup-db.ts",
     "seed:all": "npm run seed:users && npm run seed:products"
   },
   "keywords": [
@@ -49,6 +50,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.0",
     "multer": "^1.4.5-lts.1",
+    "node-cron": "^4.2.1",
     "nodemailer": "^6.10.1",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^5.6.205",
@@ -71,6 +73,7 @@
     "@types/express": "^5.0.0",
     "@types/jsonwebtoken": "^9.0.5",
     "@types/multer": "^1.4.13",
+    "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^6.4.22",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
