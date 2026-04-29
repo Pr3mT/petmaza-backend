@@ -20,3 +20,6 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+
+# database backups — never commit raw DB exports to git
+/backups
