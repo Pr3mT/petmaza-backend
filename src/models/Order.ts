@@ -260,6 +260,15 @@ const orderSchema = new Schema<IOrder>(
   }
 );
 
+// Virtual: orderType derived from isPrime (so frontend always gets 'PRIME' or 'NORMAL')
+orderSchema.virtual('orderType').get(function () {
+  return this.isPrime ? 'PRIME' : 'NORMAL';
+});
+
+// Include virtuals when converting to JSON/Object
+orderSchema.set('toJSON', { virtuals: true });
+orderSchema.set('toObject', { virtuals: true });
+
 // Indexes
 orderSchema.index({ customer_id: 1 });
 orderSchema.index({ assignedVendorId: 1 });

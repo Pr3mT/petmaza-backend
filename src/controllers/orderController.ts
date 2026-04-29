@@ -311,9 +311,47 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
         } else {
           logger.info('[updateOrder] ⚠️ No customer email found, skipping receipt');
         }
+
+        // Notify the assigned vendor(s) that a paid order is waiting for acceptance
+        const assignedVendorIdStr = (populatedOrder.assignedVendorId as any)?._id?.toString()
+          || (populatedOrder.assignedVendorId as any)?.toString?.();
+        const assignedVendorsArr = (populatedOrder.assignedVendors || []) as any[];
+        const isPrimeOrder = populatedOrder.isPrime;
+
+        const vendorIds: string[] = [];
+        let isBroadcast = false;
+
+        if (isPrimeOrder && assignedVendorIdStr) {
+          vendorIds.push(assignedVendorIdStr);
+          isBroadcast = false;
+        } else if (assignedVendorsArr.length > 0) {
+          vendorIds.push(...assignedVendorsArr.map((v: any) => v._id?.toString() || v.toString()));
+          isBroadcast = true;
+        }
+
+        if (vendorIds.length > 0) {
+          const orderItems = (populatedOrder.items || []).map((item: any) => ({
+            name: (item.product_id as any)?.name || 'Product',
+            quantity: item.quantity,
+            price: item.sellingPrice || item.price || 0,
+          }));
+          orderQueue.emit('order:vendor-notify', {
+            orderId: populatedOrder._id.toString(),
+            customerId: (customer as any)?._id?.toString() || populatedOrder.customer_id.toString(),
+            vendorIds,
+            orderItems,
+            orderTotal: populatedOrder.total || 0,
+            customerAddress: populatedOrder.customerAddress || {},
+            customerPincode: (populatedOrder.customerAddress as any)?.pincode || (populatedOrder as any).customerPincode || '',
+            isBroadcast,
+          });
+          logger.info(`[updateOrder] ✅ Vendor notification queued for order ${populatedOrder._id}`);
+        } else {
+          logger.info('[updateOrder] ⚠️ No vendor assigned to notify for this order');
+        }
       } catch (emailError: any) {
-        logger.error('[updateOrder] ❌ Failed to send payment receipt:', emailError.message);
-        // Don't fail the order update if email fails
+        logger.error('[updateOrder] ❌ Failed to send payment receipt or vendor notify:', emailError.message);
+        // Don't fail the order update if email/notify fails
       }
     }
     res.status(200).json({

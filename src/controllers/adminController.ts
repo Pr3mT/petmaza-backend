@@ -155,21 +155,21 @@ export const getAdminStats = async (req: AuthRequest, res: Response, next: NextF
     const totalProfit = paidOrdersData.reduce((sum, order) => sum + (order.totalProfit || 0), 0);
     const totalCost = paidOrdersData.reduce((sum, order) => sum + (order.totalPurchasePrice || 0), 0);
     
-    // Revenue by order type
+    // Revenue by order type (Order model uses isPrime:boolean, not orderType string)
     const normalOrdersRevenue = paidOrdersData
-      .filter(order => order.orderType === 'NORMAL')
+      .filter(order => !order.isPrime)
       .reduce((sum, order) => sum + (order.total || 0), 0);
     
     const primeOrdersRevenue = paidOrdersData
-      .filter(order => order.orderType === 'PRIME')
+      .filter(order => order.isPrime)
       .reduce((sum, order) => sum + (order.total || 0), 0);
     
     const normalOrdersProfit = paidOrdersData
-      .filter(order => order.orderType === 'NORMAL')
+      .filter(order => !order.isPrime)
       .reduce((sum, order) => sum + (order.totalProfit || 0), 0);
     
     const primeOrdersProfit = paidOrdersData
-      .filter(order => order.orderType === 'PRIME')
+      .filter(order => order.isPrime)
       .reduce((sum, order) => sum + (order.totalProfit || 0), 0);
 
     // Recent orders
@@ -219,11 +219,13 @@ export const getAdminStats = async (req: AuthRequest, res: Response, next: NextF
 
 export const getAllOrders = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { status, orderType, page = 1, limit = 20 } = req.query;
+    const { status, orderType, paymentStatus, page = 1, limit = 20 } = req.query;
 
     const query: any = {};
     if (status) query.status = status;
-    if (orderType) query.orderType = orderType;
+    if (orderType === 'PRIME') query.isPrime = true;
+    else if (orderType === 'NORMAL') query.isPrime = { $ne: true };
+    if (paymentStatus) query.payment_status = paymentStatus;
 
     const skip = (Number(page) - 1) * Number(limit);
 

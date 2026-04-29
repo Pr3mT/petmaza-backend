@@ -26,6 +26,7 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response, next: 
       const mockOrderId = `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       return res.status(200).json({
         success: true,
+        testMode: true,  // Signal to frontend: skip Razorpay modal, treat as demo
         data: {
           id: mockOrderId,
           entity: 'order',
