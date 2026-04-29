@@ -111,13 +111,20 @@ export class ProductService {
     const limit = filters.limit && filters.limit > 0 ? filters.limit : 1000; // Default to large number if not specified
     const skip = (page - 1) * limit;
 
-    let products = await Product.find(query)
-      .populate('category_id', 'name')
-      .populate('brand_id', 'name')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(); // Convert to plain JavaScript objects for better performance
+    // Run count and find in parallel for efficiency
+    const [total, rawProducts] = await Promise.all([
+      Product.countDocuments(query),
+      Product.find(query)
+        .populate('category_id', 'name')
+        .populate('brand_id', 'name')
+        .populate('primeVendor_id', 'name shopName')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+    ]);
+
+    let products = rawProducts;
 
     // Compute inStock for every product:
     // A product is in-stock only when BOTH conditions are true:
@@ -126,6 +133,33 @@ export class ProductService {
     if (products.length > 0) {
       products = products.map((p) => {
         p.inStock = p.isActive !== false && p.inStock !== false;
+        return p;
+      });
+    }
+
+    // Attach vendor shop name for prime products.
+    // shopName lives in VendorDetails (separate collection), not in User.
+    // Batch-fetch in one query to avoid N+1.
+    const primeVendorIds = products
+      .filter((p) => p.isPrime && p.primeVendor_id)
+      .map((p) => (p.primeVendor_id as any)?._id || p.primeVendor_id);
+
+    if (primeVendorIds.length > 0) {
+      const vendorDetailsMap = await VendorDetails.find(
+        { vendor_id: { $in: primeVendorIds } },
+        { vendor_id: 1, shopName: 1 }
+      ).lean();
+
+      const shopNameByVendorId: Record<string, string> = {};
+      vendorDetailsMap.forEach((vd) => {
+        shopNameByVendorId[vd.vendor_id.toString()] = vd.shopName;
+      });
+
+      products = products.map((p) => {
+        if (p.isPrime && p.primeVendor_id) {
+          const vid = ((p.primeVendor_id as any)?._id || p.primeVendor_id).toString();
+          (p as any).vendorShopName = shopNameByVendorId[vid] || null;
+        }
         return p;
       });
     }
@@ -174,7 +208,7 @@ export class ProductService {
       );
     }
 
-    return products;
+    return { products, total };
   }
 
   // Get product by ID

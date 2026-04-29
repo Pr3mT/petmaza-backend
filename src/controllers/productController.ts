@@ -193,14 +193,18 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
       console.log('👤 Customer/public - showing active products only');
     }
 
-    const products = await ProductService.getAllProducts(filters);
+    const { products, total } = await ProductService.getAllProducts(filters);
+    const pageNum = filters.page || 1;
+    const limitNum = filters.limit || 20;
     res.status(200).json({
       success: true,
-      data: { 
+      data: {
         products,
-        page: filters.page || 1,
-        limit: filters.limit || products.length,
-        hasMore: products.length === (filters.limit || products.length)
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+        hasMore: pageNum * limitNum < total,
       },
     });
   } catch (error: any) {
