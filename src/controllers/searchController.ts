@@ -23,12 +23,10 @@ export const advancedSearch = async (req: Request, res: Response) => {
     // Build search filter
     const filter: any = { isActive: true };
 
-    // Text search
+    // Text search — multi-keyword fuzzy across name, description, category fields
     if (q) {
-      filter.$or = [
-        { name: { $regex: q, $options: 'i' } },
-        { description: { $regex: q, $options: 'i' } },
-      ];
+      const fuzzyFilter = buildFuzzyFilter(q as string);
+      Object.assign(filter, fuzzyFilter);
     }
 
     // Category filter
@@ -161,27 +159,71 @@ export const advancedSearch = async (req: Request, res: Response) => {
   }
 };
 
+// Helper: build a fuzzy multi-keyword filter across multiple product fields.
+// Splits the query into individual words; every word must match at least one
+// of: name, description, mainCategory, subCategory.
+// If the query is a single token it also falls back to a broader partial match.
+const buildFuzzyFilter = (rawQuery: string): object => {
+  // Escape special regex chars to avoid errors
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const keywords = rawQuery.trim().split(/\s+/).filter(k => k.length >= 1);
+
+  if (keywords.length === 0) return {};
+
+  // Each keyword must match at least one searchable field (AND of ORs)
+  const keywordConditions = keywords.map(kw => ({
+    $or: [
+      { name: { $regex: escape(kw), $options: 'i' } },
+      { description: { $regex: escape(kw), $options: 'i' } },
+      { mainCategory: { $regex: escape(kw), $options: 'i' } },
+      { subCategory: { $regex: escape(kw), $options: 'i' } },
+    ],
+  }));
+
+  return { $and: keywordConditions };
+};
+
 // Get search suggestions (autocomplete)
 export const getSearchSuggestions = async (req: Request, res: Response) => {
   try {
-    const { q, limit = 5 } = req.query;
+    const { q, limit = 8 } = req.query;
+    const query = (q as string || '').trim();
 
-    if (!q || (q as string).length < 2) {
+    if (!query || query.length < 1) {
       return res.status(200).json({ suggestions: [] });
     }
 
+    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const fuzzyFilter = buildFuzzyFilter(query);
+
+    // Fetch more candidates so we can re-rank by relevance
+    const fetchLimit = Math.max(Number(limit) * 4, 32);
+
     const products = await Product.find({
       isActive: true,
-      name: { $regex: q, $options: 'i' },
+      ...fuzzyFilter,
     })
-      .select('name images')
-      .limit(Number(limit))
-      .sort({ name: 1 });
+      .select('name images mainCategory subCategory')
+      .limit(fetchLimit)
+      .lean();
 
-    const suggestions = products.map(p => ({
+    // Rank by relevance: name starts-with query > name contains whole query > other
+    const lq = query.toLowerCase();
+    const scored = products.map(p => {
+      const lname = (p.name || '').toLowerCase();
+      let score = 0;
+      if (lname.startsWith(lq)) score = 3;           // best: starts with full query
+      else if (lname.includes(lq)) score = 2;        // good: name contains full query
+      else score = 1;                                  // rest: keyword matched other field
+      return { p, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+
+    const suggestions = scored.slice(0, Number(limit)).map(({ p }) => ({
       id: p._id,
       name: p.name,
-      image: p.images[0] || null,
+      image: (p.images as string[])[0] || null,
     }));
 
     res.status(200).json({ suggestions });

@@ -96,14 +96,28 @@ export class ProductService {
     }
     // If filters.isActive is undefined, don't add any filter - show all products
 
-    // Add search functionality
+    // Add search functionality — multi-keyword fuzzy across name, description,
+    // mainCategory and subCategory so partial/multi-word queries work correctly.
     if (filters.search) {
-      // Escape special regex characters to prevent regex errors
-      const escapedSearch = filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      query.$or = [
-        { name: { $regex: escapedSearch, $options: 'i' } },
-        { description: { $regex: escapedSearch, $options: 'i' } }
-      ];
+      const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const keywords = filters.search.trim().split(/\s+/).filter((k: string) => k.length >= 1);
+
+      // Every keyword must match at least one searchable field (AND of ORs)
+      const keywordConditions = keywords.map((kw: string) => ({
+        $or: [
+          { name: { $regex: escape(kw), $options: 'i' } },
+          { description: { $regex: escape(kw), $options: 'i' } },
+          { mainCategory: { $regex: escape(kw), $options: 'i' } },
+          { subCategory: { $regex: escape(kw), $options: 'i' } },
+        ],
+      }));
+
+      // Merge with any existing $and conditions
+      if (query.$and) {
+        query.$and = [...query.$and, ...keywordConditions];
+      } else {
+        query.$and = keywordConditions;
+      }
     }
 
     // Pagination
