@@ -33,6 +33,12 @@ const birdSchema = new Schema(
       type: [labReportSchema],
       default: [],
     },
+    // DNA test result set by admin after lab processing
+    dnaResult: {
+      type: String,
+      enum: ['male', 'female', 'inconclusive', null],
+      default: null,
+    },
   },
   { _id: false }
 );
@@ -80,7 +86,9 @@ const serviceRequestSchema = new Schema<IServiceRequest>(
     extraNote: String,
     status: {
       type: String,
-      enum: ['pending', 'accepted', 'sample_collected', 'testing', 'completed', 'cancelled'],
+      enum: ['pending', 'received', 'processing', 'completed', 'cancelled',
+             // legacy values kept for backward compatibility
+             'accepted', 'sample_collected', 'testing'],
       default: 'pending',
     },
     pickupRequestId: String,

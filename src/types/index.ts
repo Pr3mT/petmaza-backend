@@ -313,6 +313,7 @@ export interface IServiceRequest extends Document {
       uploadedAt: Date;
       uploadedBy: string;
     }>;
+    dnaResult?: 'male' | 'female' | 'inconclusive' | null;
   }>;
   pickupAddress: {
     street: string;
@@ -327,7 +328,7 @@ export interface IServiceRequest extends Document {
     pincode: string;
   };
   extraNote?: string;
-  status: 'pending' | 'accepted' | 'sample_collected' | 'testing' | 'completed' | 'cancelled';
+  status: 'pending' | 'received' | 'processing' | 'completed' | 'cancelled' | 'accepted' | 'sample_collected' | 'testing';
   pickupRequestId?: string;
   payment_id?: string;
   payment_status: PaymentStatus;

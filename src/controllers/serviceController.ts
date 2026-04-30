@@ -1,12 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
+import Razorpay from 'razorpay';
 import ServiceRequest from '../models/ServiceRequest';
 import SiteSettings from '../models/SiteSettings';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import cloudinary from '../config/cloudinary';
+import {
+  generateDnaRequestPdf,
+  generateDnaResultCertificatePdf,
+} from '../services/dnaPdfGenerator';
 
 const BIRD_DNA_PRICE_PER_BIRD = 300;
+
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID || '',
+  key_secret: process.env.RAZORPAY_KEY_SECRET || '',
+});
 
 const getStoredReportPublicId = (report: { publicId?: string; url?: string }) => {
   if (report.publicId) {
@@ -290,7 +300,8 @@ export const updateServiceStatus = async (req: AuthRequest, res: Response, next:
     const { id } = req.params;
     const { status, vendorAssignedId } = req.body;
 
-    const allowed = ['pending', 'accepted', 'sample_collected', 'testing', 'completed', 'cancelled'];
+    const allowed = ['pending', 'received', 'processing', 'completed', 'cancelled',
+                      'accepted', 'sample_collected', 'testing'];
     if (!allowed.includes(status)) {
       return next(new AppError(`Invalid status. Allowed: ${allowed.join(', ')}`, 400));
     }
@@ -370,6 +381,146 @@ export const uploadLabReport = async (req: AuthRequest, res: Response, next: Nex
       message: 'Lab report uploaded successfully',
       data: { serviceRequest: normalizeBirdReports(serviceRequest) },
     });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Customer: download request submission PDF ───────────────────────────────
+
+export const downloadRequestPdf = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+
+    const serviceRequest = await ServiceRequest.findById(id);
+    if (!serviceRequest) {
+      return next(new AppError('Service request not found', 404));
+    }
+
+    const isOwner = serviceRequest.customerId?.toString() === req.user._id?.toString();
+    const isAdmin = req.user?.role === 'admin';
+    const isMyShopVendor = req.user?.role === 'vendor' && req.user?.vendorType === 'MY_SHOP';
+    if (!isOwner && !isAdmin && !isMyShopVendor) {
+      return next(new AppError('Access denied', 403));
+    }
+
+    const pdfBuffer = await generateDnaRequestPdf({
+      requestId: serviceRequest._id.toString(),
+      customerName: serviceRequest.customerName,
+      farm: serviceRequest.farm,
+      address: serviceRequest.pickupAddress,
+      birds: serviceRequest.birds as any[],
+      totalAmount: serviceRequest.totalAmount,
+      pricePerSample: serviceRequest.pricePerSample,
+      createdAt: serviceRequest.createdAt,
+      extraNote: serviceRequest.extraNote,
+    });
+
+    const filename = `dna-request-${serviceRequest._id.toString().slice(-8)}.pdf`;
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Admin: set DNA result for a bird ────────────────────────────────────────
+
+export const setDnaResult = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    if (req.user.role === 'vendor' && req.user.vendorType !== 'MY_SHOP') {
+      return next(new AppError('Access denied', 403));
+    }
+
+    const { id, birdIndex } = req.params;
+    const { dnaResult } = req.body;
+
+    const allowed = ['male', 'female', 'inconclusive'];
+    if (!allowed.includes(dnaResult)) {
+      return next(new AppError(`Invalid dnaResult. Allowed: ${allowed.join(', ')}`, 400));
+    }
+
+    const birdPosition = parsePosition(birdIndex, 'bird index');
+    const serviceRequest = await ServiceRequest.findById(id);
+    if (!serviceRequest) {
+      return next(new AppError('Service request not found', 404));
+    }
+
+    const bird = serviceRequest.birds?.[birdPosition];
+    if (!bird) {
+      return next(new AppError('Bird not found in this request', 404));
+    }
+
+    (bird as any).dnaResult = dnaResult;
+    serviceRequest.markModified('birds');
+    await serviceRequest.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'DNA result saved',
+      data: { serviceRequest: normalizeBirdReports(serviceRequest) },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Download DNA result certificate PDF ──────────────────────────────────────
+
+export const downloadResultCertificatePdf = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id, birdIndex } = req.params;
+
+    const serviceRequest = await ServiceRequest.findById(id);
+    if (!serviceRequest) {
+      return next(new AppError('Service request not found', 404));
+    }
+
+    const isOwner = serviceRequest.customerId?.toString() === req.user._id?.toString();
+    const isAdmin = req.user?.role === 'admin';
+    const isMyShopVendor = req.user?.role === 'vendor' && req.user?.vendorType === 'MY_SHOP';
+    if (!isOwner && !isAdmin && !isMyShopVendor) {
+      return next(new AppError('Access denied', 403));
+    }
+
+    const birdPosition = parsePosition(birdIndex, 'bird index');
+    const bird: any = serviceRequest.birds?.[birdPosition];
+    if (!bird) {
+      return next(new AppError('Bird not found in this request', 404));
+    }
+
+    const dnaResult = bird.dnaResult as 'male' | 'female' | 'inconclusive' | null;
+    if (!dnaResult) {
+      return next(new AppError('DNA result has not been set yet', 400));
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const verificationUrl = `${frontendUrl}/dna-verify?requestId=${id}&birdIndex=${birdPosition}`;
+
+    const pdfBuffer = await generateDnaResultCertificatePdf({
+      requestId: id,
+      birdIndex: birdPosition,
+      birdName: bird.birdName,
+      bandId: bird.bandId,
+      species: bird.species,
+      dnaResult,
+      testDate: serviceRequest.updatedAt,
+      verificationUrl,
+      customerName: serviceRequest.customerName,
+      farm: serviceRequest.farm,
+    });
+
+    const filename = `dna-certificate-${id.slice(-8)}-bird${birdPosition + 1}.pdf`;
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    res.send(pdfBuffer);
   } catch (error: any) {
     next(error);
   }
@@ -539,6 +690,128 @@ export const getServiceAvailability = async (req: Request, res: Response, next: 
       data: {
         birdDnaServiceEnabled: settings.birdDnaServiceEnabled,
         pricePerSample: settings.birdDnaPricePerSample,
+      },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Customer: update payment for existing service request ────────────────────
+
+export const updateServicePayment = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { payment_id } = req.body;
+
+    if (!payment_id) {
+      return next(new AppError('payment_id is required', 400));
+    }
+
+    const serviceRequest = await ServiceRequest.findById(id);
+    if (!serviceRequest) {
+      return next(new AppError('Service request not found', 404));
+    }
+
+    const isOwner = serviceRequest.customerId?.toString() === req.user._id?.toString();
+    if (!isOwner) {
+      return next(new AppError('Access denied', 403));
+    }
+
+    if (serviceRequest.payment_status === 'Paid') {
+      return next(new AppError('Payment already completed', 400));
+    }
+
+    serviceRequest.payment_id = payment_id;
+    serviceRequest.payment_status = 'Paid';
+    await serviceRequest.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment recorded successfully',
+      data: { serviceRequest },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Customer: create Razorpay payment order ─────────────────────────────────
+
+export const createDnaPaymentOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {  try {
+    const { amount } = req.body;
+    if (!amount || amount <= 0) {
+      return next(new AppError('Invalid amount', 400));
+    }
+
+    const order = await razorpay.orders.create({
+      amount: Math.round(amount * 100), // Razorpay expects paise
+      currency: 'INR',
+      receipt: `dna_${Date.now()}`,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId: process.env.RAZORPAY_KEY_ID,
+      },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Public: verify DNA result (for QR code scan page) ───────────────────────
+
+export const verifyDnaResult = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const requestId = typeof req.query.requestId === 'string' ? req.query.requestId.trim() : '';
+    const birdIndexRaw = req.query.birdIndex;
+
+    if (!requestId || birdIndexRaw === undefined) {
+      return next(new AppError('Missing requestId or birdIndex', 400));
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(requestId)) {
+      return next(new AppError('Invalid requestId', 400));
+    }
+
+    const birdIndex = Number(birdIndexRaw);
+    if (!Number.isInteger(birdIndex) || birdIndex < 0) {
+      return next(new AppError('Invalid birdIndex', 400));
+    }
+
+    const serviceRequest: any = await ServiceRequest.findById(requestId)
+      .select('customerName farm birds updatedAt status');
+
+    if (!serviceRequest) {
+      return next(new AppError('Certificate not found', 404));
+    }
+
+    const bird = serviceRequest.birds?.[birdIndex];
+    if (!bird) {
+      return next(new AppError('Bird record not found', 404));
+    }
+
+    const certNumber = `PML-DNA-${requestId.slice(-8).toUpperCase()}-B${birdIndex + 1}`;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        requestId,
+        birdIndex,
+        certNumber,
+        birdName: bird.birdName,
+        bandId: bird.bandId,
+        species: bird.species,
+        dnaResult: bird.dnaResult || null,
+        farm: serviceRequest.farm,
+        customerName: serviceRequest.customerName,
+        testDate: serviceRequest.updatedAt,
+        status: serviceRequest.status,
       },
     });
   } catch (error: any) {
