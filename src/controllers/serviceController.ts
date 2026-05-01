@@ -498,7 +498,7 @@ export const downloadResultCertificatePdf = async (req: AuthRequest, res: Respon
       return next(new AppError('DNA result has not been set yet', 400));
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://petmaza.com';
     const verificationUrl = `${frontendUrl}/dna-verify?requestId=${id}&birdIndex=${birdPosition}`;
 
     const pdfBuffer = await generateDnaResultCertificatePdf({

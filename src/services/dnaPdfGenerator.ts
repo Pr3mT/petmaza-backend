@@ -237,27 +237,35 @@ export async function generateDnaRequestPdf(data: DnaRequestPdfData): Promise<Bu
 
 // â”€â”€â”€ 2. DNA Result Certificate PDF (Landscape card style) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+// --- 2. DNA Result Certificate PDF (Landscape Card - Image 2 style) -----------
+
 export async function generateDnaResultCertificatePdf(
   data: DnaResultCertificateData,
 ): Promise<Buffer> {
   return new Promise(async (resolve, reject) => {
     try {
-      // A5 landscape: 595 wide x 420 tall
-      const PW = 595;
-      const PH = 420;
-      const NAVY   = '#1a1a2e';
-      const GOLD_C = '#f5a623';
+      // Landscape card
+      const PW = 790;
+      const PH = 540;
 
-      const resultColor = data.dnaResult === 'female' ? '#c0185d' : data.dnaResult === 'male' ? '#1d4ed8' : '#374151';
-      const resultLabel = data.dnaResult === 'female' ? 'FEMALE' : data.dnaResult === 'male' ? 'MALE' : 'INCONCLUSIVE';
-      const resultGender = data.dnaResult === 'female' ? '(F)' : data.dnaResult === 'male' ? '(M)' : '';
+      const NAVY  = '#0d1b3e';
+      const GOLD  = '#e8a000';
+      const DARK  = '#111827';
+      const WHITE = '#ffffff';
+      const CREAM = '#fafbfd';
+      const LGREY = '#6b7280';
 
-      // Generate QR code
+      const resultLabel = data.dnaResult === 'male'   ? 'Male'
+        : data.dnaResult === 'female' ? 'Female' : 'Inconclusive';
+      const resultColor = data.dnaResult === 'male'   ? '#0044aa'
+        : data.dnaResult === 'female' ? '#9d0050' : '#374151';
+
+      // QR code
       const qrBuffer: Buffer = await QRCode.toBuffer(data.verificationUrl, {
-        errorCorrectionLevel: 'M',
-        width: 120,
+        errorCorrectionLevel: 'H',
+        width: 130,
         margin: 1,
-        color: { dark: '#000000', light: '#ffffff' },
+        color: { dark: '#000000', light: WHITE },
       });
 
       const doc = new PDFDocument({ size: [PW, PH], margin: 0, autoFirstPage: true });
@@ -268,90 +276,159 @@ export async function generateDnaResultCertificatePdf(
       pass.on('error', reject);
       doc.pipe(pass);
 
-      // â”€â”€ White background â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      doc.rect(0, 0, PW, PH).fill('#ffffff');
+      // ── Top decorative band ─────────────────────────────────────────────────
+      const HDR_H = 58;
+      doc.rect(0, 0, PW, HDR_H).fill(NAVY);
+      // Left: gold diagonal triangle
+      doc.polygon([0, 0], [100, 0], [140, HDR_H], [0, HDR_H]).fill(GOLD);
+      // Left: white stripe beside it
+      doc.polygon([108, 0], [140, 0], [180, HDR_H], [148, HDR_H]).fill(WHITE);
+      // Right: dark inverted triangle
+      doc.polygon([PW, 0], [PW - 100, 0], [PW - 140, HDR_H], [PW, HDR_H]).fill('#0a1428');
+      // Right: white stripe
+      doc.polygon([PW - 108, 0], [PW - 140, 0], [PW - 180, HDR_H], [PW - 148, HDR_H]).fill(WHITE);
 
-      // â”€â”€ Top header bar (navy) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      const HDR = 58;
-      doc.rect(0, 0, PW, HDR).fill(NAVY);
+      // ── Content area (white/cream) ──────────────────────────────────────────
+      const CTY = HDR_H;
+      const FTY = 470;
+      doc.rect(0, CTY, PW, FTY - CTY).fill(CREAM);
 
-      // Gold diagonal stripe (top-left accent)
+      // Hex watermark in content area
+      const hR = 22;
+      const hH = hR * Math.sqrt(3);
       doc.save();
-      doc.moveTo(0, 0).lineTo(60, 0).lineTo(90, HDR).lineTo(0, HDR).fill(GOLD_C);
-      doc.moveTo(68, 0).lineTo(110, 0).lineTo(140, HDR).lineTo(98, HDR).fill('#ffffff');
+      doc.strokeColor('#e2e4ea').lineWidth(0.4);
+      for (let row = -1; row <= Math.ceil((FTY - CTY) / hH) + 1; row++) {
+        for (let col = -1; col <= Math.ceil(PW / (hR * 3)) + 1; col++) {
+          const cx = col * hR * 3 + (row % 2 === 0 ? 0 : hR * 1.5);
+          const cy = CTY + row * hH;
+          let first = true;
+          for (let i = 0; i < 6; i++) {
+            const ang = (Math.PI / 3) * i - Math.PI / 6;
+            const hx = cx + hR * Math.cos(ang);
+            const hy = cy + hR * Math.sin(ang);
+            if (first) { doc.moveTo(hx, hy); first = false; } else doc.lineTo(hx, hy);
+          }
+          doc.closePath();
+        }
+      }
+      doc.stroke();
       doc.restore();
 
-      // Header title
-      doc.fontSize(22).fillColor('#ffffff').font('Helvetica-Bold')
-        .text('PETMAZA DNA LABS', 150, 10, { width: 280 });
-      doc.fontSize(12).fillColor(GOLD_C).font('Helvetica-Bold')
-        .text('DNA SEXING', 150, 36, { width: 180 });
+      // ── Company name ─────────────────────────────────────────────────────────
+      const TY = CTY + 16;
+      doc.font('Helvetica-Bold').fontSize(32).fillColor(NAVY)
+        .text('PETMAZA DNA LABS', 55, TY, { continued: true, lineBreak: false });
+      doc.font('Helvetica-BoldOblique').fontSize(20).fillColor(GOLD)
+        .text('   DNA SEXING', { lineBreak: false });
+      doc.font('Helvetica').fontSize(9).fillColor(LGREY)
+        .text('Certified Laboratory for Avian DNA Analysis', 55, TY + 36, { lineBreak: false });
 
-      // QR code top-right (in header)
-      const qrX = PW - 118;
-      const qrY = HDR + 12;
-      doc.rect(qrX - 4, qrY - 4, 112, 112).fill('#f0f0f0');
-      doc.image(qrBuffer, qrX, qrY, { width: 104, height: 104 });
-      doc.fontSize(6.5).fillColor('#666666').font('Helvetica')
-        .text('Scan to verify', qrX - 4, qrY + 107, { width: 112, align: 'center' });
+      // ── QR code (top-right) ───────────────────────────────────────────────────
+      const qrSZ = 100;
+      const qrX  = PW - qrSZ - 38;
+      const qrY  = CTY + 10;
+      doc.rect(qrX - 6, qrY - 6, qrSZ + 12, qrSZ + 20).fill(WHITE);
+      doc.rect(qrX - 6, qrY - 6, qrSZ + 12, qrSZ + 20)
+        .lineWidth(0.8).strokeColor('#cccccc').stroke();
+      doc.image(qrBuffer, qrX, qrY, { width: qrSZ, height: qrSZ });
+      doc.font('Helvetica').fontSize(7).fillColor(LGREY)
+        .text('Scan to verify', qrX - 6, qrY + qrSZ + 5, { width: qrSZ + 12, align: 'center' });
 
-      // â”€â”€ Content area â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      const CX = 18;  // content left margin
-      const CW = PW - 140; // content width (excluding QR area)
+      // ── Data fields ──────────────────────────────────────────────────────────
+      const FS  = 11.5;
+      const GAP = 26;
+      const LX  = 55;
+      const RX  = 430;
+      const FSY = TY + 58;
 
-      // Left column labels and values
-      const col1L = CX;
-      const col1V = CX + 120;
-      const col2L = CX + 250;
-      const col2V = CX + 370;
-
-      let ry = HDR + 18;
-      const rowH = 26;
-
-      const rows: [string, string, string, string][] = [
-        ['Bird Id / Band:', data.bandId || 'N/A',     'Report Date:', fmt(data.testDate)],
-        ['Farm Name:',      data.farm || 'N/A',       'Cert Id:',     certNumber(data.requestId, data.birdIndex)],
-        ['Submitted by:',   data.customerName || 'N/A', '', ''],
-        ['Bird Species:',   data.species || 'N/A',    '', ''],
-        ['Specimen Submitted:', 'Feather / Blood',    '', ''],
+      const leftFields: [string, string][] = [
+        ['Bird Id/ Band:',  data.bandId       || 'N/A'],
+        ['Farm Name:',      data.farm         || 'N/A'],
+        ['Submitted by:',   data.customerName || 'N/A'],
+        ['Bird Species:',   data.species      || 'N/A'],
+        ['Specimen:',       'Feather / Blood'],
+      ];
+      const rightFields: [string, string][] = [
+        ['Report Date:',  fmt(data.testDate)],
+        ['Cert Id:',      certNumber(data.requestId, data.birdIndex)],
       ];
 
-      rows.forEach(([l1, v1, l2, v2]) => {
-        doc.fontSize(9.5).fillColor('#444444').font('Helvetica-Bold').text(l1, col1L, ry, { width: 115 });
-        doc.fontSize(9.5).fillColor('#111111').font('Helvetica').text(v1, col1V, ry, { width: 120 });
-        if (l2) {
-          doc.fontSize(9.5).fillColor('#444444').font('Helvetica-Bold').text(l2, col2L, ry, { width: 100 });
-          doc.fontSize(9.5).fillColor('#111111').font('Helvetica').text(v2, col2V, ry, { width: 120 });
-        }
-        ry += rowH;
+      leftFields.forEach(([lbl, val], i) => {
+        doc.font('Helvetica-BoldOblique').fontSize(FS).fillColor('#4b5563')
+          .text(lbl + '  ', LX, FSY + i * GAP, { continued: true, lineBreak: false });
+        doc.font('Helvetica-Bold').fontSize(FS).fillColor(DARK)
+          .text(val, { lineBreak: false });
+      });
+      rightFields.forEach(([lbl, val], i) => {
+        doc.font('Helvetica-BoldOblique').fontSize(FS).fillColor('#4b5563')
+          .text(lbl + '  ', RX, FSY + i * GAP, { continued: true, lineBreak: false });
+        doc.font('Helvetica-Bold').fontSize(FS).fillColor(DARK)
+          .text(val, { lineBreak: false });
       });
 
-      // â”€â”€ Report result â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      const repY = HDR + 170;
-      doc.fontSize(28).fillColor(resultColor).font('Helvetica-Bold')
-        .text(`Report : ${resultLabel} ${resultGender}`, CX, repY, { width: CW - 20 });
-
-      // â”€â”€ Bottom navy band â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      const FTR = 42;
-      const footerY = PH - FTR;
-      doc.rect(0, footerY, PW, FTR).fill(NAVY);
-
-      // Gold/white diagonal accents on bottom-left
+      // ── Gold divider ─────────────────────────────────────────────────────────
+      const DIV_Y = FSY + leftFields.length * GAP + 10;
       doc.save();
-      doc.moveTo(0, footerY).lineTo(50, footerY).lineTo(80, PH).lineTo(0, PH).fill(GOLD_C);
-      doc.moveTo(58, footerY).lineTo(100, footerY).lineTo(130, PH).lineTo(88, PH).fill('#ffffff');
+      doc.moveTo(40, DIV_Y).lineTo(PW - 40, DIV_Y).lineWidth(2).strokeColor(GOLD).stroke();
       doc.restore();
 
-      // Gold/white diagonal accents on bottom-right
-      doc.save();
-      doc.moveTo(PW - 50, footerY).lineTo(PW, footerY).lineTo(PW, PH).lineTo(PW - 80, PH).fill(GOLD_C);
-      doc.moveTo(PW - 100, footerY).lineTo(PW - 58, footerY).lineTo(PW - 88, PH).lineTo(PW - 130, PH).fill('#ffffff');
-      doc.restore();
+      // ── Result section ────────────────────────────────────────────────────────
+      const RSY = DIV_Y + 16;
+      const RSH = FTY - RSY - 10;
 
-      // Footer address text
-      doc.fontSize(8).fillColor('#cccccc').font('Helvetica')
-        .text('Petmaza DNA Labs, Viman Nagar, Pune, Maharashtra, India.  |  lab@petmaza.com  |  www.petmaza.com',
-          100, footerY + 13, { width: PW - 200, align: 'center' });
+      // Left: result badge circle
+      const badgeCX = 90;
+      const badgeCY = RSY + RSH / 2;
+      const badgeR  = 52;
+      doc.circle(badgeCX, badgeCY, badgeR).fill(WHITE);
+      doc.circle(badgeCX, badgeCY, badgeR).lineWidth(2.5).strokeColor(GOLD).stroke();
+      doc.circle(badgeCX, badgeCY, badgeR - 5).lineWidth(0.8).strokeColor(GOLD).stroke();
+      doc.font('Helvetica-Bold').fontSize(8).fillColor('#888888')
+        .text('RESULT', badgeCX - 30, badgeCY - 28, { width: 60, align: 'center', lineBreak: false });
+      doc.font('Helvetica-Bold').fontSize(22).fillColor(resultColor)
+        .text(resultLabel, badgeCX - 32, badgeCY - 12, { width: 64, align: 'center', lineBreak: false });
+      doc.font('Helvetica-Oblique').fontSize(8).fillColor('#aaaaaa')
+        .text('Certified', badgeCX - 28, badgeCY + 14, { width: 56, align: 'center', lineBreak: false });
+
+      // Center: Report text
+      const reptX = badgeCX + badgeR + 28;
+      const reptW = qrX - reptX - 24;
+      doc.font('Helvetica-BoldOblique').fontSize(36).fillColor(resultColor)
+        .text(`Report : ${resultLabel}`, reptX, RSY + (RSH - 44) / 2, { width: reptW, lineBreak: false });
+      doc.font('Helvetica').fontSize(9).fillColor('#888888')
+        .text('Certified by Petmaza DNA Labs', reptX, RSY + (RSH - 44) / 2 + 46, { width: reptW, lineBreak: false });
+
+      // Right of result: signature block
+      const sigX = qrX - 160;
+      const sigY2 = FTY - 52;
+      doc.save();
+      doc.moveTo(sigX, sigY2).lineTo(sigX + 140, sigY2).lineWidth(0.7).strokeColor('#bbbbbb').stroke();
+      doc.restore();
+      doc.font('Helvetica-Bold').fontSize(8).fillColor('#444444')
+        .text('Authorised Signatory', sigX, sigY2 + 4, { width: 140, lineBreak: false });
+      doc.font('Helvetica').fontSize(7.5).fillColor('#888888')
+        .text('Lab Director, Petmaza DNA Labs', sigX, sigY2 + 16, { width: 140, lineBreak: false });
+
+      // ── Footer band ──────────────────────────────────────────────────────────
+      doc.rect(0, FTY, PW, PH - FTY).fill(NAVY);
+      // Left diagonals
+      doc.polygon([0, FTY], [95, FTY], [135, PH], [0, PH]).fill(GOLD);
+      doc.polygon([103, FTY], [135, FTY], [175, PH], [143, PH]).fill(WHITE);
+      // Right diagonals
+      doc.polygon([PW, FTY], [PW - 95, FTY], [PW - 135, PH], [PW, PH]).fill('#0a1428');
+      doc.polygon([PW - 103, FTY], [PW - 135, FTY], [PW - 175, PH], [PW - 143, PH]).fill(WHITE);
+      // Address text
+      doc.font('Helvetica').fontSize(9.5).fillColor(WHITE)
+        .text(
+          'Panvel, Maharashtra, India  |  lab@petmaza.com  |  www.petmaza.com',
+          0, FTY + 18, { width: PW, align: 'center' },
+        );
+      doc.font('Helvetica').fontSize(8).fillColor(GOLD)
+        .text(
+          `Generated: ${new Date().toLocaleDateString('en-IN')}  \u00B7  Cert #${certNumber(data.requestId, data.birdIndex)}`,
+          0, FTY + 32, { width: PW, align: 'center' },
+        );
 
       doc.end();
     } catch (err) {
