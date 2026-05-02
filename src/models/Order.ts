@@ -99,6 +99,7 @@ const orderSchema = new Schema<IOrder>(
         'REFUND_INITIATED',
         'REFUNDED',
         'PACKED',
+        'READY_TO_SHIP',
         'PICKED_UP',
         'IN_TRANSIT',
         'DELIVERED',

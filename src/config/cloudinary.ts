@@ -50,4 +50,23 @@ export const uploadPdf = multer({
   },
 });
 
+// File filter for shipping receipts (images OR PDF)
+const receiptFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/pdf'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only JPEG, PNG, WebP images and PDF files are allowed.'));
+  }
+};
+
+// Multer upload configuration for shipping receipts (images + PDFs)
+export const uploadReceipt = multer({
+  storage,
+  fileFilter: receiptFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB max
+  },
+});
+
 export default cloudinary;

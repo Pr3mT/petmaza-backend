@@ -3,10 +3,13 @@ import { AuthRequest } from '../middlewares/auth';
 import Order from '../models/Order';
 import Product from '../models/Product';
 import VendorDetails from '../models/VendorDetails';
+import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
 import logger from '../config/logger';
 import { sendOrderStatusUpdateEmail, sendOrderRejectionEmail, sendRefundInitiatedEmail } from '../services/emailer';
 import { sanitizeOrderForVendor, sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
+import cloudinary from '../config/cloudinary';
+import streamifier from 'streamifier';
 
 /**
  * Fix orders where purchasePrice was stored as 0.
@@ -325,7 +328,7 @@ export const updatePrimeOrderStatus = async (
       return next(new AppError('Order not found', 404));
     }
 
-    const allowedStatuses = ['ACCEPTED', 'PROCESSING', 'PACKED', 'PICKED_UP', 'IN_TRANSIT', 'SHIPPED', 'DELIVERED'];
+    const allowedStatuses = ['ACCEPTED', 'PROCESSING', 'PACKED', 'READY_TO_SHIP', 'PICKED_UP', 'IN_TRANSIT', 'SHIPPED', 'DELIVERED'];
     if (!allowedStatuses.includes(status)) {
       return next(new AppError('Invalid status', 400));
     }
@@ -508,6 +511,112 @@ export const initiateRefund = async (
     });
   } catch (error: any) {
     logger.error('[PrimeVendor] Error initiating refund:', error);
+    next(error);
+  }
+};
+
+// ─── Add Shipping Details (PACKED → READY_TO_SHIP, Prime Vendor only) ─────────
+export const addShippingDetails = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const vendor_id = req.user._id;
+    const { id } = req.params;
+    const {
+      shipping_company,
+      tracking_id,
+      total_weight,
+      weight_unit,
+      delivery_type,
+    } = req.body;
+
+    // ── Validate required text fields ─────────────────────────────────────────
+    if (!shipping_company || !String(shipping_company).trim()) {
+      return next(new AppError('Shipping company name is required', 400));
+    }
+    if (!tracking_id || !String(tracking_id).trim()) {
+      return next(new AppError('Tracking ID is required', 400));
+    }
+    if (!total_weight || isNaN(Number(total_weight)) || Number(total_weight) <= 0) {
+      return next(new AppError('Total weight must be a positive number', 400));
+    }
+    if (!weight_unit || !['kg', 'g'].includes(weight_unit)) {
+      return next(new AppError('Weight unit must be kg or g', 400));
+    }
+    if (!delivery_type || !['inter_state', 'out_of_state'].includes(delivery_type)) {
+      return next(new AppError('Delivery type must be inter_state or out_of_state', 400));
+    }
+    if (!req.file) {
+      return next(new AppError('Shipping receipt file is required', 400));
+    }
+
+    // ── Verify order belongs to this prime vendor and is in PACKED status ────
+    const order = await Order.findOne({
+      _id: id,
+      assignedVendorId: vendor_id,
+      isPrime: true,
+      status: 'PACKED',
+      payment_status: 'Paid',
+    });
+
+    if (!order) {
+      return next(new AppError('Order not found or not in PACKED status', 404));
+    }
+
+    // ── Check if shipping details already exist for this order ──────────────
+    const existing = await ShippingDetails.findOne({ order_id: id });
+    if (existing) {
+      return next(new AppError('Shipping details already submitted for this order', 409));
+    }
+
+    // ── Upload receipt to Cloudinary ─────────────────────────────────────────
+    const isPdf = req.file.mimetype === 'application/pdf';
+    const uploadResult: any = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'petmaza/shipping-receipts',
+          resource_type: isPdf ? 'raw' : 'image',
+          ...(isPdf ? { format: 'pdf' } : {}),
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      streamifier.createReadStream(req.file!.buffer).pipe(stream);
+    });
+
+    // ── Save shipping details ────────────────────────────────────────────────
+    const shippingDetails = await ShippingDetails.create({
+      order_id: id,
+      vendor_id,
+      shipping_company: String(shipping_company).trim(),
+      receipt_file_url: uploadResult.secure_url,
+      receipt_file_public_id: uploadResult.public_id,
+      tracking_id: String(tracking_id).trim(),
+      total_weight: Number(total_weight),
+      weight_unit,
+      delivery_type,
+    });
+
+    // ── Update order status to READY_TO_SHIP ─────────────────────────────────
+    order.status = 'READY_TO_SHIP';
+    if (!order.courier) order.courier = {};
+    order.courier.tracking_id = String(tracking_id).trim();
+    order.courier.name = String(shipping_company).trim();
+    await order.save();
+
+    logger.info(`[PrimeVendor] Shipping details added for order ${id} by vendor ${vendor_id}`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Shipping details saved. Order marked as Ready to Ship.',
+      data: { shippingDetails },
+    });
+  } catch (error: any) {
+    logger.error('[PrimeVendor] Error adding shipping details:', error);
     next(error);
   }
 };
