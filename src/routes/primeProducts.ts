@@ -8,6 +8,7 @@ import {
   deletePrimeListing,
   getPrimeDashboardStats,
   adminGetAllPrimeListings,
+  getPrimeWalletStats,
 } from '../controllers/primeProductController';
 import { verifyToken, checkPrimeVendor, checkRole } from '../middlewares/auth';
 
@@ -24,6 +25,9 @@ router.use(checkPrimeVendor);
 
 // Dashboard
 router.get('/dashboard/stats', getPrimeDashboardStats);
+
+// Wallet / Earnings
+router.get('/wallet/stats', getPrimeWalletStats);
 
 // CRUD Operations
 router.post('/', createPrimeListing);

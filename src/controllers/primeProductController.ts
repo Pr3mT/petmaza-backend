@@ -487,3 +487,119 @@ export const adminGetAllPrimeListings = async (
     next(error);
   }
 };
+
+// Prime Vendor Wallet: complete earnings & order breakdown
+export const getPrimeWalletStats = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const vendor_id = req.user._id;
+    const { startDate, endDate } = req.query;
+    const Order = (await import('../models/Order')).default;
+
+    // Build date filter
+    const dateFilter: any = {};
+    if (startDate || endDate) {
+      dateFilter.createdAt = {};
+      if (startDate) dateFilter.createdAt.$gte = new Date(startDate as string);
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        dateFilter.createdAt.$lte = end;
+      }
+    }
+
+    const baseQuery: any = {
+      assignedVendorId: vendor_id,
+      ...dateFilter,
+    };
+
+    // All orders (excluding cancelled)
+    const allOrders = await Order.find({
+      ...baseQuery,
+      status: { $nin: ['CANCELLED', 'REJECTED'] },
+    })
+      .populate('customer_id', 'name email')
+      .populate('items.product_id', 'name images')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Completed (delivered) orders revenue — 10% platform fee, vendor keeps 90%
+    const PLATFORM_FEE = 0.10;
+    let totalRevenue = 0;
+    let completedCount = 0;
+    let pendingSettlement = 0;
+
+    const orderList = allOrders.map((order: any) => {
+      const orderTotal = order.total || 0;
+      const vendorShare = orderTotal * (1 - PLATFORM_FEE);
+      const isDelivered = order.status === 'DELIVERED';
+      if (isDelivered) {
+        totalRevenue += vendorShare;
+        completedCount += 1;
+      } else {
+        pendingSettlement += vendorShare;
+      }
+
+      const customer = order.customer_id as any;
+      const productNames = (order.items || [])
+        .map((item: any) => item.product_id?.name || 'Product')
+        .join(', ');
+
+      return {
+        orderId: order.order_id || order._id,
+        orderDate: order.createdAt,
+        customerName: customer?.name || 'N/A',
+        products: productNames,
+        status: order.status,
+        orderTotal,
+        vendorEarning: isDelivered ? vendorShare : 0,
+        pendingAmount: !isDelivered ? vendorShare : 0,
+        paymentStatus: order.payment_status || 'N/A',
+      };
+    });
+
+    // Monthly breakdown
+    const monthlyMap: Record<string, { month: string; orders: number; earnings: number }> = {};
+    allOrders.forEach((order: any) => {
+      if (order.status !== 'DELIVERED') return;
+      const d = new Date(order.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+      if (!monthlyMap[key]) monthlyMap[key] = { month: label, orders: 0, earnings: 0 };
+      monthlyMap[key].orders += 1;
+      monthlyMap[key].earnings += (order.total || 0) * (1 - PLATFORM_FEE);
+    });
+
+    const monthlyBreakdown = Object.values(monthlyMap).sort((a, b) =>
+      a.month > b.month ? 1 : -1
+    );
+
+    // Status breakdown
+    const statusBreakdown: Record<string, number> = {};
+    allOrders.forEach((order: any) => {
+      statusBreakdown[order.status] = (statusBreakdown[order.status] || 0) + 1;
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: {
+          totalOrders: allOrders.length,
+          completedOrders: completedCount,
+          totalEarnings: totalRevenue,
+          pendingSettlement,
+          platformFee: `${PLATFORM_FEE * 100}%`,
+        },
+        statusBreakdown,
+        monthlyBreakdown,
+        orders: orderList,
+      },
+    });
+  } catch (error: any) {
+    logger.error('[PrimeProduct] Error fetching wallet stats:', error);
+    next(error);
+  }
+};
