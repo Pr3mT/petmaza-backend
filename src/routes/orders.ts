@@ -13,6 +13,7 @@ import {
   updateOrderStatus,
   adminUpdateOrderStatus,
   adminAssignOrderToVendor,
+  getOrderShippingDetails,
 } from '../controllers/orderController';
 import { verifyToken, checkRole } from '../middlewares/auth';
 
@@ -38,5 +39,6 @@ router.get('/vendor/:id', verifyToken, checkRole('vendor'), getVendorOrderDetail
 // Admin routes - for order management
 router.put('/admin/:id/status', verifyToken, checkRole('admin'), adminUpdateOrderStatus);
 router.put('/admin/:id/assign', verifyToken, checkRole('admin'), adminAssignOrderToVendor);
+router.get('/admin/:id/shipping-details', verifyToken, checkRole('admin'), getOrderShippingDetails);
 
 export default router;
