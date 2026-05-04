@@ -755,6 +755,51 @@ export const adminAssignOrderToVendor = async (
   }
 };
 
+// Admin: Get shipping details for an order (courier, tracking, address)
+export const getOrderShippingDetails = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { id } = req.params;
+
+    const mongoose = await import('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new AppError('Invalid order ID', 400));
+    }
+
+    const order = await Order.findById(id)
+      .populate('assignedVendorId', 'name email shopName phone')
+      .populate('customer_id', 'name email phone')
+      .lean();
+
+    if (!order) {
+      return next(new AppError('Order not found', 404));
+    }
+
+    const shippingDetails = {
+      orderId: order._id,
+      orderNumber: (order as any).orderNumber || order._id,
+      status: order.status,
+      customerAddress: order.customerAddress,
+      customerPincode: order.customerPincode,
+      courier: order.courier || null,
+      assignedVendor: order.assignedVendorId || null,
+      deliveryCost: order.deliveryCost,
+      shippingCharges: order.shippingCharges,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: { shippingDetails },
+    });
+  } catch (error: any) {
+    console.error('[getOrderShippingDetails] Error:', error);
+    next(error);
+  }
+};
+
 /**
  * Create Prime Order
  * Creates a direct order for a prime product listing
