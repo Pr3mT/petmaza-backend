@@ -6,7 +6,6 @@ import Order from '../models/Order';
 import User from '../models/User';
 import Product from '../models/Product';
 import Coupon from '../models/Coupon';
-import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
@@ -610,6 +609,28 @@ export const updateOrderStatus = async (
     order.status = status as any;
     await order.save();
 
+    // When order is delivered, credit vendor's wallet with their earnings (purchase price total)
+    if (status === 'DELIVERED') {
+      try {
+        const { WalletService } = await import('../services/WalletService');
+        // Sum up purchaseSubtotal for items belonging to this vendor
+        const vendorItems = order.items.filter(
+          (item: any) => item.vendor_id?.toString() === vendorId
+        );
+        const vendorEarning = vendorItems.reduce(
+          (sum: number, item: any) => sum + (item.purchaseSubtotal || 0),
+          0
+        );
+        if (vendorEarning > 0) {
+          await WalletService.addEarnings(vendorId, orderId, vendorEarning);
+          logger.info(`[updateOrderStatus] Wallet credited ₹${vendorEarning} for vendor ${vendorId}`);
+        }
+      } catch (walletError: any) {
+        // Non-blocking — don't fail the status update if wallet credit fails
+        logger.error('[updateOrderStatus] Wallet credit failed:', walletError.message);
+      }
+    }
+
     // Queue status update email to customer (non-blocking)
     try {
       const customerEmail = (order.customer_id as any)?.email;
@@ -880,35 +901,6 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
     });
 
   } catch (error: any) {
-    next(error);
-  }
-};
-
-// Admin: Get shipping details for a specific order (Prime orders only)
-export const getOrderShippingDetails = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { id } = req.params;
-
-    const shippingDetails = await ShippingDetails.findOne({ order_id: id })
-      .populate('vendor_id', 'name email phone vendorType');
-
-    if (!shippingDetails) {
-      return res.status(200).json({
-        success: true,
-        data: { shippingDetails: null },
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      data: { shippingDetails },
-    });
-  } catch (error: any) {
-    logger.error('[getOrderShippingDetails] Error:', error);
     next(error);
   }
 };

@@ -959,6 +959,17 @@ export const markWeeklyInvoicePaid = async (req: AuthRequest, res: Response, nex
     }
 
     console.log(`[markWeeklyInvoicePaid] Saved: vendorId=${vendorId} weekStart=${weekStartDate.toISOString()}`);
+
+    // Clear the vendor's wallet so their balance shows ₹0 after payout
+    try {
+      const { WalletService } = await import('../services/WalletService');
+      await WalletService.resetWallet(vendorId);
+      console.log(`[markWeeklyInvoicePaid] Wallet cleared for vendorId=${vendorId}`);
+    } catch (walletError: any) {
+      // Non-blocking — don't fail the invoice marking if wallet reset fails
+      console.error('[markWeeklyInvoicePaid] Wallet reset failed:', walletError.message);
+    }
+
     res.status(200).json({ success: true, message: 'Invoice marked as paid', paidAt });
   } catch (error: any) {
     console.error('[markWeeklyInvoicePaid] Error:', error.message);
