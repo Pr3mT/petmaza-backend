@@ -6,6 +6,7 @@ import Order from '../models/Order';
 import User from '../models/User';
 import Product from '../models/Product';
 import Coupon from '../models/Coupon';
+import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
