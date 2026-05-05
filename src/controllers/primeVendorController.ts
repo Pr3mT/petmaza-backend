@@ -556,7 +556,6 @@ export const addShippingDetails = async (
     const order = await Order.findOne({
       _id: id,
       assignedVendorId: vendor_id,
-      isPrime: true,
       status: 'PACKED',
       payment_status: 'Paid',
     });
