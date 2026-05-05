@@ -770,30 +770,11 @@ export const getOrderShippingDetails = async (
       return next(new AppError('Invalid order ID', 400));
     }
 
-    const order = await Order.findById(id)
-      .populate('assignedVendorId', 'name email shopName phone')
-      .populate('customer_id', 'name email phone')
-      .lean();
-
-    if (!order) {
-      return next(new AppError('Order not found', 404));
-    }
-
-    const shippingDetails = {
-      orderId: order._id,
-      orderNumber: (order as any).orderNumber || order._id,
-      status: order.status,
-      customerAddress: order.customerAddress,
-      customerPincode: order.customerPincode,
-      courier: order.courier || null,
-      assignedVendor: order.assignedVendorId || null,
-      deliveryCost: order.deliveryCost,
-      shippingCharges: order.shippingCharges,
-    };
+    const shippingDetails = await ShippingDetails.findOne({ order_id: id }).lean();
 
     res.status(200).json({
       success: true,
-      data: { shippingDetails },
+      data: { shippingDetails: shippingDetails || null },
     });
   } catch (error: any) {
     console.error('[getOrderShippingDetails] Error:', error);
