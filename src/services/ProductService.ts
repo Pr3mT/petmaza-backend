@@ -294,12 +294,12 @@ export class ProductService {
       hasVariants: data.hasVariants
     });
 
-    // Sync inStock with isActive: if admin marks product inactive, also mark it out-of-stock
-    // so the "Notify Me" feature works correctly (frontend checks inStock field)
+    // When a product is explicitly deactivated (isActive=false), also mark it out-of-stock
+    // so the "Notify Me" feature works correctly (frontend checks inStock field).
+    // NOTE: We do NOT auto-reset inStock=true when isActive=true — that would undo a
+    // deliberate "Mark Out of Stock" action made via the product list stock toggle.
     if (data.isActive === false && data.inStock === undefined) {
       data.inStock = false;
-    } else if (data.isActive === true && data.inStock === undefined) {
-      data.inStock = true;
     }
     
     // Validate category_id only if provided (for backward compatibility)
