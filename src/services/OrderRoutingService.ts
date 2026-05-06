@@ -325,51 +325,67 @@ export class OrderRoutingService {
       // First, group items by subcategory and find ALL eligible fulfillers for each
       for (const item of items) {
         const product = productMap.get(item.product_id);
-        if (!product || !product.subCategory) {
+        if (!product || !product.subCategory || (Array.isArray(product.subCategory) && product.subCategory.length === 0)) {
           logger.warn(`[routeNormalOrderToMyShop] Product ${item.product_id} has no subcategory, will route to MY_SHOP`);
           unassignedItems.push(item);
           continue;
         }
 
-        const subcategory = product.subCategory;
+        // subCategory is now an array — try each subcategory until we find a fulfiller
+        // This ensures multi-animal products (e.g. ['Dog Accessories', 'Cat Accessories'])
+        // are routed to the correct fulfiller based on whichever subcategory is mapped.
+        const subcategoryList: string[] = Array.isArray(product.subCategory)
+          ? product.subCategory
+          : [product.subCategory];
 
-        // Find ALL fulfillers who can handle this subcategory.
-        // Primary: VendorDetails.assignedSubcategories (live, synced by upsertCategoryMapping)
-        // Fallback: CategoryFulfillerMapping (admin-configured)
-        const eligibleFulfillers = [];
-        for (const fulfiller of warehouseFulfillers) {
-          const details = vendorDetailsArray.find(
-            vd => vd.vendor_id.toString() === fulfiller._id.toString()
-          );
+        let routedSubcategory: string | null = null;
+        let eligibleFulfillers: any[] = [];
+        // Try each subcategory until we find eligible fulfillers
+        for (const subcategory of subcategoryList) {
+          const candidateFulfillers: any[] = [];
+          for (const fulfiller of warehouseFulfillers) {
+            const details = vendorDetailsArray.find(
+              vd => vd.vendor_id.toString() === fulfiller._id.toString()
+            );
 
-          const handlesViaVendorDetails =
-            details &&
-            details.assignedSubcategories &&
-            details.assignedSubcategories.includes(subcategory);
+            const handlesViaVendorDetails =
+              details &&
+              details.assignedSubcategories &&
+              details.assignedSubcategories.includes(subcategory);
 
-          // Fallback: check CategoryFulfillerMapping
-          const handlesViaMapping =
-            mappingFulfillerMap.get(subcategory.toLowerCase()) === fulfiller._id.toString();
+            // Fallback: check CategoryFulfillerMapping
+            const handlesViaMapping =
+              mappingFulfillerMap.get(subcategory.toLowerCase()) === fulfiller._id.toString();
 
-          if (handlesViaVendorDetails || handlesViaMapping) {
-            eligibleFulfillers.push(fulfiller);
-            if (!handlesViaVendorDetails && handlesViaMapping) {
-              logger.info(`[routeNormalOrderToMyShop] ⚡ Fallback: routing ${subcategory} to ${fulfiller.name} via CategoryFulfillerMapping`);
+            if (handlesViaVendorDetails || handlesViaMapping) {
+              candidateFulfillers.push(fulfiller);
+              if (!handlesViaVendorDetails && handlesViaMapping) {
+                logger.info(`[routeNormalOrderToMyShop] ⚡ Fallback: routing ${subcategory} to ${fulfiller.name} via CategoryFulfillerMapping`);
+              }
             }
+          }
+          if (candidateFulfillers.length > 0) {
+            routedSubcategory = subcategory;
+            eligibleFulfillers = candidateFulfillers;
+            break; // Use the first subcategory that has a mapped fulfiller
           }
         }
 
-        if (eligibleFulfillers.length > 0) {
-          if (!subcategoryItemsMap.has(subcategory)) {
-            subcategoryItemsMap.set(subcategory, {
+        if (!routedSubcategory) {
+          logger.warn(`[routeNormalOrderToMyShop] No subcategory in [${subcategoryList.join(', ')}] matched any fulfiller`);
+        }
+
+        if (routedSubcategory && eligibleFulfillers.length > 0) {
+          if (!subcategoryItemsMap.has(routedSubcategory)) {
+            subcategoryItemsMap.set(routedSubcategory, {
               items: [],
               eligibleFulfillers: eligibleFulfillers,
             });
           }
-          subcategoryItemsMap.get(subcategory).items.push(item);
-          logger.info(`[routeNormalOrderToMyShop] ${product.name} (${subcategory}) → ${eligibleFulfillers.length} eligible fulfiller(s)`);
+          subcategoryItemsMap.get(routedSubcategory).items.push(item);
+          logger.info(`[routeNormalOrderToMyShop] ${product.name} (${routedSubcategory}) → ${eligibleFulfillers.length} eligible fulfiller(s)`);
         } else {
-          logger.warn(`[routeNormalOrderToMyShop] No fulfiller handles ${subcategory}, will route to MY_SHOP`);
+          logger.warn(`[routeNormalOrderToMyShop] No fulfiller handles any of [${subcategoryList.join(', ')}], will route to MY_SHOP`);
           unassignedItems.push(item);
         }
       }

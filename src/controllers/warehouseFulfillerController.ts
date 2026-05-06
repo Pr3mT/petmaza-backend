@@ -209,10 +209,14 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
     });
 
     // Verify that order contains products from assigned subcategories
+    // product.subCategory is now an array — check for any intersection
     const hasMatchingProducts = order.items.some(item => {
       const product = item.product_id as any;
       if (product && product.subCategory) {
-        return assignedSubcategories.includes(product.subCategory);
+        const productSubs: string[] = Array.isArray(product.subCategory)
+          ? product.subCategory
+          : [product.subCategory];
+        return productSubs.some((s: string) => assignedSubcategories.includes(s));
       }
       return false;
     });
@@ -308,11 +312,15 @@ export const rejectAndReassign = async (req: AuthRequest, res: Response, next: N
     }
 
     // If broadcast order, verify it contains products from assigned subcategories
+    // product.subCategory is now an array — check for any intersection
     if (isBroadcastOrder) {
       const hasMatchingProducts = order.items.some(item => {
         const product = item.product_id as any;
         if (product && product.subCategory) {
-          return assignedSubcategories.includes(product.subCategory);
+          const productSubs: string[] = Array.isArray(product.subCategory)
+            ? product.subCategory
+            : [product.subCategory];
+          return productSubs.some((s: string) => assignedSubcategories.includes(s));
         }
         return false;
       });

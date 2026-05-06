@@ -37,8 +37,11 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     // matching WAREHOUSE_FULFILLER via CategoryFulfillerMapping so the
     // product appears in the correct vendor's product list.
     if (user.role === 'admin' && !productData.isPrime) {
-      const mainCat = productData.mainCategory;
-      const subCat  = productData.subCategory;
+      // mainCategory and subCategory are now arrays — use the first element for fulfiller lookup
+      const mainCatRaw = productData.mainCategory;
+      const subCatRaw  = productData.subCategory;
+      const mainCat = Array.isArray(mainCatRaw) ? mainCatRaw[0] : mainCatRaw;
+      const subCat  = Array.isArray(subCatRaw)  ? subCatRaw[0]  : subCatRaw;
       const mapping = await CategoryFulfillerMapping.findOne({
         mainCategory: mainCat,
         subCategory:  subCat,
@@ -266,10 +269,14 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
     // This ensures the product appears for the RIGHT WAREHOUSE_FULFILLER and disappears
     // from the old one's list as soon as the category is updated.
     if (user.role === 'admin' && req.body.subCategory) {
-      const newSubCat = req.body.subCategory.trim();
-      const oldSubCat = (existingProduct as any)?.subCategory || '';
+      // subCategory is now an array — compare using first element for fulfiller lookup
+      const newSubCatRaw = req.body.subCategory;
+      const newSubCat = Array.isArray(newSubCatRaw) ? newSubCatRaw[0] : String(newSubCatRaw).trim();
+      const oldSubCatRaw = (existingProduct as any)?.subCategory;
+      const oldSubCat = Array.isArray(oldSubCatRaw) ? oldSubCatRaw[0] : (oldSubCatRaw || '');
       if (newSubCat.toLowerCase() !== oldSubCat.toLowerCase()) {
-        const newMainCat = (req.body.mainCategory || (existingProduct as any)?.mainCategory || '').trim();
+        const newMainCatRaw = req.body.mainCategory || (existingProduct as any)?.mainCategory || '';
+        const newMainCat = (Array.isArray(newMainCatRaw) ? newMainCatRaw[0] : newMainCatRaw).trim();
         const newMapping =
           await CategoryFulfillerMapping.findOne({
             mainCategory: newMainCat,

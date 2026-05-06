@@ -22,16 +22,28 @@ const productSchema = new Schema<IProduct>(
       ref: 'Brand',
       required: [true, 'Please provide a brand'],
     },
+    // Array of pet types this product is compatible with (e.g. ['Dog', 'Cat'] for shared accessories)
     mainCategory: {
-      type: String,
+      type: [String],
       enum: ['Dog', 'Cat', 'Fish', 'Bird', 'Small Animals'],
-      required: [true, 'Please provide a main category'],
-      trim: true,
+      required: [true, 'Please provide at least one main category'],
+      validate: {
+        validator: function (v: string[]) {
+          return Array.isArray(v) && v.length > 0;
+        },
+        message: 'At least one main category is required',
+      },
     },
+    // Array of subcategories — one per selected main category (e.g. ['Dog Accessories', 'Cat Accessories'])
     subCategory: {
-      type: String,
-      required: [true, 'Please provide a subcategory'],
-      trim: true,
+      type: [String],
+      required: [true, 'Please provide at least one subcategory'],
+      validate: {
+        validator: function (v: string[]) {
+          return Array.isArray(v) && v.length > 0;
+        },
+        message: 'At least one subcategory is required',
+      },
     },
     weight: {
       type: Number,
@@ -342,7 +354,8 @@ productSchema.index({ category_id: 1 });
 productSchema.index({ brand_id: 1 });
 productSchema.index({ mainCategory: 1 });
 productSchema.index({ subCategory: 1 });
-productSchema.index({ mainCategory: 1, subCategory: 1 }); // Compound index
+// NOTE: No compound index on {mainCategory, subCategory} — MongoDB forbids compound
+// multikey indexes when BOTH fields are arrays (parallel arrays restriction).
 productSchema.index({ isPrime: 1 });
 productSchema.index({ isActive: 1 });
 productSchema.index({ createdAt: -1 }); // For sorting by newest
