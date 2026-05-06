@@ -230,6 +230,7 @@ export class ProductService {
     const product = await Product.findById(id)
       .populate('category_id', 'name')
       .populate('brand_id', 'name')
+      .populate('primeVendor_id', 'name shopName email')
       .lean(); // Use lean for better performance
 
     if (!product) {
