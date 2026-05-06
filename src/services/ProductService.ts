@@ -6,6 +6,32 @@ import VendorProductPricing from '../models/VendorProductPricing';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 
+// ─── Seeded shuffle helpers ───────────────────────────────────────────────────
+// Uses a Linear Congruential Generator so the same seed always produces the
+// same order — critical for consistent pagination across pages in a session.
+
+/** Returns a pseudo-random number generator seeded with `seed`. */
+function seededRandom(seed: number): () => number {
+  // LCG parameters (same as Numerical Recipes)
+  let s = seed >>> 0; // coerce to unsigned 32-bit
+  return () => {
+    s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
+}
+
+/** Fisher-Yates in-place shuffle using a seeded RNG — returns a new array. */
+function shuffleWithSeed<T>(arr: T[], seed: number): T[] {
+  const rng = seededRandom(seed);
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 export class ProductService {
   // Create product
   static async createProduct(data: any) {
@@ -59,6 +85,7 @@ export class ProductService {
     subCategory?: string; // Filter by subcategory
     page?: number; // Page number for pagination
     limit?: number; // Number of items per page
+    seed?: number; // Random seed for consistent shuffle across pages in a session
   } = {}) {
     const query: any = {};
 
@@ -125,18 +152,81 @@ export class ProductService {
     const limit = filters.limit && filters.limit > 0 ? filters.limit : 1000; // Default to large number if not specified
     const skip = (page - 1) * limit;
 
-    // Run count and find in parallel for efficiency
-    const [total, rawProducts] = await Promise.all([
-      Product.countDocuments(query),
-      Product.find(query)
-        .populate('category_id', 'name')
-        .populate('brand_id', 'name')
-        .populate('primeVendor_id', 'name shopName')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-    ]);
+    let total: number;
+    let rawProducts: any[];
+
+    if (filters.seed !== undefined) {
+      // ── Seeded shuffle path ────────────────────────────────────────────────
+      // Fetch all matching docs (lean, minimal fields) so we can:
+      //   1. Determine in-stock status for each product
+      //   2. Partition into inStock / outOfStock groups
+      //   3. Shuffle each group independently with the same seed
+      //   4. Concatenate (inStock first) and paginate
+      // This guarantees out-of-stock products always appear at the END of every
+      // page, while the order still varies freshly each browsing session.
+      const allStockDocs: any[] = await Product.find(query)
+        .select('_id isActive inStock hasVariants variants')
+        .lean();
+
+      total = allStockDocs.length;
+
+      // Determine effective inStock for each product (mirrors the logic below)
+      const inStockDocs: any[] = [];
+      const outOfStockDocs: any[] = [];
+
+      for (const doc of allStockDocs) {
+        let effectiveInStock: boolean;
+        if (doc.hasVariants && doc.variants && doc.variants.length > 0) {
+          // Variant product: in-stock only if at least one variant is active
+          effectiveInStock = doc.isActive !== false && doc.inStock !== false &&
+            doc.variants.some((v: any) => v.isActive !== false);
+        } else {
+          effectiveInStock = doc.isActive !== false && doc.inStock !== false;
+        }
+        (effectiveInStock ? inStockDocs : outOfStockDocs).push(doc);
+      }
+
+      // Shuffle each group with the same seed (use seed+1 for out-of-stock so
+      // the two groups don't produce the same sequence)
+      const shuffledInStock = shuffleWithSeed(inStockDocs, filters.seed);
+      const shuffledOutOfStock = shuffleWithSeed(outOfStockDocs, filters.seed + 1);
+
+      // Concatenate: in-stock first, out-of-stock at the end
+      const orderedDocs = [...shuffledInStock, ...shuffledOutOfStock];
+
+      const pagedIds = orderedDocs.slice(skip, skip + limit).map((d: any) => d._id);
+
+      if (pagedIds.length === 0) {
+        rawProducts = [];
+      } else {
+        // Fetch full documents for just this page's IDs
+        const fetched = await Product.find({ _id: { $in: pagedIds } })
+          .populate('category_id', 'name')
+          .populate('brand_id', 'name')
+          .populate('primeVendor_id', 'name shopName')
+          .lean();
+
+        // Restore the shuffled + partitioned order — MongoDB $in does not preserve insertion order
+        const idOrder = pagedIds.map((id: any) => id.toString());
+        rawProducts = fetched.sort(
+          (a: any, b: any) => idOrder.indexOf(a._id.toString()) - idOrder.indexOf(b._id.toString())
+        );
+      }
+    } else {
+      // ── Default path (admin / no-seed) ─────────────────────────────────────
+      // Keep original createdAt desc sort for admin panels and backward compat.
+      [total, rawProducts] = await Promise.all([
+        Product.countDocuments(query),
+        Product.find(query)
+          .populate('category_id', 'name')
+          .populate('brand_id', 'name')
+          .populate('primeVendor_id', 'name shopName')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+      ]);
+    }
 
     let products = rawProducts;
 

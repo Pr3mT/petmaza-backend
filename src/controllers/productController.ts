@@ -153,7 +153,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
 
 export const getProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { category_id, brand_id, isPrime, pincode, search, mainCategory, subCategory, page, limit } = req.query;
+    const { category_id, brand_id, isPrime, pincode, search, mainCategory, subCategory, page, limit, seed } = req.query;
 
     const filters: any = {};
     if (category_id) filters.category_id = category_id as string;
@@ -173,6 +173,9 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
     if (subCategory) filters.subCategory = subCategory as string;
     if (page) filters.page = parseInt(page as string);
     if (limit) filters.limit = parseInt(limit as string);
+    // Pass seed for seeded shuffle — customers supply a session seed so that
+    // the shuffle order is consistent across pages but unique per browsing session.
+    if (seed) filters.seed = parseInt(seed as string);
 
     // Debug logging
     console.log('🔍 getProducts - User Info:', {
