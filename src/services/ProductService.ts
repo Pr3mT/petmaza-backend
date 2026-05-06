@@ -86,6 +86,8 @@ export class ProductService {
     page?: number; // Page number for pagination
     limit?: number; // Number of items per page
     seed?: number; // Random seed for consistent shuffle across pages in a session
+    sortBy?: string;    // Field to sort by: 'createdAt' | 'soldQuantity' | 'sellingPrice' | 'mrp'
+    sortOrder?: string; // 'asc' | 'desc'
   } = {}) {
     const query: any = {};
 
@@ -214,14 +216,25 @@ export class ProductService {
       }
     } else {
       // ── Default path (admin / no-seed) ─────────────────────────────────────
-      // Keep original createdAt desc sort for admin panels and backward compat.
+      // Build sort object from filters.sortBy / sortOrder; fallback to createdAt desc
+      // for admin panels and backward compat.
+      let sortObj: Record<string, 1 | -1> = { createdAt: -1 };
+      if (filters.sortBy) {
+        const dir: 1 | -1 = filters.sortOrder === 'asc' ? 1 : -1;
+        if (filters.sortBy === 'soldQuantity') {
+          // Combine all sales metrics for a better "Best Sellers" sort
+          sortObj = { soldQuantity: dir, totalSoldWebsite: dir, totalSoldStore: dir };
+        } else {
+          sortObj = { [filters.sortBy]: dir };
+        }
+      }
       [total, rawProducts] = await Promise.all([
         Product.countDocuments(query),
         Product.find(query)
           .populate('category_id', 'name')
           .populate('brand_id', 'name')
           .populate('primeVendor_id', 'name shopName')
-          .sort({ createdAt: -1 })
+          .sort(sortObj)
           .skip(skip)
           .limit(limit)
           .lean(),
