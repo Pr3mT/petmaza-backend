@@ -527,15 +527,14 @@ export const getPrimeWalletStats = async (
       .sort({ createdAt: -1 })
       .lean();
 
-    // Completed (delivered) orders revenue — 10% platform fee, vendor keeps 90%
-    const PLATFORM_FEE = 0.10;
+    // Vendor earning = totalPurchasePrice (purchase price × qty for each item).
+    // This is what Petmaza pays the prime vendor per order — not a % of the customer price.
     let totalRevenue = 0;
     let completedCount = 0;
     let pendingSettlement = 0;
 
     const orderList = allOrders.map((order: any) => {
-      const orderTotal = order.total || 0;
-      const vendorShare = orderTotal * (1 - PLATFORM_FEE);
+      const vendorShare = order.totalPurchasePrice || 0;
       const isDelivered = order.status === 'DELIVERED';
       if (isDelivered) {
         totalRevenue += vendorShare;
@@ -555,7 +554,6 @@ export const getPrimeWalletStats = async (
         customerName: customer?.name || 'N/A',
         products: productNames,
         status: order.status,
-        orderTotal,
         vendorEarning: isDelivered ? vendorShare : 0,
         pendingAmount: !isDelivered ? vendorShare : 0,
         paymentStatus: order.payment_status || 'N/A',
@@ -571,7 +569,7 @@ export const getPrimeWalletStats = async (
       const label = d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
       if (!monthlyMap[key]) monthlyMap[key] = { month: label, orders: 0, earnings: 0 };
       monthlyMap[key].orders += 1;
-      monthlyMap[key].earnings += (order.total || 0) * (1 - PLATFORM_FEE);
+      monthlyMap[key].earnings += order.totalPurchasePrice || 0;
     });
 
     const monthlyBreakdown = Object.values(monthlyMap).sort((a, b) =>
@@ -592,7 +590,7 @@ export const getPrimeWalletStats = async (
           completedOrders: completedCount,
           totalEarnings: totalRevenue,
           pendingSettlement,
-          platformFee: `${PLATFORM_FEE * 100}%`,
+          platformFee: `0%`,
         },
         statusBreakdown,
         monthlyBreakdown,
