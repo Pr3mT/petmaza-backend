@@ -272,6 +272,12 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
     const wasInactive = existingProduct && !existingProduct.isActive;
     const wasOutOfStock = existingProduct && existingProduct.inStock === false;
 
+    // Sync isAvailable with inStock for prime products so the prime vendor
+    // sees the correct "Out of Stock" badge when admin marks it out of stock.
+    if (req.body.inStock !== undefined && existingProduct && (existingProduct as any).isPrime) {
+      req.body.isAvailable = req.body.inStock;
+    }
+
     // ── When admin changes subCategory, re-assign addedBy to the correct fulfiller ──
     // This ensures the product appears for the RIGHT WAREHOUSE_FULFILLER and disappears
     // from the old one's list as soon as the category is updated.
@@ -329,6 +335,8 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
     
     // Clear product cache so customers see the updated product immediately
     clearCache('/products');
+    // Also clear prime-products cache so prime vendors see status changes instantly
+    clearCache('/prime-products');
     
     // VendorProductPricing removed - all data now in Products collection
     

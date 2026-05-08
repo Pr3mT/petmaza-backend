@@ -50,6 +50,7 @@ function productToListing(product: any) {
     ordersCount: doc.ordersCount || 0,
     soldQuantity: doc.soldQuantity || 0,
     views: doc.views || 0,
+    inStock: doc.inStock !== false,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
