@@ -15,7 +15,9 @@ import {
   generateBulkTemplate,
   getActivePrimeVendors,
 } from '../controllers/bulkUploadController';
-import { verifyToken, checkRole, optionalAuth } from '../middlewares/auth';
+import {
+  verifyToken, checkRole, optionalAuth, checkPrimeVendor,
+} from '../middlewares/auth';
 import { cacheResponse, cacheForCustomersOnly } from '../middlewares/cache';
 
 const router = express.Router();
@@ -38,7 +40,7 @@ router.post('/', verifyToken, createProduct);
 router.post('/bulk-upload', verifyToken, checkRole('admin'), bulkUploadProducts);
 router.put('/:id', verifyToken, updateProduct); // MY_SHOP vendors can update their products
 router.patch('/:id', verifyToken, updateProduct);
-router.patch('/:id/variants/:variantId/status', verifyToken, checkRole('admin'), patchVariantStatus); // Admin: toggle variant in-stock / out-of-stock
+router.patch('/:id/variants/:variantId/status', verifyToken, checkPrimeVendor, patchVariantStatus); // Admin + Prime Vendor: toggle variant in-stock / out-of-stock
 router.delete('/:id/variants/:variantId', verifyToken, checkRole('admin'), deleteVariant); // Admin can delete a single variant
 router.delete('/:id', verifyToken, checkRole('admin', 'vendor'), deleteProduct); // Admin can delete any, vendors can delete own
 

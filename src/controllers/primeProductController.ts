@@ -31,6 +31,8 @@ function productToListing(product: any) {
       mrp: doc.mrp,
       purchasePrice: doc.purchasePrice,
       sellingPrice: doc.sellingPrice,
+      hasVariants: doc.hasVariants || false,
+      variants: doc.variants || [],
     },
     vendor_id: doc.primeVendor_id,
     // Aliases the frontend reads as listing.vendorPrice / listing.vendorMRP

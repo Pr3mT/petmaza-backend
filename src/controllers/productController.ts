@@ -432,6 +432,14 @@ export const patchVariantStatus = async (req: AuthRequest, res: Response, next: 
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
+    // Prime vendors can only toggle variants on their own products
+    if (req.user?.role !== 'admin') {
+      const primeVendorId = (product as any).primeVendor_id?.toString();
+      if (!primeVendorId || primeVendorId !== req.user?._id?.toString()) {
+        return res.status(403).json({ success: false, message: 'You can only manage variants of your own products' });
+      }
+    }
+
     const variantIndex = (product.variants as any[]).findIndex(
       (v: any) => v._id.toString() === variantId
     );
