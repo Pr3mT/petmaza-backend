@@ -819,3 +819,63 @@ export const verifyDnaResult = async (req: Request, res: Response, next: NextFun
   }
 };
 
+// Admin: Manually create a DNA card without any customer request
+// Used for internal / personal records not tied to a payment or customer order
+export const createManualDnaCard = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const {
+      customerName,
+      farm,
+      pickupAddress,
+      birds,
+      extraNote,
+      pricePerSample,
+      payment_status,
+      status,
+    } = req.body;
+
+    if (!customerName?.trim() || !farm?.trim()) {
+      return next(new AppError('Customer name and farm name are required', 400));
+    }
+
+    if (!birds || !Array.isArray(birds) || birds.length === 0) {
+      return next(new AppError('At least one bird is required', 400));
+    }
+
+    // Fetch current price from settings, fall back to hardcoded default
+    const settings = await SiteSettings.findOne();
+    const pricePerBird = Number(pricePerSample) || settings?.birdDnaPricePerSample || BIRD_DNA_PRICE_PER_BIRD;
+    const computedTotal = birds.length * pricePerBird;
+
+    // Use provided address or a sensible placeholder for manual entries
+    const address = pickupAddress && pickupAddress.street
+      ? pickupAddress
+      : { street: 'Manual Entry', city: 'N/A', state: 'N/A', pincode: '000000' };
+
+    // Use admin's own user ID as customerId since this is an internal record
+    const serviceRequest = await ServiceRequest.create({
+      customerId: req.user._id,
+      serviceType: 'bird_dna',
+      customerName: customerName.trim(),
+      farm: farm.trim(),
+      address,
+      pickupAddress: address,
+      deliveryAddress: { street: 'Partner Lab', city: 'Lab City', state: 'Lab State', pincode: '000000' },
+      birds,
+      extraNote,
+      payment_status: payment_status || 'Paid',
+      pricePerSample: pricePerBird,
+      totalAmount: computedTotal,
+      status: status || 'completed',
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'DNA card created successfully',
+      data: { serviceRequest },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+

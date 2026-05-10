@@ -17,6 +17,7 @@ import {
   createDnaPaymentOrder,
   updateServicePayment,
   verifyDnaResult,
+  createManualDnaCard,
 } from '../controllers/serviceController';
 import { verifyToken, checkRole } from '../middlewares/auth';
 
@@ -33,6 +34,9 @@ router.get('/admin/all', verifyToken, checkRole('admin', 'vendor'), getAllServic
 // Admin-only: site settings
 router.get('/admin/settings', verifyToken, checkRole('admin'), getSiteSettings);
 router.patch('/admin/settings', verifyToken, checkRole('admin'), updateSiteSettings);
+
+// Admin-only: manually create a DNA card (no customer request / payment needed)
+router.post('/admin/create-manual', verifyToken, checkRole('admin'), createManualDnaCard);
 
 // Customer routes
 router.post('/bird-dna', verifyToken, createBirdDNAService);
