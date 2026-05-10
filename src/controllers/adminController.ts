@@ -249,8 +249,14 @@ export const getAdminStats = async (req: AuthRequest, res: Response, next: NextF
       { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
       {
         $group: {
-          _id: { $ifNull: [{ $arrayElemAt: ['$product.mainCategory', 0] }, 'Other'] },
-          revenue: { $sum: { $multiply: ['$items.price', { $ifNull: ['$items.quantity', 1] }] } },
+          // mainCategory is a plain string field — use it directly, not $arrayElemAt
+          _id: {
+            $ifNull: [
+              { $cond: [{ $isArray: '$product.mainCategory' }, { $arrayElemAt: ['$product.mainCategory', 0] }, '$product.mainCategory'] },
+              'Other'
+            ]
+          },
+          revenue: { $sum: { $multiply: ['$items.sellingPrice', { $ifNull: ['$items.quantity', 1] }] } },
         },
       },
       { $sort: { revenue: -1 } },
