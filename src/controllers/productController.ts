@@ -153,7 +153,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
 
 export const getProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { category_id, brand_id, isPrime, pincode, search, mainCategory, subCategory, page, limit, seed, sortBy, sortOrder } = req.query;
+    const { category_id, brand_id, isPrime, pincode, search, mainCategory, subCategory, page, limit, seed, sortBy, sortOrder, minPrice, maxPrice, discount } = req.query;
 
     const filters: any = {};
     if (category_id) filters.category_id = category_id as string;
@@ -173,13 +173,36 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
     if (subCategory) filters.subCategory = subCategory as string;
     if (page) filters.page = parseInt(page as string);
     if (limit) filters.limit = parseInt(limit as string);
+    // Price range filters — applied at DB level for accurate pagination
+    if (minPrice) filters.minPrice = parseFloat(minPrice as string);
+    if (maxPrice) filters.maxPrice = parseFloat(maxPrice as string);
+    // Minimum discount percentage filter
+    if (discount) filters.discount = parseFloat(discount as string);
     // Pass seed for seeded shuffle — customers supply a session seed so that
     // the shuffle order is consistent across pages but unique per browsing session.
-    if (seed) filters.seed = parseInt(seed as string);
-    // Pass sortBy/sortOrder for section-specific sorting (e.g. Best Sellers, Today's Picks)
-    const allowedSortFields = ['createdAt', 'soldQuantity', 'sellingPrice', 'mrp'];
-    if (sortBy && allowedSortFields.includes(sortBy as string)) filters.sortBy = sortBy as string;
-    if (sortOrder === 'asc' || sortOrder === 'desc') filters.sortOrder = sortOrder as string;
+    // When sortBy is provided by the frontend, skip shuffle and use server sort instead.
+    if (seed && !sortBy) filters.seed = parseInt(seed as string);
+    // Map frontend sort keys to backend field names
+    const sortByMap: Record<string, { field: string; order: string }> = {
+      price_low_high: { field: 'sellingPrice', order: 'asc' },
+      price_high_low: { field: 'sellingPrice', order: 'desc' },
+      newest: { field: 'createdAt', order: 'desc' },
+      oldest: { field: 'createdAt', order: 'asc' },
+      name_asc: { field: 'name', order: 'asc' },
+      name_desc: { field: 'name', order: 'desc' },
+      discount_high: { field: 'discount', order: 'desc' },
+      // Legacy backend sort keys still accepted directly
+      createdAt: { field: 'createdAt', order: (sortOrder as string) || 'desc' },
+      soldQuantity: { field: 'soldQuantity', order: (sortOrder as string) || 'desc' },
+      sellingPrice: { field: 'sellingPrice', order: (sortOrder as string) || 'asc' },
+      mrp: { field: 'mrp', order: (sortOrder as string) || 'asc' },
+    };
+    if (sortBy && sortByMap[sortBy as string]) {
+      filters.sortBy = sortByMap[sortBy as string].field;
+      filters.sortOrder = sortByMap[sortBy as string].order;
+    } else if (sortOrder === 'asc' || sortOrder === 'desc') {
+      filters.sortOrder = sortOrder as string;
+    }
 
     // Debug logging
     console.log('🔍 getProducts - User Info:', {

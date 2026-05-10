@@ -86,8 +86,11 @@ export class ProductService {
     page?: number; // Page number for pagination
     limit?: number; // Number of items per page
     seed?: number; // Random seed for consistent shuffle across pages in a session
-    sortBy?: string;    // Field to sort by: 'createdAt' | 'soldQuantity' | 'sellingPrice' | 'mrp'
+    sortBy?: string;    // Field to sort by: 'createdAt' | 'soldQuantity' | 'sellingPrice' | 'mrp' | 'name' | 'discount'
     sortOrder?: string; // 'asc' | 'desc'
+    minPrice?: number;  // Minimum selling price filter
+    maxPrice?: number;  // Maximum selling price filter
+    discount?: number;  // Minimum discount percentage filter
   } = {}) {
     const query: any = {};
 
@@ -116,6 +119,21 @@ export class ProductService {
 
     if (filters.isPrime !== undefined) {
       query.isPrime = filters.isPrime;
+    }
+
+    // Price range filter — applied at the DB level so pagination is accurate.
+    // We also require sellingPrice > 0 to exclude docs where sellingPrice is null/0
+    // (those would otherwise pass a pure $lte query and display wrong prices).
+    if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
+      const priceCondition: any = { $gt: 0 }; // exclude null / zero selling prices
+      if (filters.minPrice !== undefined) priceCondition.$gte = filters.minPrice;
+      if (filters.maxPrice !== undefined) priceCondition.$lte = filters.maxPrice;
+      query.sellingPrice = priceCondition;
+    }
+
+    // Minimum discount percentage filter (discount field is pre-computed on Product docs)
+    if (filters.discount !== undefined) {
+      query.discount = { $gte: filters.discount };
     }
 
     // Only filter by isActive if explicitly set

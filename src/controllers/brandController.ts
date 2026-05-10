@@ -35,10 +35,16 @@ export const getAllBrands = async (req: Request, res: Response, next: NextFuncti
   try {
     const includeInactive = req.query.includeInactive === 'true';
     const subcategory = req.query.subcategory as string;
+    const mainCategory = req.query.mainCategory as string;
 
     let brands;
     if (subcategory) {
+      // Filter brands by a specific subcategory string
       brands = await BrandService.getBrandsBySubcategory(subcategory);
+    } else if (mainCategory && SUBCATEGORIES_BY_MAIN_CATEGORY[mainCategory as keyof typeof SUBCATEGORIES_BY_MAIN_CATEGORY]) {
+      // Filter brands by main category — returns brands tagged to any subcategory of that pet type
+      const subcategories = SUBCATEGORIES_BY_MAIN_CATEGORY[mainCategory as keyof typeof SUBCATEGORIES_BY_MAIN_CATEGORY];
+      brands = await BrandService.getBrandsBySubcategories(subcategories);
     } else {
       brands = await BrandService.getAllBrands(includeInactive);
     }
