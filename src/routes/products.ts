@@ -6,6 +6,7 @@ import {
   updateProduct,
   deleteProduct,
   deleteVariant,
+  patchVariantStatus,
   getPrimeListingsForProduct,
   getPrimeProductsByCategory,
 } from '../controllers/productController';
@@ -37,6 +38,7 @@ router.post('/', verifyToken, createProduct);
 router.post('/bulk-upload', verifyToken, checkRole('admin'), bulkUploadProducts);
 router.put('/:id', verifyToken, updateProduct); // MY_SHOP vendors can update their products
 router.patch('/:id', verifyToken, updateProduct);
+router.patch('/:id/variants/:variantId/status', verifyToken, checkRole('admin'), patchVariantStatus); // Admin: toggle variant in-stock / out-of-stock
 router.delete('/:id/variants/:variantId', verifyToken, checkRole('admin'), deleteVariant); // Admin can delete a single variant
 router.delete('/:id', verifyToken, checkRole('admin', 'vendor'), deleteProduct); // Admin can delete any, vendors can delete own
 

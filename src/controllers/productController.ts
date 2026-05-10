@@ -415,6 +415,48 @@ export const deleteVariant = async (req: AuthRequest, res: Response, next: NextF
 };
 
 /**
+ * Toggle a single variant's isActive (In Stock / Out of Stock)
+ * Admin only — PATCH /products/:id/variants/:variantId/status
+ */
+export const patchVariantStatus = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id: productId, variantId } = req.params;
+    const { isActive } = req.body;
+
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'isActive must be a boolean' });
+    }
+
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    const variantIndex = (product.variants as any[]).findIndex(
+      (v: any) => v._id.toString() === variantId
+    );
+    if (variantIndex === -1) {
+      return res.status(404).json({ success: false, message: 'Variant not found' });
+    }
+
+    (product.variants[variantIndex] as any).isActive = isActive;
+    product.markModified('variants');
+    await product.save();
+
+    clearCache('/products');
+    clearCache(`/products/${productId}`);
+
+    res.status(200).json({
+      success: true,
+      message: `Variant marked ${isActive ? 'In Stock' : 'Out of Stock'}`,
+      data: { product },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
  * Get Prime Listings for a Product
  * Returns all prime vendor listings for a specific product
  */
