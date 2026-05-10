@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import User from '../models/User';
 import Product from '../models/Product';
 import Order from '../models/Order';
+import Coupon from '../models/Coupon';
 import Transaction from '../models/Transaction';
 import ShippingSettings from '../models/ShippingSettings';
 import Settlement from '../models/Settlement';
@@ -133,83 +134,182 @@ export const approveVendor = async (req: AuthRequest, res: Response, next: NextF
 
 export const getAdminStats = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    // User counts
-    const vendorCount = await User.countDocuments({ role: 'vendor' });
-    const customerCount = await User.countDocuments({ role: 'customer' });
+    // ── Date ranges ──────────────────────────────────────────────────────────
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const thisWeekStart = new Date(now);
+    thisWeekStart.setDate(now.getDate() - daysToMonday);
+    thisWeekStart.setHours(0, 0, 0, 0);
+    const lastWeekStart = new Date(thisWeekStart);
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+    const lastWeekEnd = new Date(thisWeekStart);
 
-    // Product and category counts
-    const productCount = await Product.countDocuments();
+    // Helper: week-over-week % change
+    const pct = (curr: number, prev: number): number =>
+      prev > 0 ? +((( curr - prev) / prev) * 100).toFixed(1) : (curr > 0 ? 100 : 0);
+
+    // ── User counts ──────────────────────────────────────────────────────────
+    const [vendorCount, customerCount, newCustomersThisWeek, newCustomersLastWeek] = await Promise.all([
+      User.countDocuments({ role: 'vendor' }),
+      User.countDocuments({ role: 'customer' }),
+      User.countDocuments({ role: 'customer', createdAt: { $gte: thisWeekStart } }),
+      User.countDocuments({ role: 'customer', createdAt: { $gte: lastWeekStart, $lt: lastWeekEnd } }),
+    ]);
+
+    // ── Product counts ───────────────────────────────────────────────────────
+    const [productCount, newProductsThisWeek, newProductsLastWeek] = await Promise.all([
+      Product.countDocuments(),
+      Product.countDocuments({ createdAt: { $gte: thisWeekStart } }),
+      Product.countDocuments({ createdAt: { $gte: lastWeekStart, $lt: lastWeekEnd } }),
+    ]);
     const categoryCount = await Product.distinct('category_id').then(ids => ids.length);
 
-    // Order statistics
-    const totalOrders = await Order.countDocuments();
-    const paidOrders = await Order.countDocuments({ payment_status: 'Paid' });
-    const pendingOrders = await Order.countDocuments({ payment_status: 'Pending' });
-    const deliveredOrders = await Order.countDocuments({ status: 'DELIVERED' });
-    const acceptedOrders = await Order.countDocuments({ status: { $nin: ['PENDING', 'CANCELLED'] } });
-    const cancelledOrders = await Order.countDocuments({ status: 'CANCELLED' });
+    // ── Order statistics ─────────────────────────────────────────────────────
+    const [
+      totalOrders, paidOrders, pendingOrders,
+      deliveredOrders, processingOrders, shippedOrders, cancelledOrders,
+      returnRequests, returnRequestsLastWeek,
+      thisWeekOrderCount, lastWeekOrderCount,
+    ] = await Promise.all([
+      Order.countDocuments(),
+      Order.countDocuments({ payment_status: 'Paid' }),
+      Order.countDocuments({ payment_status: 'Pending' }),
+      Order.countDocuments({ status: 'DELIVERED' }),
+      Order.countDocuments({ status: { $in: ['ACCEPTED', 'PACKED', 'READY_TO_SHIP', 'ASSIGNED'] } }),
+      Order.countDocuments({ status: { $in: ['PICKED_UP', 'IN_TRANSIT'] } }),
+      Order.countDocuments({ status: 'CANCELLED' }),
+      Order.countDocuments({ status: { $in: ['REFUND_INITIATED', 'REFUNDED'] } }),
+      Order.countDocuments({ status: { $in: ['REFUND_INITIATED', 'REFUNDED'] }, createdAt: { $gte: lastWeekStart, $lt: lastWeekEnd } }),
+      Order.countDocuments({ createdAt: { $gte: thisWeekStart } }),
+      Order.countDocuments({ createdAt: { $gte: lastWeekStart, $lt: lastWeekEnd } }),
+    ]);
 
-    // Revenue calculation from paid orders
-    const paidOrdersData = await Order.find({ payment_status: 'Paid' });
-    const totalRevenue = paidOrdersData.reduce((sum, order) => sum + (order.total || 0), 0);
-    const totalProfit = paidOrdersData.reduce((sum, order) => sum + (order.totalProfit || 0), 0);
-    const totalCost = paidOrdersData.reduce((sum, order) => sum + (order.totalPurchasePrice || 0), 0);
-    
-    // Revenue by order type (Order model uses isPrime:boolean, not orderType string)
-    const normalOrdersRevenue = paidOrdersData
-      .filter(order => !order.isPrime)
-      .reduce((sum, order) => sum + (order.total || 0), 0);
-    
-    const primeOrdersRevenue = paidOrdersData
-      .filter(order => order.isPrime)
-      .reduce((sum, order) => sum + (order.total || 0), 0);
-    
-    const normalOrdersProfit = paidOrdersData
-      .filter(order => !order.isPrime)
-      .reduce((sum, order) => sum + (order.totalProfit || 0), 0);
-    
-    const primeOrdersProfit = paidOrdersData
-      .filter(order => order.isPrime)
-      .reduce((sum, order) => sum + (order.totalProfit || 0), 0);
+    // ── Revenue from paid orders ─────────────────────────────────────────────
+    const paidOrdersData = await Order.find({ payment_status: 'Paid' })
+      .select('total totalProfit totalPurchasePrice isPrime createdAt');
 
-    // Recent orders
+    const totalRevenue   = paidOrdersData.reduce((s, o) => s + (o.total || 0), 0);
+    const totalProfit    = paidOrdersData.reduce((s, o) => s + (o.totalProfit || 0), 0);
+    const totalCost      = paidOrdersData.reduce((s, o) => s + (o.totalPurchasePrice || 0), 0);
+    const normalOrdersRevenue = paidOrdersData.filter(o => !o.isPrime).reduce((s, o) => s + (o.total || 0), 0);
+    const primeOrdersRevenue  = paidOrdersData.filter(o =>  o.isPrime).reduce((s, o) => s + (o.total || 0), 0);
+    const normalOrdersProfit  = paidOrdersData.filter(o => !o.isPrime).reduce((s, o) => s + (o.totalProfit || 0), 0);
+    const primeOrdersProfit   = paidOrdersData.filter(o =>  o.isPrime).reduce((s, o) => s + (o.totalProfit || 0), 0);
+
+    // This week / last week split
+    const thisWeekPaid = paidOrdersData.filter(o => new Date(o.createdAt) >= thisWeekStart);
+    const lastWeekPaid = paidOrdersData.filter(o => {
+      const d = new Date(o.createdAt);
+      return d >= lastWeekStart && d < lastWeekEnd;
+    });
+    const thisWeekRevenue = thisWeekPaid.reduce((s, o) => s + (o.total || 0), 0);
+    const lastWeekRevenue = lastWeekPaid.reduce((s, o) => s + (o.total || 0), 0);
+    const thisWeekProfit  = thisWeekPaid.reduce((s, o) => s + (o.totalProfit || 0), 0);
+    const lastWeekProfit  = lastWeekPaid.reduce((s, o) => s + (o.totalProfit || 0), 0);
+
+    // ── Daily sales chart data (Mon–Sun) ─────────────────────────────────────
+    const thisWeekDailySales = [0, 0, 0, 0, 0, 0, 0];
+    const lastWeekDailySales = [0, 0, 0, 0, 0, 0, 0];
+    const toMonIdx = (d: Date) => { const day = d.getDay(); return day === 0 ? 6 : day - 1; };
+    thisWeekPaid.forEach(o => { thisWeekDailySales[toMonIdx(new Date(o.createdAt))] += o.total || 0; });
+    lastWeekPaid.forEach(o => { lastWeekDailySales[toMonIdx(new Date(o.createdAt))] += o.total || 0; });
+
+    // ── Recent orders ────────────────────────────────────────────────────────
     const recentOrders = await Order.find()
       .populate('customer_id', 'name email')
-      .populate('assignedVendorId', 'name')
+      .populate('items.product_id', 'name images')
       .sort({ createdAt: -1 })
-      .limit(10);
+      .limit(5);
+
+    // ── Top selling products ─────────────────────────────────────────────────
+    const topSellingProducts = await Product.find({ totalSoldWebsite: { $gt: 0 } })
+      .sort({ totalSoldWebsite: -1 })
+      .limit(5)
+      .select('name images totalSoldWebsite sellingPrice mrp');
+
+    // ── Low stock products ───────────────────────────────────────────────────
+    const lowStockProducts = await Product.find({ stock: { $gt: 0, $lte: 15 } })
+      .sort({ stock: 1 })
+      .limit(5)
+      .select('name images stock');
+
+    // ── Top categories by revenue ─────────────────────────────────────────────
+    const topCategories = await Order.aggregate([
+      { $match: { payment_status: 'Paid' } },
+      { $unwind: '$items' },
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'items.product_id',
+          foreignField: '_id',
+          as: 'product',
+        },
+      },
+      { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: { $ifNull: [{ $arrayElemAt: ['$product.mainCategory', 0] }, 'Other'] },
+          revenue: { $sum: { $multiply: ['$items.price', { $ifNull: ['$items.quantity', 1] }] } },
+        },
+      },
+      { $sort: { revenue: -1 } },
+      { $limit: 5 },
+    ]);
+
+    // ── Stock value ──────────────────────────────────────────────────────────
+    const stockValueAgg = await Product.aggregate([
+      { $match: { stock: { $gt: 0 } } },
+      { $project: { value: { $multiply: ['$stock', { $ifNull: ['$sellingPrice', { $ifNull: ['$mrp', 0] }] }] } } },
+      { $group: { _id: null, total: { $sum: '$value' } } },
+    ]);
+    const stockValue = stockValueAgg[0]?.total || 0;
+
+    // ── Active coupons ───────────────────────────────────────────────────────
+    const activeCoupons = await Coupon.countDocuments({ isActive: true });
+
+    // ── Avg order value week-over-week ────────────────────────────────────────
+    const thisWeekAvg = thisWeekOrderCount > 0 ? thisWeekRevenue / thisWeekOrderCount : 0;
+    const lastWeekAvg = lastWeekOrderCount > 0 ? lastWeekRevenue / lastWeekOrderCount : 0;
 
     res.status(200).json({
       success: true,
       data: {
-        users: {
-          vendors: vendorCount,
-          customers: customerCount,
-        },
-        products: {
-          total: productCount,
-          categories: categoryCount,
-        },
+        users:    { vendors: vendorCount, customers: customerCount },
+        products: { total: productCount, categories: categoryCount },
         orders: {
-          total: totalOrders,
-          paid: paidOrders,
-          pending: pendingOrders,
-          delivered: deliveredOrders,
-          accepted: acceptedOrders,
-          cancelled: cancelledOrders,
+          total: totalOrders, paid: paidOrders, pending: pendingOrders,
+          delivered: deliveredOrders, processing: processingOrders,
+          shipped: shippedOrders, cancelled: cancelledOrders,
         },
         revenue: {
-          total: totalRevenue,
-          totalProfit: totalProfit,
-          totalCost: totalCost,
-          normalOrders: normalOrdersRevenue,
-          primeOrders: primeOrdersRevenue,
-          normalOrdersProfit: normalOrdersProfit,
-          primeOrdersProfit: primeOrdersProfit,
+          total: totalRevenue, totalProfit, totalCost,
+          normalOrders: normalOrdersRevenue, primeOrders: primeOrdersRevenue,
+          normalOrdersProfit, primeOrdersProfit,
           profitMargin: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
           averageOrderValue: paidOrders > 0 ? totalRevenue / paidOrders : 0,
         },
+        changes: {
+          revenue:       pct(thisWeekRevenue, lastWeekRevenue),
+          orders:        pct(thisWeekOrderCount, lastWeekOrderCount),
+          customers:     pct(newCustomersThisWeek, newCustomersLastWeek),
+          profit:        pct(thisWeekProfit, lastWeekProfit),
+          avgOrderValue: pct(thisWeekAvg, lastWeekAvg),
+        },
+        salesChart: {
+          days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+          thisWeek: thisWeekDailySales,
+          lastWeek: lastWeekDailySales,
+        },
         recentOrders,
+        topSellingProducts,
+        lowStockProducts,
+        topCategories,
+        newCustomers:   { count: newCustomersThisWeek,  change: pct(newCustomersThisWeek, newCustomersLastWeek) },
+        newProducts:    { count: newProductsThisWeek,   change: pct(newProductsThisWeek, newProductsLastWeek) },
+        returnRequests: { count: returnRequests,         change: pct(returnRequests, returnRequestsLastWeek) },
+        activeCoupons:  { count: activeCoupons },
+        stockValue,
       },
     });
   } catch (error: any) {
@@ -483,7 +583,7 @@ export const reseedVariantProduct = async (req: Request, res: Response, next: Ne
       data: {
         productId: purepetProduct._id,
         variants: purepetProduct.variants.map(v => ({
-          _id: v._id,
+          _id: (v as any)._id,
           displayWeight: v.displayWeight,
           sellingPrice: v.sellingPrice
         }))
@@ -859,9 +959,9 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
       }
 
       const entry = groupMap[weekKey];
-      entry.totalAmount += order.total || 0;
+      entry.totalAmount += (order as any).total || 0;
       entry.orders.push({
-        orderId: order.order_id || order._id,
+        orderId: (order as any).order_id || order._id,
         orderDate: order.createdAt,
         orderStatus: order.status,
         items: (order.items || []).map((item: any) => {
@@ -1184,7 +1284,7 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
       }
       
       detailedOrders.push({
-        orderId: order.order_id || order._id,
+        orderId: (order as any).order_id || order._id,
         orderDate: order.createdAt,
         vendorName: vendor.name,
         vendorEmail: vendor.email,
@@ -1200,7 +1300,7 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
     });
 
     // Convert objects to arrays
-    const byVendorType = Object.values(vendorTypeStats);
+    const byVendorType: any[] = Object.values(vendorTypeStats) as any[];
     const vendorList = Object.values(vendorStats); // Show all vendors, not just those with orders
 
     // Calculate summary
@@ -1209,7 +1309,7 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
       totalOrders: orders.length,
       totalRevenue: byVendorType.reduce((sum: number, item: any) => sum + item.totalRevenue, 0),
       totalProfit: byVendorType.reduce((sum: number, item: any) => sum + item.totalProfit, 0),
-      pendingSettlement: byVendorType.reduce((sum: number, item: any) => sum + item.totalRevenue - item.totalProfit, 0),
+      pendingSettlement: (byVendorType as any[]).reduce((sum: number, item: any) => sum + item.totalRevenue - item.totalProfit, 0),
       averageOrderValue: orders.length > 0 ? byVendorType.reduce((sum: number, item: any) => sum + item.totalRevenue, 0) / orders.length : 0,
     };
 
