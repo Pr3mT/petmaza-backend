@@ -302,7 +302,7 @@ export const getMe = async (req: AuthRequest, res: Response, next: NextFunction)
 
 export const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { name, phone, address } = req.body;
+    const { name, phone, address, dob, gender } = req.body;
 
     const user = await User.findByIdAndUpdate(
       req.user._id,
@@ -310,6 +310,8 @@ export const updateProfile = async (req: AuthRequest, res: Response, next: NextF
         ...(name && { name }),
         ...(phone && { phone }),
         ...(address && { address }),
+        ...(dob !== undefined && { dob }),
+        ...(gender !== undefined && { gender }),
       },
       {
         new: true,

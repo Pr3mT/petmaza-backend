@@ -17,6 +17,8 @@ export interface IUser extends Document {
     state: string;
     pincode: string;
   };
+  dob?: string;
+  gender?: string;
   isApproved: boolean;
   /** Sequential human-readable ID auto-assigned to approved PRIME vendors (e.g. 1, 2, 3) */
   primeVendorCode?: number;

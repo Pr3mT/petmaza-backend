@@ -60,6 +60,13 @@ const userSchema = new Schema<IUser>(
       state: String,
       pincode: String,
     },
+    dob: {
+      type: String,
+    },
+    gender: {
+      type: String,
+      enum: ['Male', 'Female', 'Other'],
+    },
     isApproved: {
       type: Boolean,
       default: false,
