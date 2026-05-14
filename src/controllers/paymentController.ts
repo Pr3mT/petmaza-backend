@@ -7,32 +7,94 @@ import { getRazorpayInstance } from '../config/razorpay';
 import { io } from '../server';
 import { sendPaymentSuccessEmail, sendPaymentFailureEmail } from '../services/emailer';
 import logger from '../config/logger';
+import { logSecurityEvent } from '../utils/paymentSecurityLogger';
+
+// Tolerance in rupees for floating-point comparisons (₹0.50)
+const AMOUNT_TOLERANCE = 0.5;
 
 export const createPaymentOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    // db_order_id is the MongoDB Order _id — passed by the frontend when
-    // initiating payment. It is stored in Razorpay notes and also saved back
-    // on the Order so the webhook can find the DB order from the Razorpay event.
-    const { amount, currency = 'INR', receipt, db_order_id } = req.body;
+    /**
+     * SECURITY: The `amount` field from the frontend is INTENTIONALLY IGNORED.
+     * The authoritative payment amount is always fetched from the DB Order document.
+     * If a hacker modifies the amount in transit, we detect the mismatch and block.
+     */
+    const { currency = 'INR', receipt, db_order_id } = req.body;
+    const frontendAmount: number | undefined = req.body.amount; // captured only for tamper detection
 
-    if (!amount || amount <= 0) {
-      return next(new AppError('Invalid amount', 400));
+    // db_order_id is mandatory — we must look up the DB-authoritative total
+    if (!db_order_id) {
+      return next(new AppError('Order reference is required to initiate payment', 400));
+    }
+
+    // ── Fetch the order and verify ownership ─────────────────────────────────
+    const dbOrder = await Order.findById(db_order_id);
+    if (!dbOrder) {
+      return next(new AppError('Order not found', 404));
+    }
+
+    if (dbOrder.customer_id.toString() !== req.user._id.toString()) {
+      await logSecurityEvent({
+        event: 'UNAUTHORIZED_ORDER_ACCESS',
+        severity: 'HIGH',
+        userId: req.user._id,
+        orderId: db_order_id,
+        ipAddress: req.ip ?? req.socket?.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        details: `User ${req.user._id} attempted to pay for order ${db_order_id} owned by ${dbOrder.customer_id}`,
+      });
+      return next(new AppError('Access denied', 403));
+    }
+
+    if (dbOrder.payment_status === 'Paid') {
+      return next(new AppError('This order has already been paid', 400));
+    }
+
+    // ── Server-authoritative amount (DB total) ────────────────────────────────
+    const serverAmount: number = dbOrder.grandTotal || dbOrder.total;
+
+    if (!serverAmount || serverAmount <= 0) {
+      return next(new AppError('Order total is invalid. Please contact support.', 400));
+    }
+
+    // ── Tamper detection: compare frontend amount with DB total ───────────────
+    if (frontendAmount !== undefined && Math.abs(frontendAmount - serverAmount) > AMOUNT_TOLERANCE) {
+      await logSecurityEvent({
+        event: 'PAYMENT_AMOUNT_TAMPERING',
+        severity: 'CRITICAL',
+        userId: req.user._id,
+        orderId: db_order_id,
+        ipAddress: req.ip ?? req.socket?.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        expected: serverAmount,
+        received: frontendAmount,
+        details:
+          `Payment amount tampering detected! ` +
+          `Frontend sent ₹${frontendAmount}, server DB total is ₹${serverAmount} ` +
+          `for order ${db_order_id}`,
+      });
+      return next(
+        new AppError(
+          'Payment amount validation failed. The order total has changed — please refresh and retry.',
+          400
+        )
+      );
     }
 
     const razorpay = getRazorpayInstance();
 
+    // ── Test / skip-payment mode ─────────────────────────────────────────────
     if (!razorpay || process.env.SKIP_PAYMENT === 'true') {
-      // Test mode - return mock payment order
       const mockOrderId = `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       return res.status(200).json({
         success: true,
-        testMode: true,  // Signal to frontend: skip Razorpay modal, treat as demo
+        testMode: true,
         data: {
           id: mockOrderId,
           entity: 'order',
-          amount: amount * 100, // Razorpay uses paise
+          amount: Math.round(serverAmount * 100), // paise, using server amount
           amount_paid: 0,
-          amount_due: amount * 100,
+          amount_due: Math.round(serverAmount * 100),
           currency,
           receipt: receipt || `receipt_${Date.now()}`,
           status: 'created',
@@ -42,25 +104,27 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response, next: 
       });
     }
 
+    // ── Create Razorpay order using server-verified amount ────────────────────
     const options: any = {
-      amount: amount * 100, // Convert to paise
+      amount: Math.round(serverAmount * 100), // paise, ALWAYS from DB
       currency,
       receipt: receipt || `receipt_${Date.now()}`,
+      notes: { db_order_id },
     };
-
-    // Attach db_order_id in notes so the webhook can resolve the DB order
-    if (db_order_id) {
-      options.notes = { db_order_id };
-    }
 
     const razorpayOrder = await razorpay.orders.create(options);
 
-    // Store the Razorpay order_id on the DB Order so the webhook can look it up
-    if (db_order_id && razorpayOrder?.id) {
+    // Store the Razorpay order_id on the DB Order for webhook resolution
+    if (razorpayOrder?.id) {
       await Order.findByIdAndUpdate(db_order_id, {
         $set: { razorpay_order_id: razorpayOrder.id },
       });
     }
+
+    logger.info(
+      `[createPaymentOrder] ✅ Razorpay order created: ${razorpayOrder.id} | ` +
+        `DB order: ${db_order_id} | Amount: ₹${serverAmount}`
+    );
 
     res.status(200).json({
       success: true,
@@ -96,24 +160,126 @@ export const verifyPayment = async (req: AuthRequest, res: Response, next: NextF
       return next(new AppError('Payment gateway not configured', 500));
     }
 
-    // Verify signature
+    // ── Step 1: Verify HMAC-SHA256 signature ──────────────────────────────────
+    // Razorpay signs: HMAC-SHA256(razorpay_order_id + "|" + razorpay_payment_id, KEY_SECRET)
     const text = `${razorpay_order_id}|${razorpay_payment_id}`;
     const generatedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET!)
       .update(text)
       .digest('hex');
 
-    if (generatedSignature !== razorpay_signature) {
+    // Constant-time comparison prevents timing attacks.
+    // Razorpay signatures are 64-char hex strings (32 bytes). Normalize length
+    // so timingSafeEqual never throws on a length mismatch.
+    const sigLen = generatedSignature.length;
+    const normalizedReceived = razorpay_signature.padEnd(sigLen, '0').slice(0, sigLen);
+    const signaturesMatch = crypto.timingSafeEqual(
+      Buffer.from(generatedSignature, 'hex'),
+      Buffer.from(normalizedReceived, 'hex')
+    );
+
+    if (!signaturesMatch) {
+      await logSecurityEvent({
+        event: 'INVALID_PAYMENT_SIGNATURE',
+        severity: 'CRITICAL',
+        userId: req.user._id,
+        ipAddress: req.ip ?? req.socket?.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        details: `Invalid Razorpay signature for payment ${razorpay_payment_id}, order ${razorpay_order_id}`,
+        received: razorpay_signature,
+        expected: 'valid HMAC-SHA256 signature',
+      });
       return next(new AppError('Invalid payment signature', 400));
     }
 
-    // Payment is verified
+    // ── Step 2: Fetch the actual payment from Razorpay API ────────────────────
+    // This is the critical post-payment amount verification step.
+    // We never trust the amount from the frontend — we ask Razorpay directly.
+    let razorpayPayment: any;
+    try {
+      razorpayPayment = await razorpay.payments.fetch(razorpay_payment_id);
+    } catch (fetchErr: any) {
+      logger.error(`[verifyPayment] Could not fetch payment ${razorpay_payment_id} from Razorpay: ${fetchErr.message}`);
+      return next(new AppError('Could not verify payment details with payment gateway', 500));
+    }
+
+    if (!razorpayPayment || razorpayPayment.status !== 'captured') {
+      return next(
+        new AppError(
+          `Payment is not captured yet (status: ${razorpayPayment?.status ?? 'unknown'}). Please wait a moment and retry.`,
+          400
+        )
+      );
+    }
+
+    const amountPaidRupees = razorpayPayment.amount / 100; // paise → rupees
+
+    // ── Step 3: Cross-check paid amount against DB order total ────────────────
+    const dbOrder = await Order.findOne({ razorpay_order_id });
+    if (dbOrder) {
+      const expectedAmount = dbOrder.grandTotal || dbOrder.total;
+
+      if (Math.abs(amountPaidRupees - expectedAmount) > AMOUNT_TOLERANCE) {
+        await logSecurityEvent({
+          event: 'PAYMENT_AMOUNT_MISMATCH_POST_PAYMENT',
+          severity: 'CRITICAL',
+          userId: req.user._id,
+          orderId: dbOrder._id,
+          ipAddress: req.ip ?? req.socket?.remoteAddress,
+          userAgent: req.headers['user-agent'],
+          expected: expectedAmount,
+          received: amountPaidRupees,
+          details:
+            `POST-PAYMENT AMOUNT MISMATCH: Razorpay captured ₹${amountPaidRupees} but ` +
+            `DB order total is ₹${expectedAmount} for order ${dbOrder._id} (payment: ${razorpay_payment_id})`,
+        });
+        return next(
+          new AppError(
+            'Payment amount does not match the order total. This transaction has been flagged for review. Please contact support.',
+            400
+          )
+        );
+      }
+
+      logger.info(
+        `[verifyPayment] ✅ Amount verified: ₹${amountPaidRupees} paid, ₹${expectedAmount} expected | ` +
+          `Order: ${dbOrder._id} | Payment: ${razorpay_payment_id}`
+      );
+    } else {
+      // No DB order found by razorpay_order_id — could be a timing issue; log but don't block
+      logger.warn(
+        `[verifyPayment] ⚠️ Could not find DB order for razorpay_order_id ${razorpay_order_id} during amount check`
+      );
+    }
+
+    // ── Step 4: Idempotency guard — detect replay attacks ────────────────────
+    const alreadyPaid = await Order.findOne({ payment_id: razorpay_payment_id });
+    if (alreadyPaid) {
+      await logSecurityEvent({
+        event: 'PAYMENT_REPLAY_ATTACK',
+        severity: 'HIGH',
+        userId: req.user._id,
+        orderId: alreadyPaid._id,
+        ipAddress: req.ip ?? req.socket?.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        details: `Payment ID ${razorpay_payment_id} already used for order ${alreadyPaid._id}`,
+      });
+      // Return success idempotently — the payment was already processed
+      return res.status(200).json({
+        success: true,
+        message: 'Payment already verified',
+        data: { order_id: razorpay_order_id, payment_id: razorpay_payment_id },
+      });
+    }
+
+    // ── All checks passed ─────────────────────────────────────────────────────
     res.status(200).json({
       success: true,
       message: 'Payment verified successfully',
       data: {
         order_id: razorpay_order_id,
         payment_id: razorpay_payment_id,
+        amount_paid: amountPaidRupees,
       },
     });
   } catch (error: any) {
@@ -218,6 +384,67 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
       return next(new AppError('Access denied', 403));
     }
 
+    // Idempotency: already paid orders should not be double-processed
+    if (order.payment_status === 'Paid') {
+      return res.status(200).json({
+        success: true,
+        message: 'Order already marked as paid',
+        data: { order },
+      });
+    }
+
+    // ── SECURITY: Verify payment amount via Razorpay API before marking Paid ──
+    // Skip in test mode only
+    const razorpay = getRazorpayInstance();
+    if (razorpay && process.env.SKIP_PAYMENT !== 'true' && payment_id && !payment_id.startsWith('test_')) {
+      try {
+        const razorpayPayment = await razorpay.payments.fetch(payment_id);
+
+        if (!razorpayPayment || razorpayPayment.status !== 'captured') {
+          return next(
+            new AppError(
+              `Payment ${payment_id} has not been captured (status: ${razorpayPayment?.status ?? 'unknown'})`,
+              400
+            )
+          );
+        }
+
+        const amountPaidRupees = (razorpayPayment.amount as number) / 100;
+        const expectedAmount = order.grandTotal || order.total;
+
+        if (Math.abs(amountPaidRupees - expectedAmount) > AMOUNT_TOLERANCE) {
+          await logSecurityEvent({
+            event: 'PAYMENT_AMOUNT_MISMATCH_POST_PAYMENT',
+            severity: 'CRITICAL',
+            userId: req.user._id,
+            orderId: order._id,
+            ipAddress: req.ip ?? req.socket?.remoteAddress,
+            userAgent: req.headers['user-agent'],
+            expected: expectedAmount,
+            received: amountPaidRupees,
+            details:
+              `completePayment amount mismatch: Razorpay captured ₹${amountPaidRupees}, ` +
+              `DB order total ₹${expectedAmount} | Order: ${order._id} | Payment: ${payment_id}`,
+          });
+          return next(
+            new AppError(
+              'Payment amount does not match the order total. This transaction has been flagged. Please contact support.',
+              400
+            )
+          );
+        }
+
+        logger.info(
+          `[completePayment] ✅ Amount verified: ₹${amountPaidRupees} paid | Order: ${order._id}`
+        );
+      } catch (fetchErr: any) {
+        // If Razorpay API is unreachable, log a warning but proceed (webhook is the safety net)
+        logger.warn(
+          `[completePayment] ⚠️ Could not fetch payment ${payment_id} from Razorpay for amount check: ${fetchErr.message}`
+        );
+      }
+    }
+
     // Update order payment status
     order.payment_status = 'Paid';
     order.payment_id = payment_id || `test_payment_${Date.now()}`;
@@ -229,18 +456,9 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
     await order.save();
 
     // Send payment success email to customer with full receipt
-    console.log('[completePayment] Starting payment receipt email process...');
     try {
       const customerEmail = (order.customer_id as any)?.email;
       const customerName = (order.customer_id as any)?.name;
-
-      console.log('[completePayment] Customer details:', {
-        email: customerEmail,
-        name: customerName,
-        orderId: order._id,
-        amount: order.total,
-        paymentId: order.payment_id,
-      });
 
       if (customerEmail) {
         // Populate items to show product names in receipt

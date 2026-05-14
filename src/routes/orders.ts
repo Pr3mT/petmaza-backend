@@ -16,12 +16,15 @@ import {
   getOrderShippingDetails,
 } from '../controllers/orderController';
 import { verifyToken, checkRole } from '../middlewares/auth';
+import { validateCartPrices } from '../middlewares/validateCartPrices';
 
 const router = express.Router();
 
 // Customer routes
-router.post('/', verifyToken, checkRole('customer'), createOrder);
-router.post('/prime', verifyToken, checkRole('customer'), createPrimeOrder);
+// validateCartPrices re-fetches all product prices from DB before order creation.
+// Frontend-supplied prices are ignored — only DB-authoritative values are used.
+router.post('/', verifyToken, checkRole('customer'), validateCartPrices, createOrder);
+router.post('/prime', verifyToken, checkRole('customer'), validateCartPrices, createPrimeOrder);
 router.get('/my', verifyToken, checkRole('customer'), getCustomerOrders);
 router.put('/:id', verifyToken, updateOrder);
 router.get('/:id', verifyToken, getOrderById);
