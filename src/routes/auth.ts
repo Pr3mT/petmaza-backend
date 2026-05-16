@@ -1,5 +1,5 @@
 import express from 'express';
-import { register, login, logout, getMe, updateProfile, sendVerificationEmailController, sendVerificationSuccessController, registerPrimeVendor, googleAuth, forgotPassword, resetPassword } from '../controllers/authController';
+import { register, login, logout, getMe, updateProfile, changePassword, sendVerificationEmailController, sendVerificationSuccessController, registerPrimeVendor, googleAuth, forgotPassword, resetPassword } from '../controllers/authController';
 import { verifyToken } from '../middlewares/auth';
 
 const router = express.Router();
@@ -15,6 +15,7 @@ router.post('/send-verification-email', sendVerificationEmailController);
 router.post('/send-verification-success', sendVerificationSuccessController);
 router.get('/me', verifyToken, getMe);
 router.put('/profile', verifyToken, updateProfile);
+router.put('/change-password', verifyToken, changePassword);
 
 export default router;
 

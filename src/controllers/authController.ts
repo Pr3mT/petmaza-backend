@@ -300,6 +300,42 @@ export const getMe = async (req: AuthRequest, res: Response, next: NextFunction)
   }
 };
 
+export const changePassword = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+
+    if (!oldPassword || !newPassword) {
+      return next(new AppError('Old password and new password are required', 400));
+    }
+
+    if (newPassword.length < 6) {
+      return next(new AppError('New password must be at least 6 characters', 400));
+    }
+
+    const user = await User.findById(req.user._id).select('+password');
+    if (!user) {
+      return next(new AppError('User not found', 404));
+    }
+
+    const isMatch = await (user as any).comparePassword(oldPassword);
+    if (!isMatch) {
+      return next(new AppError('Current password is incorrect', 401));
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    userCache.delete(String(user._id));
+
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully',
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
 export const updateProfile = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { name, phone, address, dob, gender } = req.body;
