@@ -18,6 +18,7 @@ import {
   updateServicePayment,
   verifyDnaResult,
   createManualDnaCard,
+  softDeleteMyServiceRequest,
 } from '../controllers/serviceController';
 import { verifyToken, checkRole } from '../middlewares/auth';
 
@@ -42,6 +43,7 @@ router.post('/admin/create-manual', verifyToken, checkRole('admin', 'sub_admin')
 router.post('/bird-dna', verifyToken, createBirdDNAService);
 router.post('/create-payment-order', verifyToken, createDnaPaymentOrder);
 router.patch('/:id/payment', verifyToken, updateServicePayment);
+router.delete('/:id/customer', verifyToken, softDeleteMyServiceRequest);
 router.get('/my', verifyToken, getMyServiceRequests);
 
 // PDF downloads (customer + admin)

@@ -3,6 +3,8 @@ import mongoose, { Schema, Document } from 'mongoose';
 export interface ISiteSettings extends Document {
   birdDnaServiceEnabled: boolean;
   birdDnaPricePerSample: number;
+  birdDnaPickupCharge: number;
+  birdDnaPrintedCardCharge: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -10,7 +12,9 @@ export interface ISiteSettings extends Document {
 const siteSettingsSchema = new Schema<ISiteSettings>(
   {
     birdDnaServiceEnabled: { type: Boolean, default: false },
-    birdDnaPricePerSample: { type: Number, default: 300, min: 0 },
+    birdDnaPricePerSample: { type: Number, default: 200, min: 0 },
+    birdDnaPickupCharge: { type: Number, default: 100, min: 0 },
+    birdDnaPrintedCardCharge: { type: Number, default: 100, min: 0 },
   },
   { timestamps: true }
 );

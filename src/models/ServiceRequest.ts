@@ -100,12 +100,38 @@ const serviceRequestSchema = new Schema<IServiceRequest>(
     },
     pricePerSample: {
       type: Number,
-      default: 300,
+      default: 200,
+    },
+    pickupRequested: {
+      type: Boolean,
+      default: false,
+    },
+    printedCardRequested: {
+      type: Boolean,
+      default: false,
+    },
+    pickupCharge: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    printedCardCharge: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
     totalAmount: {
       type: Number,
       required: true,
       min: 0,
+    },
+    isDeleted: {
+      type: Number,
+      enum: [0, 1],
+      default: 0,
+    },
+    deletedAt: {
+      type: Date,
     },
     // Legacy request-level reports retained for backward compatibility with existing data.
     labReports: {
@@ -125,6 +151,7 @@ const serviceRequestSchema = new Schema<IServiceRequest>(
 serviceRequestSchema.index({ customerId: 1 });
 serviceRequestSchema.index({ status: 1 });
 serviceRequestSchema.index({ vendorAssignedId: 1 });
+serviceRequestSchema.index({ isDeleted: 1 });
 
 const ServiceRequest = mongoose.model<IServiceRequest>('ServiceRequest', serviceRequestSchema);
 

@@ -11,7 +11,9 @@ import {
   generateDnaResultCertificatePdf,
 } from '../services/dnaPdfGenerator';
 
-const BIRD_DNA_PRICE_PER_BIRD = 300;
+const BIRD_DNA_PRICE_PER_BIRD = 200;
+const BIRD_DNA_PICKUP_CHARGE = 100;
+const BIRD_DNA_PRINTED_CARD_CHARGE = 100;
 
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID || '',
@@ -113,6 +115,8 @@ export const createBirdDNAService = async (req: AuthRequest, res: Response, next
       pickupAddress,
       extraNote,
       payment_id,
+      pickupRequested,
+      printedCardRequested,
     } = req.body;
 
     if (!birds || birds.length === 0) {
@@ -120,7 +124,15 @@ export const createBirdDNAService = async (req: AuthRequest, res: Response, next
     }
 
     const pricePerSample = settings?.birdDnaPricePerSample ?? BIRD_DNA_PRICE_PER_BIRD;
-    const totalAmount = birds.length * pricePerSample;
+    const pickupChargeRate = settings?.birdDnaPickupCharge ?? BIRD_DNA_PICKUP_CHARGE;
+    const printedCardChargeRate = settings?.birdDnaPrintedCardCharge ?? BIRD_DNA_PRINTED_CARD_CHARGE;
+
+    const wantsPickup = Boolean(pickupRequested);
+    const wantsPrintedCard = Boolean(printedCardRequested);
+
+    const pickupCharge = wantsPickup ? pickupChargeRate : 0;
+    const printedCardCharge = wantsPrintedCard ? printedCardChargeRate * birds.length : 0;
+    const totalAmount = birds.length * pricePerSample + pickupCharge + printedCardCharge;
 
     const deliveryAddress = {
       street: 'Partner Lab',
@@ -142,6 +154,10 @@ export const createBirdDNAService = async (req: AuthRequest, res: Response, next
       payment_id: payment_id || undefined,
       payment_status: payment_id ? 'Paid' : 'Pending',
       pricePerSample,
+      pickupRequested: wantsPickup,
+      printedCardRequested: wantsPrintedCard,
+      pickupCharge,
+      printedCardCharge,
       totalAmount,
       status: 'pending',
     });
@@ -160,7 +176,10 @@ export const createBirdDNAService = async (req: AuthRequest, res: Response, next
 
 export const getMyServiceRequests = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const serviceRequests = await ServiceRequest.find({ customerId: req.user._id })
+    const serviceRequests = await ServiceRequest.find({
+      customerId: req.user._id,
+      isDeleted: { $ne: 1 },
+    })
       .sort({ createdAt: -1 });
 
     const normalizedServiceRequests = serviceRequests.map((request) => normalizeBirdReports(request));
@@ -412,6 +431,10 @@ export const downloadRequestPdf = async (req: AuthRequest, res: Response, next: 
       birds: serviceRequest.birds as any[],
       totalAmount: serviceRequest.totalAmount,
       pricePerSample: serviceRequest.pricePerSample,
+      pickupRequested: serviceRequest.pickupRequested,
+      printedCardRequested: serviceRequest.printedCardRequested,
+      pickupCharge: serviceRequest.pickupCharge,
+      printedCardCharge: serviceRequest.printedCardCharge,
       createdAt: serviceRequest.createdAt,
       extraNote: serviceRequest.extraNote,
     });
@@ -540,7 +563,12 @@ export const getSiteSettings = async (req: Request, res: Response, next: NextFun
 
 export const updateSiteSettings = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { birdDnaServiceEnabled, birdDnaPricePerSample } = req.body;
+    const {
+      birdDnaServiceEnabled,
+      birdDnaPricePerSample,
+      birdDnaPickupCharge,
+      birdDnaPrintedCardCharge,
+    } = req.body;
 
     let settings = await SiteSettings.findOne();
     if (!settings) settings = await SiteSettings.create({});
@@ -550,6 +578,12 @@ export const updateSiteSettings = async (req: Request, res: Response, next: Next
     }
     if (typeof birdDnaPricePerSample === 'number' && birdDnaPricePerSample > 0) {
       settings.birdDnaPricePerSample = birdDnaPricePerSample;
+    }
+    if (typeof birdDnaPickupCharge === 'number' && birdDnaPickupCharge >= 0) {
+      settings.birdDnaPickupCharge = birdDnaPickupCharge;
+    }
+    if (typeof birdDnaPrintedCardCharge === 'number' && birdDnaPrintedCardCharge >= 0) {
+      settings.birdDnaPrintedCardCharge = birdDnaPrintedCardCharge;
     }
 
     await settings.save();
@@ -690,6 +724,8 @@ export const getServiceAvailability = async (req: Request, res: Response, next: 
       data: {
         birdDnaServiceEnabled: settings.birdDnaServiceEnabled,
         pricePerSample: settings.birdDnaPricePerSample,
+        pickupCharge: settings.birdDnaPickupCharge,
+        printedCardCharge: settings.birdDnaPrintedCardCharge,
       },
     });
   } catch (error: any) {
@@ -730,6 +766,39 @@ export const updateServicePayment = async (req: AuthRequest, res: Response, next
       success: true,
       message: 'Payment recorded successfully',
       data: { serviceRequest },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Customer: soft-delete own service request ───────────────────────────────
+
+export const softDeleteMyServiceRequest = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+
+    const serviceRequest = await ServiceRequest.findById(id);
+    if (!serviceRequest) {
+      return next(new AppError('Service request not found', 404));
+    }
+
+    const isOwner = serviceRequest.customerId?.toString() === req.user._id?.toString();
+    if (!isOwner) {
+      return next(new AppError('Access denied', 403));
+    }
+
+    if (serviceRequest.isDeleted === 1) {
+      return res.status(200).json({ success: true, message: 'Already removed' });
+    }
+
+    serviceRequest.isDeleted = 1;
+    serviceRequest.deletedAt = new Date();
+    await serviceRequest.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'DNA card removed from your account',
     });
   } catch (error: any) {
     next(error);
@@ -832,6 +901,8 @@ export const createManualDnaCard = async (req: AuthRequest, res: Response, next:
       pricePerSample,
       payment_status,
       status,
+      pickupRequested,
+      printedCardRequested,
     } = req.body;
 
     if (!customerName?.trim() || !farm?.trim()) {
@@ -845,7 +916,13 @@ export const createManualDnaCard = async (req: AuthRequest, res: Response, next:
     // Fetch current price from settings, fall back to hardcoded default
     const settings = await SiteSettings.findOne();
     const pricePerBird = Number(pricePerSample) || settings?.birdDnaPricePerSample || BIRD_DNA_PRICE_PER_BIRD;
-    const computedTotal = birds.length * pricePerBird;
+    const pickupChargeRate = settings?.birdDnaPickupCharge ?? BIRD_DNA_PICKUP_CHARGE;
+    const printedCardChargeRate = settings?.birdDnaPrintedCardCharge ?? BIRD_DNA_PRINTED_CARD_CHARGE;
+    const wantsPickup = Boolean(pickupRequested);
+    const wantsPrintedCard = Boolean(printedCardRequested);
+    const pickupCharge = wantsPickup ? pickupChargeRate : 0;
+    const printedCardCharge = wantsPrintedCard ? printedCardChargeRate * birds.length : 0;
+    const computedTotal = birds.length * pricePerBird + pickupCharge + printedCardCharge;
 
     // Use provided address or a sensible placeholder for manual entries
     const address = pickupAddress && pickupAddress.street
@@ -865,6 +942,10 @@ export const createManualDnaCard = async (req: AuthRequest, res: Response, next:
       extraNote,
       payment_status: payment_status || 'Paid',
       pricePerSample: pricePerBird,
+      pickupRequested: wantsPickup,
+      printedCardRequested: wantsPrintedCard,
+      pickupCharge,
+      printedCardCharge,
       totalAmount: computedTotal,
       status: status || 'completed',
     });

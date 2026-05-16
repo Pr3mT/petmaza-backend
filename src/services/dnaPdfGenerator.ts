@@ -32,6 +32,10 @@ export interface DnaRequestPdfData {
   }>;
   totalAmount: number;
   pricePerSample: number;
+  pickupRequested?: boolean;
+  printedCardRequested?: boolean;
+  pickupCharge?: number;
+  printedCardCharge?: number;
   createdAt: Date | string;
   extraNote?: string;
 }
@@ -189,11 +193,44 @@ export async function generateDnaRequestPdf(data: DnaRequestPdfData): Promise<Bu
         }
       });
 
+      // Subtotal for birds
+      const birdsSubtotal = data.birds.length * data.pricePerSample;
+      doc.rect(L, doc.y, W, 20).fill('#f3f4f6');
+      doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
+        .text(
+          `Subtotal (${data.birds.length} bird${data.birds.length > 1 ? 's' : ''} × ₹${data.pricePerSample})`,
+          col.name, doc.y + 5, { width: 290 },
+        )
+        .text(`₹${birdsSubtotal}`, col.price, doc.y + 5, { width: 55, align: 'right' });
+      doc.y += 22;
+
+      // Add-on: Doorstep pickup
+      if (data.pickupRequested && (data.pickupCharge || 0) > 0) {
+        doc.rect(L, doc.y, W, 20).fill('#ffffff');
+        doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
+          .text('Doorstep Pickup Service', col.name, doc.y + 5, { width: 290 })
+          .text(`₹${data.pickupCharge}`, col.price, doc.y + 5, { width: 55, align: 'right' });
+        doc.y += 22;
+      }
+
+      // Add-on: Printed cards (per bird)
+      if (data.printedCardRequested && (data.printedCardCharge || 0) > 0) {
+        const perCard = data.birds.length > 0 ? Math.round((data.printedCardCharge || 0) / data.birds.length) : 0;
+        doc.rect(L, doc.y, W, 20).fill('#f3f4f6');
+        doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
+          .text(
+            `Printed DNA Cards (${data.birds.length} × ₹${perCard})`,
+            col.name, doc.y + 5, { width: 290 },
+          )
+          .text(`₹${data.printedCardCharge}`, col.price, doc.y + 5, { width: 55, align: 'right' });
+        doc.y += 22;
+      }
+
       // Total row
       doc.rect(L, doc.y, W, 22).fill('#e8f0fe');
       doc.fontSize(9).fillColor(TEXT_DARK).font('Helvetica-Bold')
         .text('Total Amount Payable', col.name, doc.y + 6, { width: 290 })
-        .text(`â‚¹${data.totalAmount}`, col.price, doc.y + 6, { width: 55, align: 'right' });
+        .text(`₹${data.totalAmount}`, col.price, doc.y + 6, { width: 55, align: 'right' });
       doc.y += 30;
 
       doc.moveDown(1);

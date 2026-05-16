@@ -336,7 +336,13 @@ export interface IServiceRequest extends Document {
   payment_id?: string;
   payment_status: PaymentStatus;
   pricePerSample: number;
+  pickupRequested: boolean;
+  printedCardRequested: boolean;
+  pickupCharge: number;
+  printedCardCharge: number;
   totalAmount: number;
+  isDeleted: 0 | 1;
+  deletedAt?: Date;
   labReports?: Array<{
     url: string;
     publicId?: string;
