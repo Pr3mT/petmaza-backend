@@ -18,7 +18,7 @@ router.get('/active', cacheResponse(300000), getActiveBanners);
 
 // Admin routes - Require authentication and admin role
 router.use(verifyToken);
-router.use(checkRole('admin'));
+router.use(checkRole('admin', 'sub_admin'));
 
 router.get('/', getAllBanners);
 router.get('/:id', getBannerById);

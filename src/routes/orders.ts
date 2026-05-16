@@ -40,8 +40,8 @@ router.put('/vendor/:id/status', verifyToken, checkRole('vendor'), updateOrderSt
 router.get('/vendor/:id', verifyToken, checkRole('vendor'), getVendorOrderDetails);
 
 // Admin routes - for order management
-router.put('/admin/:id/status', verifyToken, checkRole('admin'), adminUpdateOrderStatus);
-router.put('/admin/:id/assign', verifyToken, checkRole('admin'), adminAssignOrderToVendor);
-router.get('/admin/:id/shipping-details', verifyToken, checkRole('admin'), getOrderShippingDetails);
+router.put('/admin/:id/status', verifyToken, checkRole('admin', 'sub_admin'), adminUpdateOrderStatus);
+router.put('/admin/:id/assign', verifyToken, checkRole('admin', 'sub_admin'), adminAssignOrderToVendor);
+router.get('/admin/:id/shipping-details', verifyToken, checkRole('admin', 'sub_admin'), getOrderShippingDetails);
 
 export default router;

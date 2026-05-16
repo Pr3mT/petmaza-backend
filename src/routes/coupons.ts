@@ -29,9 +29,9 @@ router.post('/validate', validateCoupon);
 router.get('/', getAllCoupons);
 
 // Admin-only routes - Full coupon management
-router.post('/', checkRole('admin'), createCoupon);
-router.put('/:id', checkRole('admin'), updateCoupon);
-router.delete('/:id', checkRole('admin'), deleteCoupon);
-router.patch('/:id/toggle-status', checkRole('admin'), toggleCouponStatus);
+router.post('/', checkRole('admin', 'sub_admin'), createCoupon);
+router.put('/:id', checkRole('admin', 'sub_admin'), updateCoupon);
+router.delete('/:id', checkRole('admin', 'sub_admin'), deleteCoupon);
+router.patch('/:id/toggle-status', checkRole('admin', 'sub_admin'), toggleCouponStatus);
 
 export default router;

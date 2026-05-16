@@ -18,7 +18,7 @@ const router = express.Router();
 router.use(verifyToken);
 
 // ── Admin-only routes ──────────────────────────────────────────────
-router.get('/admin/all', checkRole('admin'), adminGetAllPrimeListings);
+router.get('/admin/all', checkRole('admin', 'sub_admin'), adminGetAllPrimeListings);
 
 // ── Prime Vendor + Admin routes ────────────────────────────────────
 router.use(checkPrimeVendor);

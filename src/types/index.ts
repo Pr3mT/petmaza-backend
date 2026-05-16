@@ -7,7 +7,7 @@ export interface IUser extends Document {
   googleId?: string;
   profilePicture?: string;
   isEmailVerified: boolean;
-  role: 'admin' | 'vendor' | 'customer';
+  role: 'admin' | 'sub_admin' | 'vendor' | 'customer';
   vendorType?: 'PRIME' | 'MY_SHOP' | 'WAREHOUSE_FULFILLER';
   pincodesServed?: string[];
   phone: string;

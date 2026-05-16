@@ -7,7 +7,7 @@
  * requires minimal changes (vendorPrice, vendorMRP, product_id aliases still present).
  */
 import { Response, NextFunction } from 'express';
-import { AuthRequest } from '../middlewares/auth';
+import { AuthRequest, isAdminRole } from '../middlewares/auth';
 import Product from '../models/Product';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
@@ -66,7 +66,7 @@ export const createPrimeListing = async (
   next: NextFunction
 ) => {
   try {
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = isAdminRole(req.user.role);
     const vendor_id = isAdmin && req.body.vendor_id ? req.body.vendor_id : req.user._id;
     const {
       product_id,
@@ -148,7 +148,7 @@ export const getMyPrimeListings = async (
   next: NextFunction
 ) => {
   try {
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = isAdminRole(req.user.role);
     const { page = 1, limit = 20, isActive, isAvailable, vendor_id: queryVendorId } = req.query;
 
     const query: any = { isPrime: true };
@@ -227,7 +227,7 @@ export const updatePrimeListing = async (
   next: NextFunction
 ) => {
   try {
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = isAdminRole(req.user.role);
     const vendor_id = req.user._id;
     const { id } = req.params;
     const updates = req.body;
@@ -343,7 +343,7 @@ export const deletePrimeListing = async (
   next: NextFunction
 ) => {
   try {
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = isAdminRole(req.user.role);
     const vendor_id = req.user._id;
     const { id } = req.params;
 

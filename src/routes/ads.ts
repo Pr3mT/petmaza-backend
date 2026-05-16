@@ -22,7 +22,7 @@ router.post('/:id/click', trackClick);
 
 // Admin routes - Require authentication and admin role
 router.use(verifyToken);
-router.use(checkRole('admin'));
+router.use(checkRole('admin', 'sub_admin'));
 
 router.get('/', getAllAds);
 router.get('/:id', getAdById);

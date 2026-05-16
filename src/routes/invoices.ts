@@ -12,7 +12,7 @@ import { verifyToken, checkRole } from '../middlewares/auth';
 const router = express.Router();
 
 // Customer routes
-router.post('/', verifyToken, checkRole('customer', 'admin'), createInvoice);
+router.post('/', verifyToken, checkRole('customer', 'admin', 'sub_admin'), createInvoice);
 router.get('/my-invoices', verifyToken, checkRole('customer'), getCustomerInvoices);
 router.get('/:invoiceId', verifyToken, getInvoice);
 router.get('/order/:orderId', verifyToken, getInvoiceByOrderId);

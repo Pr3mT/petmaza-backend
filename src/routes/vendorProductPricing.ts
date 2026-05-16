@@ -15,7 +15,7 @@ router.get('/product/:product_id/vendors', getProductVendors);
 
 // Admin routes
 router.use(verifyToken);
-router.use(checkRole('admin'));
+router.use(checkRole('admin', 'sub_admin'));
 
 router.post('/assign', assignProductToVendor);
 router.put('/:vendor_id/:product_id', updateVendorProductPricing);

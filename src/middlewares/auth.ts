@@ -81,10 +81,9 @@ export const checkRole = (...roles: string[]) => {
       return next(new AppError('Not authorized', 401));
     }
 
-    // Case-insensitive role comparison
     const userRole = req.user.role?.toLowerCase();
     const allowedRoles = roles.map(r => r.toLowerCase());
-    
+
     if (!allowedRoles.includes(userRole)) {
       return next(new AppError('Access denied. Insufficient permissions', 403));
     }
@@ -93,13 +92,16 @@ export const checkRole = (...roles: string[]) => {
   };
 };
 
+export const isAdminRole = (role: string): boolean =>
+  ['admin', 'sub_admin'].includes(role);
+
 // Check for MY_SHOP vendor type
 export const checkMyShopVendor = (req: AuthRequest, res: Response, next: NextFunction) => {
   if (!req.user) {
     return next(new AppError('Not authorized', 401));
   }
 
-  if (req.user.role === 'admin' || (req.user.role === 'vendor' && req.user.vendorType === 'MY_SHOP')) {
+  if (isAdminRole(req.user.role) || (req.user.role === 'vendor' && req.user.vendorType === 'MY_SHOP')) {
     return next();
   }
 
@@ -112,7 +114,7 @@ export const checkPrimeVendor = (req: AuthRequest, res: Response, next: NextFunc
     return next(new AppError('Not authorized', 401));
   }
 
-  if (req.user.role === 'admin' || (req.user.role === 'vendor' && req.user.vendorType === 'PRIME')) {
+  if (isAdminRole(req.user.role) || (req.user.role === 'vendor' && req.user.vendorType === 'PRIME')) {
     return next();
   }
 

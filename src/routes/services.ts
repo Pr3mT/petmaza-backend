@@ -32,11 +32,11 @@ router.get('/verify-dna', verifyDnaResult);
 router.get('/admin/all', verifyToken, checkRole('admin', 'vendor'), getAllServiceRequests);
 
 // Admin-only: site settings
-router.get('/admin/settings', verifyToken, checkRole('admin'), getSiteSettings);
-router.patch('/admin/settings', verifyToken, checkRole('admin'), updateSiteSettings);
+router.get('/admin/settings', verifyToken, checkRole('admin', 'sub_admin'), getSiteSettings);
+router.patch('/admin/settings', verifyToken, checkRole('admin', 'sub_admin'), updateSiteSettings);
 
 // Admin-only: manually create a DNA card (no customer request / payment needed)
-router.post('/admin/create-manual', verifyToken, checkRole('admin'), createManualDnaCard);
+router.post('/admin/create-manual', verifyToken, checkRole('admin', 'sub_admin'), createManualDnaCard);
 
 // Customer routes
 router.post('/bird-dna', verifyToken, createBirdDNAService);

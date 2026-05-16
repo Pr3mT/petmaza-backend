@@ -40,9 +40,9 @@ import Review from '../models/Review';
 
 const router = express.Router();
 
-// All admin routes require admin role
+// All admin routes require admin or sub_admin role
 router.use(verifyToken);
-router.use(checkRole('admin'));
+router.use(checkRole('admin', 'sub_admin'));
 
 router.get('/users', getUsers);
 router.put('/users/:id/approve', approveVendor);
@@ -64,10 +64,10 @@ router.delete('/vendors/:id/products/:productId', removeVendorProductAssignment)
 router.post('/cleanup-variants', cleanupVariantProducts);
 router.post('/reseed-product', reseedVariantProduct);
 
-// Analytics routes
-router.get('/analytics', getAnalytics);
-router.get('/analytics/summary', getSummary);
-router.get('/analytics/orders', getOrderReport);
+// Analytics routes — admin only (billing/finance)
+router.get('/analytics', checkRole('admin'), getAnalytics);
+router.get('/analytics/summary', checkRole('admin'), getSummary);
+router.get('/analytics/orders', checkRole('admin'), getOrderReport);
 
 // Shipping settings routes
 router.get('/shipping-settings', getShippingSettings);
@@ -79,12 +79,10 @@ router.get('/fulfillers', getFulfillers);
 router.put('/fulfillers/:id', updateFulfiller);
 router.delete('/fulfillers/:id', deleteFulfiller);
 
-// Vendor billing route
-router.get('/vendor-billing', getVendorBilling);
-
-// Vendor weekly invoice routes
-router.get('/vendor-weekly-billing', getVendorWeeklyBilling);
-router.post('/vendor-weekly-billing/mark-paid', markWeeklyInvoicePaid);
+// Vendor billing routes — admin only (billing/finance)
+router.get('/vendor-billing', checkRole('admin'), getVendorBilling);
+router.get('/vendor-weekly-billing', checkRole('admin'), getVendorWeeklyBilling);
+router.post('/vendor-weekly-billing/mark-paid', checkRole('admin'), markWeeklyInvoicePaid);
 
 // Category → Fulfiller mapping routes
 router.get('/category-mappings', getCategoryMappings);

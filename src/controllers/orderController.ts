@@ -8,7 +8,7 @@ import Product from '../models/Product';
 import Coupon from '../models/Coupon';
 import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
-import { AuthRequest } from '../middlewares/auth';
+import { AuthRequest, isAdminRole } from '../middlewares/auth';
 import logger from '../config/logger';
 import { sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 import {
@@ -233,7 +233,7 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
       customerId = order.customer_id.toString();
     }
     
-    if (customerId !== req.user._id.toString() && req.user.role !== 'admin') {
+    if (customerId !== req.user._id.toString() && !isAdminRole(req.user.role)) {
       return next(new AppError('Access denied', 403));
     }
 
@@ -399,7 +399,7 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
 
     // Check if user has access
     const isCustomer = customerId === userId;
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = isAdminRole(req.user.role);
     const isAssignedVendor = (assignedVendorId && assignedVendorId === userId) || 
       (order.assignedVendors && order.assignedVendors.some((vid) => vid.toString() === userId));
 

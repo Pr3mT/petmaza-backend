@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import Order from '../models/Order';
 import { AppError } from '../middlewares/errorHandler';
-import { AuthRequest } from '../middlewares/auth';
+import { AuthRequest, isAdminRole } from '../middlewares/auth';
 import { getRazorpayInstance } from '../config/razorpay';
 import { io } from '../server';
 import { sendPaymentSuccessEmail, sendPaymentFailureEmail } from '../services/emailer';
@@ -380,7 +380,7 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
     }
 
     // Check if user owns this order
-    if (order.customer_id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    if (order.customer_id.toString() !== req.user._id.toString() && !isAdminRole(req.user.role)) {
       return next(new AppError('Access denied', 403));
     }
 
@@ -516,7 +516,7 @@ export const handlePaymentFailure = async (req: AuthRequest, res: Response, next
     }
 
     // Check if user owns this order
-    if (order.customer_id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    if (order.customer_id.toString() !== req.user._id.toString() && !isAdminRole(req.user.role)) {
       return next(new AppError('Access denied', 403));
     }
 

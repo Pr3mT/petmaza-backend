@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { AuthRequest } from './auth';
+import { AuthRequest, isAdminRole } from './auth';
 
 // Global cache map for sharing across middleware instances
 const globalCache = new Map<string, { data: any; timestamp: number }>();
@@ -78,7 +78,7 @@ export const cacheForCustomersOnly = (durationMs: number = 60000) => {
     }
 
     // Check if user is admin - if yes, skip caching entirely
-    const isAdmin = req.user && req.user.role === 'admin';
+    const isAdmin = req.user && isAdminRole(req.user.role);
     if (isAdmin) {
       // Admin users always get fresh data - don't cache and don't return cached data
       return next();

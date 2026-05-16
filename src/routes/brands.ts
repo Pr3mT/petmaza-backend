@@ -23,13 +23,13 @@ router.get('/:id', optionalAuth, cacheForCustomersOnly(300000), getBrandById); /
 router.post('/', verifyToken, checkRole('admin', 'vendor'), createBrand);
 
 // Admin only routes for update/delete (support both PUT and PATCH)
-router.put('/:id', verifyToken, checkRole('admin'), updateBrand);
-router.patch('/:id', verifyToken, checkRole('admin'), updateBrand);
-router.delete('/:id', verifyToken, checkRole('admin'), deleteBrand);
+router.put('/:id', verifyToken, checkRole('admin', 'sub_admin'), updateBrand);
+router.patch('/:id', verifyToken, checkRole('admin', 'sub_admin'), updateBrand);
+router.delete('/:id', verifyToken, checkRole('admin', 'sub_admin'), deleteBrand);
 
 // Subcategory management routes (admin only)
-router.post('/:id/subcategories/add', verifyToken, checkRole('admin'), addSubcategoriesToBrand);
-router.post('/:id/subcategories/remove', verifyToken, checkRole('admin'), removeSubcategoriesFromBrand);
+router.post('/:id/subcategories/add', verifyToken, checkRole('admin', 'sub_admin'), addSubcategoriesToBrand);
+router.post('/:id/subcategories/remove', verifyToken, checkRole('admin', 'sub_admin'), removeSubcategoriesFromBrand);
 
 export default router;
 

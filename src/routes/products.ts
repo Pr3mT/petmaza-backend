@@ -32,16 +32,16 @@ router.get('/prime/category', optionalAuth, cacheForCustomersOnly(30000), getPri
 router.get('/:productId/prime-listings', optionalAuth, cacheForCustomersOnly(30000), getPrimeListingsForProduct);
 
 // Bulk upload utilities (admin only)
-router.get('/bulk/template', verifyToken, checkRole('admin'), generateBulkTemplate);
-router.get('/bulk/prime-vendors', verifyToken, checkRole('admin'), getActivePrimeVendors);
+router.get('/bulk/template', verifyToken, checkRole('admin', 'sub_admin'), generateBulkTemplate);
+router.get('/bulk/prime-vendors', verifyToken, checkRole('admin', 'sub_admin'), getActivePrimeVendors);
 
 // Protected routes - Admin and MY_SHOP vendors can create/manage products
 router.post('/', verifyToken, createProduct);
-router.post('/bulk-upload', verifyToken, checkRole('admin'), bulkUploadProducts);
+router.post('/bulk-upload', verifyToken, checkRole('admin', 'sub_admin'), bulkUploadProducts);
 router.put('/:id', verifyToken, updateProduct); // MY_SHOP vendors can update their products
 router.patch('/:id', verifyToken, updateProduct);
 router.patch('/:id/variants/:variantId/status', verifyToken, checkPrimeVendor, patchVariantStatus); // Admin + Prime Vendor: toggle variant in-stock / out-of-stock
-router.delete('/:id/variants/:variantId', verifyToken, checkRole('admin'), deleteVariant); // Admin can delete a single variant
+router.delete('/:id/variants/:variantId', verifyToken, checkRole('admin', 'sub_admin'), deleteVariant); // Admin can delete a single variant
 router.delete('/:id', verifyToken, checkRole('admin', 'vendor'), deleteProduct); // Admin can delete any, vendors can delete own
 
 export default router;

@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ProductService } from '../services/ProductService';
 import { AppError } from '../middlewares/errorHandler';
-import { AuthRequest } from '../middlewares/auth';
+import { AuthRequest, isAdminRole } from '../middlewares/auth';
 import Product from '../models/Product';
 import Brand from '../models/Brand';
 import VendorDetails from '../models/VendorDetails';
@@ -15,7 +15,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     const user = req.user;
     
     // Check permissions: Admin or any vendor type (MY_SHOP, PRIME, WAREHOUSE_FULFILLER)
-    if (user.role !== 'admin' && !['MY_SHOP', 'PRIME', 'WAREHOUSE_FULFILLER'].includes(user.vendorType)) {
+    if (!isAdminRole(user.role) && !['MY_SHOP', 'PRIME', 'WAREHOUSE_FULFILLER'].includes(user.vendorType)) {
       return next(new AppError('Only Admin and vendors can create products', 403));
     }
 
@@ -36,7 +36,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     // When admin creates a non-prime product, auto-assign addedBy to the
     // matching WAREHOUSE_FULFILLER via CategoryFulfillerMapping so the
     // product appears in the correct vendor's product list.
-    if (user.role === 'admin' && !productData.isPrime) {
+    if (isAdminRole(user.role) && !productData.isPrime) {
       // mainCategory and subCategory are now arrays — use the first element for fulfiller lookup
       const mainCatRaw = productData.mainCategory;
       const subCatRaw  = productData.subCategory;
@@ -109,7 +109,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     // When admin creates a non-prime product assigned to a WAREHOUSE_FULFILLER,
     // pre-create the VendorProductPricing record with isActive:true so the
     // product immediately shows as "Available" in the fulfiller's dashboard.
-    if (user.role === 'admin' && !product.isPrime && product.addedBy) {
+    if (isAdminRole(user.role) && !product.isPrime && product.addedBy) {
       const fulfillerId = product.addedBy;
       const existingPricing = await VendorProductPricing.findOne({
         vendor_id: fulfillerId,
@@ -209,14 +209,14 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
       hasUser: !!req.user,
       userRole: req.user?.role,
       userEmail: req.user?.email,
-      isAdmin: req.user && req.user.role === 'admin'
+      isAdmin: req.user && isAdminRole(req.user.role)
     });
 
     // All users (admin, customers, public) see all products.
     // Out-of-stock products remain visible with an "Out of Stock" badge and "Notify Me" button.
     // The inStock field (derived from legacy isActive for old docs) controls purchase availability.
     // But for Prime products: only show those that still have an active PrimeProduct listing
-    if (req.user && req.user.role === 'admin') {
+    if (req.user && isAdminRole(req.user.role)) {
       // Admin sees everything (including inactive)
       filters.isActive = undefined;
       console.log('✅ Admin detected - showing all products');
@@ -265,7 +265,7 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
     const user = req.user;
     
     // Check permissions: Admin can update any, vendors (MY_SHOP, PRIME, WAREHOUSE_FULFILLER) can update their own
-    if (user.role !== 'admin' && !['MY_SHOP', 'PRIME', 'WAREHOUSE_FULFILLER'].includes(user.vendorType)) {
+    if (!isAdminRole(user.role) && !['MY_SHOP', 'PRIME', 'WAREHOUSE_FULFILLER'].includes(user.vendorType)) {
       return next(new AppError('Only Admin and vendors can update products', 403));
     }
     
@@ -304,7 +304,7 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
     // ── When admin changes subCategory, re-assign addedBy to the correct fulfiller ──
     // This ensures the product appears for the RIGHT WAREHOUSE_FULFILLER and disappears
     // from the old one's list as soon as the category is updated.
-    if (user.role === 'admin' && req.body.subCategory) {
+    if (isAdminRole(user.role) && req.body.subCategory) {
       // subCategory is now an array — compare using first element for fulfiller lookup
       const newSubCatRaw = req.body.subCategory;
       const newSubCat = Array.isArray(newSubCatRaw) ? newSubCatRaw[0] : String(newSubCatRaw).trim();
@@ -456,7 +456,7 @@ export const patchVariantStatus = async (req: AuthRequest, res: Response, next: 
     }
 
     // Prime vendors can only toggle variants on their own products
-    if (req.user?.role !== 'admin') {
+    if (!isAdminRole(req.user?.role)) {
       const primeVendorId = (product as any).primeVendor_id?.toString();
       if (!primeVendorId || primeVendorId !== req.user?._id?.toString()) {
         return res.status(403).json({ success: false, message: 'You can only manage variants of your own products' });
@@ -665,7 +665,7 @@ export const bulkUploadProducts = async (req: AuthRequest, res: Response, next: 
   try {
     const user = req.user;
 
-    if (user.role !== 'admin') {
+    if (!isAdminRole(user.role)) {
       return next(new AppError('Only admins can perform bulk product uploads', 403));
     }
 

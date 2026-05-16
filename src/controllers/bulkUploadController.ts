@@ -6,7 +6,7 @@ import User from '../models/User';
 import VendorProductPricing from '../models/VendorProductPricing';
 import CategoryFulfillerMapping from '../models/CategoryFulfillerMapping';
 import { AppError } from '../middlewares/errorHandler';
-import { AuthRequest } from '../middlewares/auth';
+import { AuthRequest, isAdminRole } from '../middlewares/auth';
 import { clearCache } from '../middlewares/cache';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -356,7 +356,7 @@ export const bulkUploadProducts = async (
   try {
     const user = req.user;
 
-    if (user.role !== 'admin') {
+    if (!isAdminRole(user.role)) {
       return next(new AppError('Only admins can perform bulk product uploads', 403));
     }
 

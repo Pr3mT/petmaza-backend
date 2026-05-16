@@ -18,7 +18,7 @@ import {
 const router = express.Router();
 
 // All routes require admin authentication
-router.use(verifyToken, checkRole('admin'));
+router.use(verifyToken, checkRole('admin', 'sub_admin'));
 
 // Get warehouse
 router.get('/', getWarehouse);

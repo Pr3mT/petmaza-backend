@@ -42,7 +42,25 @@ const seedUsers = async () => {
     });
     console.log('✅ Admin user created');
 
-    // 2. Create Customer User
+    // 2. Create Sub Admin User
+    await User.create({
+      name: 'Sub Admin',
+      email: 'subadmin@petmaza.com',
+      password: defaultPassword,
+      phone: '9876543215',
+      role: 'sub_admin',
+      isApproved: true,
+      isEmailVerified: true,
+      address: {
+        street: 'Admin Street',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        pincode: '400001',
+      },
+    });
+    console.log('✅ Sub Admin user created');
+
+    // 3. Create Customer User
     const customer = await User.create({
       name: 'Customer User',
       email: 'customer@petmaza.com',
@@ -209,6 +227,10 @@ const seedUsers = async () => {
     console.log('Email: admin@petmaza.com');
     console.log('Password: ' + defaultPassword);
     console.log('Role: Admin');
+    console.log('\n--- SUB ADMIN ---');
+    console.log('Email: subadmin@petmaza.com');
+    console.log('Password: ' + defaultPassword);
+    console.log('Role: Sub Admin');
     console.log('\n--- CUSTOMER ---');
     console.log('Email: customer@petmaza.com');
     console.log('Password: ' + defaultPassword);

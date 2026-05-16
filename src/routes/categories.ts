@@ -21,8 +21,8 @@ router.get('/:id', cacheResponse(300000), getCategoryById);
 router.post('/', verifyToken, checkMyShopVendor, createCategory);
 
 // Admin only routes for update/delete
-router.put('/:id', verifyToken, checkRole('admin'), updateCategory);
-router.delete('/:id', verifyToken, checkRole('admin'), deleteCategory);
+router.put('/:id', verifyToken, checkRole('admin', 'sub_admin'), updateCategory);
+router.delete('/:id', verifyToken, checkRole('admin', 'sub_admin'), deleteCategory);
 
 export default router;
 

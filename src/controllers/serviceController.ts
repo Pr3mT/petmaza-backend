@@ -4,7 +4,7 @@ import Razorpay from 'razorpay';
 import ServiceRequest from '../models/ServiceRequest';
 import SiteSettings from '../models/SiteSettings';
 import { AppError } from '../middlewares/errorHandler';
-import { AuthRequest } from '../middlewares/auth';
+import { AuthRequest, isAdminRole } from '../middlewares/auth';
 import cloudinary from '../config/cloudinary';
 import {
   generateDnaRequestPdf,
@@ -40,7 +40,7 @@ const getStoredReportPublicId = (report: { publicId?: string; url?: string }) =>
 
 const canAccessServiceRequest = (serviceRequest: any, user: AuthRequest['user']) => {
   const isOwner = serviceRequest.customerId?.toString() === user?._id?.toString();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminRole(user?.role);
   const isMyShopVendor = user?.role === 'vendor' && user?.vendorType === 'MY_SHOP';
 
   return isOwner || isAdmin || isMyShopVendor;
@@ -398,7 +398,7 @@ export const downloadRequestPdf = async (req: AuthRequest, res: Response, next: 
     }
 
     const isOwner = serviceRequest.customerId?.toString() === req.user._id?.toString();
-    const isAdmin = req.user?.role === 'admin';
+    const isAdmin = req.isAdminRole(user?.role);
     const isMyShopVendor = req.user?.role === 'vendor' && req.user?.vendorType === 'MY_SHOP';
     if (!isOwner && !isAdmin && !isMyShopVendor) {
       return next(new AppError('Access denied', 403));
@@ -481,7 +481,7 @@ export const downloadResultCertificatePdf = async (req: AuthRequest, res: Respon
     }
 
     const isOwner = serviceRequest.customerId?.toString() === req.user._id?.toString();
-    const isAdmin = req.user?.role === 'admin';
+    const isAdmin = req.isAdminRole(user?.role);
     const isMyShopVendor = req.user?.role === 'vendor' && req.user?.vendorType === 'MY_SHOP';
     if (!isOwner && !isAdmin && !isMyShopVendor) {
       return next(new AppError('Access denied', 403));
