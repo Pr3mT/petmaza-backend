@@ -417,7 +417,7 @@ export const downloadRequestPdf = async (req: AuthRequest, res: Response, next: 
     }
 
     const isOwner = serviceRequest.customerId?.toString() === req.user._id?.toString();
-    const isAdmin = req.isAdminRole(user?.role);
+    const isAdmin = isAdminRole(req.user?.role);
     const isMyShopVendor = req.user?.role === 'vendor' && req.user?.vendorType === 'MY_SHOP';
     if (!isOwner && !isAdmin && !isMyShopVendor) {
       return next(new AppError('Access denied', 403));
@@ -504,7 +504,7 @@ export const downloadResultCertificatePdf = async (req: AuthRequest, res: Respon
     }
 
     const isOwner = serviceRequest.customerId?.toString() === req.user._id?.toString();
-    const isAdmin = req.isAdminRole(user?.role);
+    const isAdmin = isAdminRole(req.user?.role);
     const isMyShopVendor = req.user?.role === 'vendor' && req.user?.vendorType === 'MY_SHOP';
     if (!isOwner && !isAdmin && !isMyShopVendor) {
       return next(new AppError('Access denied', 403));
