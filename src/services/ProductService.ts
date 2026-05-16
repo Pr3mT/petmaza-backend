@@ -509,23 +509,33 @@ export class ProductService {
 
     // Handle single products (no variants)
     const mrp = data.mrp ?? existingProduct.mrp;
-    const sellingPercentage = data.sellingPercentage ?? existingProduct.sellingPercentage;
-    const purchasePercentage = data.purchasePercentage ?? existingProduct.purchasePercentage;
-    
-    // Only calculate if we have valid values
-    if (mrp && sellingPercentage !== undefined) {
-      const sp = mrp * (sellingPercentage / 100);
-      data.sellingPrice = Math.round(sp);
-      data.discount = Math.round(((mrp - data.sellingPrice) / mrp) * 100);
-    }
-    if (data.sellingPrice !== undefined) data.sellingPrice = Math.round(data.sellingPrice);
     if (mrp) data.mrp = Math.round(mrp);
 
-    if (mrp && purchasePercentage !== undefined) {
-      const pp = mrp * (purchasePercentage / 100);
-      data.purchasePrice = Math.round(pp);
+    // sellingPrice: if a percentage was explicitly sent by the client, derive price from it.
+    // Otherwise use the direct sellingPrice value — do NOT fall back to the stored percentage,
+    // because that would silently overwrite a price the admin just corrected.
+    if (data.sellingPercentage !== undefined && mrp) {
+      const sp = mrp * (data.sellingPercentage / 100);
+      data.sellingPrice = Math.round(sp);
+      data.discount = Math.round(((mrp - data.sellingPrice) / mrp) * 100);
+    } else if (data.sellingPrice !== undefined) {
+      data.sellingPrice = Math.round(data.sellingPrice);
+      if (mrp && data.sellingPrice > 0) {
+        data.sellingPercentage = Math.round((data.sellingPrice / mrp) * 100 * 100) / 100;
+        data.discount = Math.round(((mrp - data.sellingPrice) / mrp) * 100);
+      }
     }
-    if (data.purchasePrice !== undefined) data.purchasePrice = Math.round(data.purchasePrice);
+
+    // purchasePrice: same logic — prefer explicit percentage if sent, otherwise use direct price.
+    if (data.purchasePercentage !== undefined && mrp) {
+      const pp = mrp * (data.purchasePercentage / 100);
+      data.purchasePrice = Math.round(pp);
+    } else if (data.purchasePrice !== undefined) {
+      data.purchasePrice = Math.round(data.purchasePrice);
+      if (mrp && data.purchasePrice > 0) {
+        data.purchasePercentage = Math.round((data.purchasePrice / mrp) * 100 * 100) / 100;
+      }
+    }
 
     const product = await Product.findByIdAndUpdate(id, data, {
       new: true,
