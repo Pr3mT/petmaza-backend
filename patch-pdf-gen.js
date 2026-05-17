@@ -1,13 +1,29 @@
-import PDFDocument from 'pdfkit';
-import { PassThrough } from 'stream';
-import QRCode from 'qrcode';
-import sharp from 'sharp';
-import * as fs from 'fs';
-import * as path from 'path';
+// patch-pdf-gen.js - Rewrites generateDnaResultCertificatePdf to match reference image
+const fs = require('fs');
+const filePath = require('path').join(__dirname, 'src/services/dnaPdfGenerator.ts');
 
-// --- Load PetMaza logo PNG (tries JPEG first, then SVG) ----------------------
-async function loadLogoBuffer(sizePx: number): Promise<Buffer | null> {
-  // petmaza.jpeg is the actual circular brand logo - use it directly
+let content = fs.readFileSync(filePath, 'utf8');
+
+// ─── 1. Update loadLogoBuffer to try JPEG first ────────────────────────────
+const OLD_LOAD_LOGO_CANDIDATES = `  const candidates = [
+    path.resolve(__dirname, '../../../petmaza-frontend/public/petmaza-logo.svg'),
+    path.resolve(__dirname, '../../assets/petmaza-logo.svg'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      try {
+        const svgBuf = fs.readFileSync(p);
+        return await sharp(svgBuf, { density: 150 })
+          .resize(sizePx, sizePx, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+          .png()
+          .toBuffer();
+      } catch { /* fall through */ }
+    }
+  }
+  return null;
+}`;
+
+const NEW_LOAD_LOGO_BODY = `  // Try petmaza.jpeg first (most reliable, actual brand logo)
   const jpegPath = path.resolve(__dirname, '../../../petmaza-frontend/public/pets/petmaza.jpeg');
   if (fs.existsSync(jpegPath)) {
     try {
@@ -17,7 +33,6 @@ async function loadLogoBuffer(sizePx: number): Promise<Buffer | null> {
         .toBuffer();
     } catch { /* fall through */ }
   }
-  // Fallback: SVG candidates
   const candidates = [
     path.resolve(__dirname, '../../../petmaza-frontend/public/petmaza-logo.svg'),
     path.resolve(__dirname, '../../assets/petmaza-logo.svg'),
@@ -34,301 +49,23 @@ async function loadLogoBuffer(sizePx: number): Promise<Buffer | null> {
     }
   }
   return null;
+}`;
+
+if (content.includes(OLD_LOAD_LOGO_CANDIDATES)) {
+  content = content.replace(OLD_LOAD_LOGO_CANDIDATES, NEW_LOAD_LOGO_BODY);
+  console.log('✓ Updated loadLogoBuffer to try JPEG first');
+} else {
+  console.log('i loadLogoBuffer already updated, skipping');
 }
 
-// --- Load a pet PNG image from the frontend public/pets folder ---------------
-async function loadPetImage(name: string, sizePx: number): Promise<Buffer | null> {
-  const candidates = [
-    path.resolve(__dirname, `../../../petmaza-frontend/public/pets/${name}.png`),
-    path.resolve(__dirname, `../../assets/pets/${name}.png`),
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      try {
-        return await sharp(p)
-          .resize(sizePx, sizePx, { fit: 'cover', position: 'centre' })
-          .png()
-          .toBuffer();
-      } catch { /* fall through */ }
-    }
-  }
-  return null;
-}
+// ─── 2. Replace entire generateDnaResultCertificatePdf function ────────────
+const funcMarker = '\nexport async function generateDnaResultCertificatePdf(';
+const funcStart = content.indexOf(funcMarker);
+if (funcStart === -1) { console.error('ERROR: function not found'); process.exit(1); }
 
-// ─── Brand colours ────────────────────────────────────────────────────────────
-const PRIMARY    = '#0051a5';
-const GOLD       = '#e8a000';
-const TEXT_DARK  = '#1a1a2e';
-const TEXT_GREY  = '#555555';
-const BG_LIGHT   = '#f5f8ff';
-const SUCCESS    = '#16a34a';
-const DANGER     = '#dc2626';
+const before = content.substring(0, funcStart);
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface DnaRequestPdfData {
-  requestId: string;
-  customerName: string;
-  farm: string;
-  address: {
-    street: string;
-    city: string;
-    state: string;
-    pincode: string;
-  };
-  birds: Array<{
-    birdName?: string;
-    bandId: string;
-    species: string;
-    collectionDateTime: Date | string;
-    notes?: string;
-  }>;
-  totalAmount: number;
-  pricePerSample: number;
-  pickupRequested?: boolean;
-  printedCardRequested?: boolean;
-  pickupCharge?: number;
-  printedCardCharge?: number;
-  createdAt: Date | string;
-  extraNote?: string;
-}
-
-export interface DnaResultCertificateData {
-  requestId: string;
-  birdIndex: number;
-  birdName?: string;
-  bandId: string;
-  species: string;
-  dnaResult: 'male' | 'female' | 'inconclusive';
-  testDate: Date | string;
-  verificationUrl: string;
-  customerName: string;
-  farm: string;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const fmt = (d: Date | string) =>
-  new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
-
-const certNumber = (requestId: string, birdIndex: number) =>
-  `PML-DNA-${requestId.slice(-8).toUpperCase()}-B${birdIndex + 1}`;
-
-function drawHRule(doc: InstanceType<typeof PDFDocument>, color = '#dddddd', width = 1) {
-  const { left, right } = doc.page.margins;
-  const pageWidth = doc.page.width - left - right;
-  doc
-    .strokeColor(color)
-    .lineWidth(width)
-    .moveTo(left, doc.y)
-    .lineTo(left + pageWidth, doc.y)
-    .stroke()
-    .moveDown(0.4);
-}
-
-function drawRow(
-  doc: InstanceType<typeof PDFDocument>,
-  label: string,
-  value: string,
-  y: number,
-  lx: number,
-  rx: number,
-) {
-  doc.fontSize(9).fillColor(TEXT_GREY).text(label, lx, y);
-  doc.fontSize(9).fillColor(TEXT_DARK).text(value, rx, y);
-}
-
-// ─── 1. Customer Request PDF ──────────────────────────────────────────────────
-
-export async function generateDnaRequestPdf(data: DnaRequestPdfData): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ size: 'A4', margin: 50, autoFirstPage: true });
-      const buffers: Buffer[] = [];
-      const pass = new PassThrough();
-      pass.on('data', (c: Buffer) => buffers.push(c));
-      pass.on('end', () => resolve(Buffer.concat(buffers)));
-      pass.on('error', reject);
-      doc.pipe(pass);
-
-      const L = doc.page.margins.left;  // 50
-      const R = doc.page.width - doc.page.margins.right; // 545
-      const W = R - L;
-
-      // ── Header band ──────────────────────────────────────────────────────────
-      doc.rect(0, 0, doc.page.width, 90).fill(PRIMARY);
-      doc.fontSize(28).fillColor('#ffffff').font('Helvetica-Bold')
-        .text('PETMAZA', L, 22, { align: 'center', width: W });
-      doc.fontSize(11).fillColor('#c8daff').font('Helvetica')
-        .text('Bird DNA Testing – Sample Submission Form', L, 58, { align: 'center', width: W });
-
-      doc.y = 110;
-
-      // ── Request meta ─────────────────────────────────────────────────────────
-      doc.rect(L, doc.y, W, 52).fillAndStroke(BG_LIGHT, PRIMARY);
-      const metaY = doc.y + 10;
-      doc.fontSize(9).fillColor(TEXT_GREY).font('Helvetica')
-        .text('Request ID:', L + 12, metaY);
-      doc.fontSize(9).fillColor(TEXT_DARK).font('Helvetica-Bold')
-        .text(`#${data.requestId.slice(-10).toUpperCase()}`, L + 95, metaY);
-      doc.fontSize(9).fillColor(TEXT_GREY).font('Helvetica')
-        .text('Submitted On:', L + 12, metaY + 16);
-      doc.fontSize(9).fillColor(TEXT_DARK).font('Helvetica')
-        .text(fmt(data.createdAt), L + 95, metaY + 16);
-      doc.fontSize(9).fillColor(TEXT_GREY).font('Helvetica')
-        .text('Total Amount:', R - 180, metaY);
-      doc.fontSize(11).fillColor(PRIMARY).font('Helvetica-Bold')
-        .text(`₹${data.totalAmount}`, R - 180, metaY + 12);
-      doc.y = metaY + 62;
-
-      doc.moveDown(0.6);
-
-      // ── Owner / Farm info ────────────────────────────────────────────────────
-      doc.fontSize(12).fillColor(PRIMARY).font('Helvetica-Bold').text('Owner & Farm Details').moveDown(0.3);
-      drawHRule(doc, GOLD, 1.5);
-
-      const lx = L + 10;
-      const rx = L + 160;
-      let y = doc.y;
-      drawRow(doc, 'Customer Name :', data.customerName, y, lx, rx);           y += 18;
-      drawRow(doc, 'Farm / Loft     :', data.farm, y, lx, rx);                  y += 18;
-      drawRow(doc, 'Pickup Address  :', data.address.street, y, lx, rx);        y += 18;
-      drawRow(doc, '', `${data.address.city}, ${data.address.state} – ${data.address.pincode}`, y, lx, rx);
-      doc.y = y + 22;
-
-      if (data.extraNote) {
-        doc.fontSize(9).fillColor(TEXT_GREY).font('Helvetica')
-          .text(`Note: ${data.extraNote}`, lx, doc.y);
-        doc.y += 18;
-      }
-
-      doc.moveDown(0.8);
-
-      // ── Birds table ───────────────────────────────────────────────────────────
-      doc.fontSize(12).fillColor(PRIMARY).font('Helvetica-Bold')
-        .text(`Bird Samples (${data.birds.length} bird${data.birds.length > 1 ? 's' : ''})`).moveDown(0.3);
-      drawHRule(doc, GOLD, 1.5);
-
-      // Table header
-      const col = { no: L, name: L + 32, band: L + 130, species: L + 220, date: L + 340, price: L + 440 };
-      const tHeaderY = doc.y;
-      doc.rect(L, tHeaderY, W, 20).fill(PRIMARY);
-      doc.fontSize(8.5).fillColor('#ffffff').font('Helvetica-Bold')
-        .text('#',           col.no + 5,   tHeaderY + 5, { width: 28 })
-        .text('Bird Name',   col.name,     tHeaderY + 5, { width: 90 })
-        .text('Band ID',     col.band,     tHeaderY + 5, { width: 85 })
-        .text('Species',     col.species,  tHeaderY + 5, { width: 115 })
-        .text('Collection',  col.date,     tHeaderY + 5, { width: 95 })
-        .text('Amount',      col.price,    tHeaderY + 5, { width: 55, align: 'right' });
-
-      doc.y = tHeaderY + 22;
-
-      data.birds.forEach((bird, idx) => {
-        const rowY  = doc.y;
-        const shade = idx % 2 === 0 ? '#fafafa' : '#ffffff';
-        doc.rect(L, rowY, W, 22).fill(shade);
-        doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
-          .text(String(idx + 1),                                 col.no + 5,  rowY + 5, { width: 28 })
-          .text(bird.birdName || `Bird ${idx + 1}`,              col.name,    rowY + 5, { width: 90 })
-          .text(bird.bandId,                                      col.band,    rowY + 5, { width: 85 })
-          .text(bird.species,                                     col.species, rowY + 5, { width: 115 })
-          .text(fmt(bird.collectionDateTime),                     col.date,    rowY + 5, { width: 95 })
-          .text(`₹${data.pricePerSample}`,                       col.price,   rowY + 5, { width: 55, align: 'right' });
-
-        if (bird.notes) {
-          doc.y = rowY + 22;
-          doc.rect(L, doc.y, W, 14).fill(shade);
-          doc.fontSize(7.5).fillColor(TEXT_GREY).font('Helvetica-Oblique')
-            .text(`  Note: ${bird.notes}`, col.name, doc.y + 2, { width: W - 35 });
-          doc.y += 16;
-        } else {
-          doc.y = rowY + 24;
-        }
-      });
-
-      // Subtotal for birds
-      const birdsSubtotal = data.birds.length * data.pricePerSample;
-      doc.rect(L, doc.y, W, 20).fill('#f3f4f6');
-      doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
-        .text(
-          `Subtotal (${data.birds.length} bird${data.birds.length > 1 ? 's' : ''} � ?${data.pricePerSample})`,
-          col.name, doc.y + 5, { width: 290 },
-        )
-        .text(`?${birdsSubtotal}`, col.price, doc.y + 5, { width: 55, align: 'right' });
-      doc.y += 22;
-
-      // Add-on: Doorstep pickup
-      if (data.pickupRequested && (data.pickupCharge || 0) > 0) {
-        doc.rect(L, doc.y, W, 20).fill('#ffffff');
-        doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
-          .text('Doorstep Pickup Service', col.name, doc.y + 5, { width: 290 })
-          .text(`?${data.pickupCharge}`, col.price, doc.y + 5, { width: 55, align: 'right' });
-        doc.y += 22;
-      }
-
-      // Add-on: Printed cards (per bird)
-      if (data.printedCardRequested && (data.printedCardCharge || 0) > 0) {
-        const perCard = data.birds.length > 0 ? Math.round((data.printedCardCharge || 0) / data.birds.length) : 0;
-        doc.rect(L, doc.y, W, 20).fill('#f3f4f6');
-        doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
-          .text(
-            `Printed DNA Cards (${data.birds.length} � ?${perCard})`,
-            col.name, doc.y + 5, { width: 290 },
-          )
-          .text(`?${data.printedCardCharge}`, col.price, doc.y + 5, { width: 55, align: 'right' });
-        doc.y += 22;
-      }
-
-      // Total row
-      doc.rect(L, doc.y, W, 22).fill('#e8f0fe');
-      doc.fontSize(9).fillColor(TEXT_DARK).font('Helvetica-Bold')
-        .text('Total Amount Payable', col.name, doc.y + 6, { width: 290 })
-        .text(`?${data.totalAmount}`, col.price, doc.y + 6, { width: 55, align: 'right' });
-      doc.y += 30;
-
-      doc.moveDown(1);
-
-      // ── Instructions ──────────────────────────────────────────────────────────
-      doc.fontSize(11).fillColor(PRIMARY).font('Helvetica-Bold').text('Instructions for Sample Submission').moveDown(0.3);
-      drawHRule(doc, GOLD, 1.5);
-
-      const steps = [
-        'Print this form and place it inside the envelope along with your samples.',
-        'Collect blood / feather samples separately for each bird in labelled zip bags.',
-        'Write the Bird Band ID on each sample bag.',
-        'Seal all samples and this form inside the envelope.',
-        'Send the envelope to Petmaza Lab, Nagpur (address on website).',
-        'Once received, you will be notified and the status will update to "Received".',
-      ];
-      steps.forEach((step, i) => {
-        doc.fontSize(9).fillColor(TEXT_DARK).font('Helvetica')
-          .text(`${i + 1}.  ${step}`, lx, doc.y, { width: W - 10 }).moveDown(0.35);
-      });
-
-      doc.moveDown(0.6);
-      doc.rect(L, doc.y, W, 30).fill('#fff8e1');
-      doc.fontSize(9).fillColor('#9a6000').font('Helvetica-Bold')
-        .text('⚠  Keep a copy of this form for your records. Your Request ID is required for tracking.', lx + 5, doc.y + 9, { width: W - 10 });
-      doc.y += 38;
-
-      // ── Footer ────────────────────────────────────────────────────────────────
-      const footerY = doc.page.height - 55;
-      doc.rect(0, footerY, doc.page.width, 55).fill(PRIMARY);
-      doc.fontSize(8).fillColor('#c8daff').font('Helvetica')
-        .text('Petmaza DNA Lab  |  lab@petmaza.com  |  www.petmaza.com', 0, footerY + 10, { align: 'center', width: doc.page.width })
-        .text(`Generated on ${new Date().toLocaleDateString('en-IN')}  ·  Request #${data.requestId.slice(-10).toUpperCase()}`, 0, footerY + 25, { align: 'center', width: doc.page.width });
-
-      doc.end();
-    } catch (err) {
-      reject(err);
-    }
-  });
-}
-
-// ─── 2. DNA Result Certificate PDF (Landscape card style) ────────────────────
-
-// --- 2. DNA Result Certificate PDF (Page1=Promo, Page2=Certificate) ----------
-
+const NEW_FUNCTION = `
 export async function generateDnaResultCertificatePdf(
   data: DnaResultCertificateData,
 ): Promise<Buffer> {
@@ -762,3 +499,9 @@ export async function generateDnaResultCertificatePdf(
     }
   });
 }
+`;
+
+content = before + NEW_FUNCTION;
+fs.writeFileSync(filePath, content, 'utf8');
+console.log('✓ Rewrote generateDnaResultCertificatePdf');
+console.log('Total file size:', content.length, 'chars');
