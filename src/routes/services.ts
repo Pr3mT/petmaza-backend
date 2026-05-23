@@ -14,6 +14,7 @@ import {
   downloadRequestPdf,
   setDnaResult,
   downloadResultCertificatePdf,
+  downloadCertificateCardPdf,
   createDnaPaymentOrder,
   updateServicePayment,
   verifyDnaResult,
@@ -49,6 +50,8 @@ router.get('/my', verifyToken, getMyServiceRequests);
 // PDF downloads (customer + admin)
 router.get('/:id/request-pdf', verifyToken, downloadRequestPdf);
 router.get('/:id/birds/:birdIndex/result-certificate', verifyToken, downloadResultCertificatePdf);
+// Admin-only: certificate card with static PetMaza QR (no verification URL)
+router.get('/:id/birds/:birdIndex/certificate-card', verifyToken, checkRole('admin', 'sub_admin'), downloadCertificateCardPdf);
 router.get('/:id/birds/:birdIndex/reports/:reportIndex/download-url', verifyToken, getLabReportDownloadUrl);
 
 // Admin / MY_SHOP Vendor: manage requests

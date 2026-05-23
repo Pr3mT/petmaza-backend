@@ -83,10 +83,12 @@ export interface DnaResultCertificateData {
   bandId: string;
   species: string;
   dnaResult: 'male' | 'female' | 'inconclusive';
+  collectionDate: Date | string;
   testDate: Date | string;
   verificationUrl: string;
   customerName: string;
   farm: string;
+  useStaticQr?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -335,7 +337,8 @@ export async function generateDnaResultCertificatePdf(
       const resultColor = data.dnaResult === 'male'   ? '#374151'
         : data.dnaResult === 'female' ? '#374151' : '#374151';
 
-      const qrBuffer: Buffer = await QRCode.toBuffer(data.verificationUrl, {
+      const qrValue = data.useStaticQr ? 'https://www.petmaza.com' : data.verificationUrl;
+      const qrBuffer: Buffer = await QRCode.toBuffer(qrValue, {
         errorCorrectionLevel: 'H',
         width: 130,
         margin: 1,
@@ -760,7 +763,7 @@ export async function generateDnaResultCertificatePdf(
         .lineWidth(0.8).strokeColor(GOLD).stroke();
       doc.image(qrBuffer, qrFrameX + 7, qrFrameY + 7, { width: qrSZ, height: qrSZ });
       doc.font('Helvetica-Bold').fontSize(7.5).fillColor(MUTED)
-        .text('SCAN TO VERIFY', qrFrameX, qrFrameY + qrSZ + 9, {
+        .text(data.useStaticQr ? 'SCAN TO VISIT' : 'SCAN TO VERIFY', qrFrameX, qrFrameY + qrSZ + 9, {
           width: qrFrameW, align: 'center', lineBreak: false, characterSpacing: 1.2,
         });
 
@@ -790,10 +793,15 @@ export async function generateDnaResultCertificatePdf(
       drawFieldWithIcon('person',    'Submitted By',   data.customerName, COL1_X, FIELDS_Y + 2 * ROW_H);
       drawFieldWithIcon('bird',      'Species',        data.species,      COL1_X, FIELDS_Y + 3 * ROW_H);
 
-      drawFieldWithIcon('calendar',  'Received Date',  fmt(data.testDate),                          COL2_X, FIELDS_Y + 0 * ROW_H);
-      drawFieldWithIcon('bird',      'Bird Name',      data.birdName || 'N/A',                      COL2_X, FIELDS_Y + 1 * ROW_H);
-      drawFieldWithIcon('drop',      'Specimen',       'Feather',                                   COL2_X, FIELDS_Y + 2 * ROW_H);
-      drawFieldWithIcon('shield',    'Cert ID',        certNumber(data.requestId, data.birdIndex),  COL2_X, FIELDS_Y + 3 * ROW_H);
+      drawFieldWithIcon('calendar',  'Received Date',  fmt(data.collectionDate || data.testDate),   COL2_X, FIELDS_Y + 0 * ROW_H);
+      if (data.birdName && data.birdName.trim()) {
+        drawFieldWithIcon('bird',    'Bird Name',      data.birdName.trim(),                        COL2_X, FIELDS_Y + 1 * ROW_H);
+        drawFieldWithIcon('drop',    'Specimen',       'Feather',                                   COL2_X, FIELDS_Y + 2 * ROW_H);
+        drawFieldWithIcon('shield',  'Cert ID',        certNumber(data.requestId, data.birdIndex),  COL2_X, FIELDS_Y + 3 * ROW_H);
+      } else {
+        drawFieldWithIcon('drop',    'Specimen',       'Feather',                                   COL2_X, FIELDS_Y + 1 * ROW_H);
+        drawFieldWithIcon('shield',  'Cert ID',        certNumber(data.requestId, data.birdIndex),  COL2_X, FIELDS_Y + 2 * ROW_H);
+      }
 
       // "DNA SEXING RESULT" label with side lines
       const RES_LBL_Y = FIELDS_Y + 4 * ROW_H + 14;

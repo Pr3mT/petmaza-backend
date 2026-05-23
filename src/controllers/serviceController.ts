@@ -524,6 +524,8 @@ export const downloadResultCertificatePdf = async (req: AuthRequest, res: Respon
     const frontendUrl = process.env.FRONTEND_URL || 'https://petmaza.com';
     const verificationUrl = `${frontendUrl}/dna-verify?requestId=${id}&birdIndex=${birdPosition}`;
 
+    console.log('[PDF Debug] birdName:', JSON.stringify(bird.birdName), '| collectionDateTime:', bird.collectionDateTime, '| updatedAt:', serviceRequest.updatedAt);
+
     const pdfBuffer = await generateDnaResultCertificatePdf({
       requestId: id,
       birdIndex: birdPosition,
@@ -531,6 +533,7 @@ export const downloadResultCertificatePdf = async (req: AuthRequest, res: Respon
       bandId: bird.bandId,
       species: bird.species,
       dnaResult,
+      collectionDate: bird.collectionDateTime,
       testDate: serviceRequest.updatedAt,
       verificationUrl,
       customerName: serviceRequest.customerName,
@@ -538,6 +541,55 @@ export const downloadResultCertificatePdf = async (req: AuthRequest, res: Respon
     });
 
     const filename = `dna-certificate-${id.slice(-8)}-bird${birdPosition + 1}.pdf`;
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Admin: Download DNA certificate card with static PetMaza QR ─────────────
+
+export const downloadCertificateCardPdf = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id, birdIndex } = req.params;
+
+    const serviceRequest = await ServiceRequest.findById(id);
+    if (!serviceRequest) {
+      return next(new AppError('Service request not found', 404));
+    }
+
+    const birdPosition = parsePosition(birdIndex, 'bird index');
+    const bird: any = serviceRequest.birds?.[birdPosition];
+    if (!bird) {
+      return next(new AppError('Bird not found in this request', 404));
+    }
+
+    const dnaResult = bird.dnaResult as 'male' | 'female' | 'inconclusive' | null;
+    if (!dnaResult) {
+      return next(new AppError('DNA result has not been set yet', 400));
+    }
+
+    const pdfBuffer = await generateDnaResultCertificatePdf({
+      requestId: id,
+      birdIndex: birdPosition,
+      birdName: bird.birdName,
+      bandId: bird.bandId,
+      species: bird.species,
+      dnaResult,
+      collectionDate: bird.collectionDateTime,
+      testDate: serviceRequest.updatedAt,
+      verificationUrl: '',
+      customerName: serviceRequest.customerName,
+      farm: serviceRequest.farm,
+      useStaticQr: true,
+    });
+
+    const filename = `dna-card-${id.slice(-8)}-bird${birdPosition + 1}.pdf`;
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${filename}"`,
