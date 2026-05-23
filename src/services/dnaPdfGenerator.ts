@@ -7,9 +7,12 @@ import * as path from 'path';
 // --- Load PetMaza logo once at module load — PDFKit handles JPEG/PNG natively ---
 const LOGO_BUFFER: Buffer | null = (() => {
   const candidates = [
-    // __dirname-based (relative to this file in src/services/)
+    // PRIMARY: logo co-located inside backend (src/services/ → ../../public/)
+    path.resolve(__dirname, '../../public/petmaza-logo.jpeg'),
+    // __dirname-based fallbacks (relative to this file in src/services/)
     path.resolve(__dirname, '../../../petmaza-frontend/public/pets/petmaza.jpeg'),
     // process.cwd()-based (server started from petmaza-backend/)
+    path.resolve(process.cwd(), 'public/petmaza-logo.jpeg'),
     path.resolve(process.cwd(), '../petmaza-frontend/public/pets/petmaza.jpeg'),
     path.resolve(process.cwd(), 'petmaza-frontend/public/pets/petmaza.jpeg'),
     // PNG fallbacks
