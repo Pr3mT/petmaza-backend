@@ -4,21 +4,35 @@ import QRCode from 'qrcode';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// --- Load PetMaza logo — PDFKit handles JPEG/PNG natively, no sharp needed ---
-function loadLogoBuffer(_sizePx: number): Buffer | null {
+// --- Load PetMaza logo once at module load — PDFKit handles JPEG/PNG natively ---
+const LOGO_BUFFER: Buffer | null = (() => {
   const candidates = [
+    // __dirname-based (relative to this file in src/services/)
     path.resolve(__dirname, '../../../petmaza-frontend/public/pets/petmaza.jpeg'),
+    // process.cwd()-based (server started from petmaza-backend/)
+    path.resolve(process.cwd(), '../petmaza-frontend/public/pets/petmaza.jpeg'),
+    path.resolve(process.cwd(), 'petmaza-frontend/public/pets/petmaza.jpeg'),
+    // PNG fallbacks
     path.resolve(__dirname, '../../../petmaza-frontend/public/logo512.png'),
-    path.resolve(__dirname, '../../../petmaza-frontend/public/logo192.png'),
+    path.resolve(process.cwd(), '../petmaza-frontend/public/logo512.png'),
   ];
   for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      try {
-        return fs.readFileSync(p);
-      } catch { /* fall through */ }
+    try {
+      if (fs.existsSync(p)) {
+        const buf = fs.readFileSync(p);
+        console.log('[PetMaza DNA] Logo loaded from:', p, '(' + buf.length + ' bytes)');
+        return buf;
+      }
+    } catch (e) {
+      console.error('[PetMaza DNA] Failed to read logo at:', p, e);
     }
   }
+  console.warn('[PetMaza DNA] Logo not found — tried:', candidates);
   return null;
+})();
+
+function loadLogoBuffer(_sizePx: number): Buffer | null {
+  return LOGO_BUFFER;
 }
 
 // ─── Brand colours ────────────────────────────────────────────────────────────
