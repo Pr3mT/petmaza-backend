@@ -1,35 +1,20 @@
-import PDFDocument from 'pdfkit';
+﻿import PDFDocument from 'pdfkit';
 import { PassThrough } from 'stream';
 import QRCode from 'qrcode';
-import sharp from 'sharp';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// --- Load PetMaza logo PNG (tries JPEG first, then SVG) ----------------------
-async function loadLogoBuffer(sizePx: number): Promise<Buffer | null> {
-  // petmaza.jpeg is the actual circular brand logo - use it directly
-  const jpegPath = path.resolve(__dirname, '../../../petmaza-frontend/public/pets/petmaza.jpeg');
-  if (fs.existsSync(jpegPath)) {
-    try {
-      return await sharp(jpegPath)
-        .resize(sizePx, sizePx, { fit: 'cover', position: 'centre' })
-        .png()
-        .toBuffer();
-    } catch { /* fall through */ }
-  }
-  // Fallback: SVG candidates
+// --- Load PetMaza logo — PDFKit handles JPEG/PNG natively, no sharp needed ---
+function loadLogoBuffer(_sizePx: number): Buffer | null {
   const candidates = [
-    path.resolve(__dirname, '../../../petmaza-frontend/public/petmaza-logo.svg'),
-    path.resolve(__dirname, '../../assets/petmaza-logo.svg'),
+    path.resolve(__dirname, '../../../petmaza-frontend/public/pets/petmaza.jpeg'),
+    path.resolve(__dirname, '../../../petmaza-frontend/public/logo512.png'),
+    path.resolve(__dirname, '../../../petmaza-frontend/public/logo192.png'),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) {
       try {
-        const svgBuf = fs.readFileSync(p);
-        return await sharp(svgBuf, { density: 150 })
-          .resize(sizePx, sizePx, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-          .png()
-          .toBuffer();
+        return fs.readFileSync(p);
       } catch { /* fall through */ }
     }
   }
@@ -159,7 +144,7 @@ export async function generateDnaRequestPdf(data: DnaRequestPdfData): Promise<Bu
       doc.fontSize(9).fillColor(TEXT_GREY).font('Helvetica')
         .text('Total Amount:', R - 180, metaY);
       doc.fontSize(11).fillColor(PRIMARY).font('Helvetica-Bold')
-        .text(`₹${data.totalAmount}`, R - 180, metaY + 12);
+        .text(`Rs.${data.totalAmount}`, R - 180, metaY + 12);
       doc.y = metaY + 62;
 
       doc.moveDown(0.6);
@@ -214,7 +199,7 @@ export async function generateDnaRequestPdf(data: DnaRequestPdfData): Promise<Bu
           .text(bird.bandId,                                      col.band,    rowY + 5, { width: 85 })
           .text(bird.species,                                     col.species, rowY + 5, { width: 115 })
           .text(fmt(bird.collectionDateTime),                     col.date,    rowY + 5, { width: 95 })
-          .text(`₹${data.pricePerSample}`,                       col.price,   rowY + 5, { width: 55, align: 'right' });
+          .text(`Rs.${data.pricePerSample}`,                      col.price,   rowY + 5, { width: 55, align: 'right' });
 
         if (bird.notes) {
           doc.y = rowY + 22;
@@ -232,10 +217,10 @@ export async function generateDnaRequestPdf(data: DnaRequestPdfData): Promise<Bu
       doc.rect(L, doc.y, W, 20).fill('#f3f4f6');
       doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
         .text(
-          `Subtotal (${data.birds.length} bird${data.birds.length > 1 ? 's' : ''} � ?${data.pricePerSample})`,
+          `Subtotal (${data.birds.length} bird${data.birds.length > 1 ? 's' : ''} x Rs.${data.pricePerSample})`,
           col.name, doc.y + 5, { width: 290 },
         )
-        .text(`?${birdsSubtotal}`, col.price, doc.y + 5, { width: 55, align: 'right' });
+        .text(`Rs.${birdsSubtotal}`, col.price, doc.y + 5, { width: 55, align: 'right' });
       doc.y += 22;
 
       // Add-on: Doorstep pickup
@@ -243,7 +228,7 @@ export async function generateDnaRequestPdf(data: DnaRequestPdfData): Promise<Bu
         doc.rect(L, doc.y, W, 20).fill('#ffffff');
         doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
           .text('Doorstep Pickup Service', col.name, doc.y + 5, { width: 290 })
-          .text(`?${data.pickupCharge}`, col.price, doc.y + 5, { width: 55, align: 'right' });
+          .text(`Rs.${data.pickupCharge}`, col.price, doc.y + 5, { width: 55, align: 'right' });
         doc.y += 22;
       }
 
@@ -253,10 +238,10 @@ export async function generateDnaRequestPdf(data: DnaRequestPdfData): Promise<Bu
         doc.rect(L, doc.y, W, 20).fill('#f3f4f6');
         doc.fontSize(8.5).fillColor(TEXT_DARK).font('Helvetica')
           .text(
-            `Printed DNA Cards (${data.birds.length} � ?${perCard})`,
+            `Printed DNA Cards (${data.birds.length} x Rs.${perCard})`,
             col.name, doc.y + 5, { width: 290 },
           )
-          .text(`?${data.printedCardCharge}`, col.price, doc.y + 5, { width: 55, align: 'right' });
+          .text(`Rs.${data.printedCardCharge}`, col.price, doc.y + 5, { width: 55, align: 'right' });
         doc.y += 22;
       }
 
@@ -264,7 +249,7 @@ export async function generateDnaRequestPdf(data: DnaRequestPdfData): Promise<Bu
       doc.rect(L, doc.y, W, 22).fill('#e8f0fe');
       doc.fontSize(9).fillColor(TEXT_DARK).font('Helvetica-Bold')
         .text('Total Amount Payable', col.name, doc.y + 6, { width: 290 })
-        .text(`?${data.totalAmount}`, col.price, doc.y + 6, { width: 55, align: 'right' });
+        .text(`Rs.${data.totalAmount}`, col.price, doc.y + 6, { width: 55, align: 'right' });
       doc.y += 30;
 
       doc.moveDown(1);
@@ -339,8 +324,8 @@ export async function generateDnaResultCertificatePdf(
         margin: 1,
         color: { dark: NAVY_DEEP, light: PAPER },
       });
-      const logoPng96  = await loadLogoBuffer(96);
-      const logoPng240 = await loadLogoBuffer(240);
+      const logoPng96  = loadLogoBuffer(96);
+      const logoPng240 = loadLogoBuffer(240);
 
       const doc = new PDFDocument({ size: [PW, PH], margin: 0, autoFirstPage: true });
       const buffers: Buffer[] = [];
@@ -789,8 +774,8 @@ export async function generateDnaResultCertificatePdf(
       drawFieldWithIcon('bird',      'Species',        data.species,      COL1_X, FIELDS_Y + 3 * ROW_H);
 
       drawFieldWithIcon('calendar',  'Received Date',  fmt(data.testDate),                          COL2_X, FIELDS_Y + 0 * ROW_H);
-      drawFieldWithIcon('clipboard', 'Report Date',    fmt(data.testDate),                          COL2_X, FIELDS_Y + 1 * ROW_H);
-      drawFieldWithIcon('drop',      'Specimen',       'Feather',                                     COL2_X, FIELDS_Y + 2 * ROW_H);
+      drawFieldWithIcon('bird',      'Bird Name',      data.birdName || 'N/A',                      COL2_X, FIELDS_Y + 1 * ROW_H);
+      drawFieldWithIcon('drop',      'Specimen',       'Feather',                                   COL2_X, FIELDS_Y + 2 * ROW_H);
       drawFieldWithIcon('shield',    'Cert ID',        certNumber(data.requestId, data.birdIndex),  COL2_X, FIELDS_Y + 3 * ROW_H);
 
       // "DNA SEXING RESULT" label with side lines
