@@ -589,7 +589,7 @@ export const downloadCertificateCardPdf = async (req: AuthRequest, res: Response
       useStaticQr: true,
     });
 
-    const filename = `dna-card-${id.slice(-8)}-bird${birdPosition + 1}.pdf`;
+    const filename = `dna-card-${id.slice(-8)}-bird${birdPosition + 1}-CR80.pdf`;
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${filename}"`,

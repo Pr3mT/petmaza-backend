@@ -1,6 +1,7 @@
 ﻿import PDFDocument from 'pdfkit';
 import { PassThrough } from 'stream';
 import QRCode from 'qrcode';
+import sharp from 'sharp';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -34,9 +35,6 @@ const LOGO_BUFFER: Buffer | null = (() => {
   return null;
 })();
 
-function loadLogoBuffer(_sizePx: number): Buffer | null {
-  return LOGO_BUFFER;
-}
 
 // ─── Brand colours ────────────────────────────────────────────────────────────
 const PRIMARY    = '#0051a5';
@@ -89,6 +87,8 @@ export interface DnaResultCertificateData {
   customerName: string;
   farm: string;
   useStaticQr?: boolean;
+  printReady?: boolean;
+  skipCover?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -319,8 +319,28 @@ export async function generateDnaResultCertificatePdf(
 ): Promise<Buffer> {
   return new Promise(async (resolve, reject) => {
     try {
+      // -- Drawing coordinate system (logical canvas) ------------------------
       const PW = 794;
       const PH = 540;
+
+      // print-ready = single-page, 300 DPI CR80 equivalent (1013×638 pts).
+      // When card printers rasterize at 1 pt = 1 px they get 300 DPI on the card.
+      // regular   = 2-page A4 landscape (cover + certificate) for screen / inkjet.
+      const isPrintReady = !!data.printReady;
+
+      const PAGE_W = isPrintReady ? 1013 : 841.89;   // CR80@300DPI  vs  A4-landscape
+      const PAGE_H = isPrintReady ? 638  : 595.28;
+      // uniform scale so the 794×540 logical canvas fills the output page
+      const S        = isPrintReady ? PAGE_H / PH : PAGE_W / PW;  // 1.181 or 1.060
+      const OFFSET_X = isPrintReady ? (PAGE_W - PW * S) / 2 : 0;  // x-pillarbox for CR80
+      const OFFSET_Y = isPrintReady ? 0 : (PAGE_H - PH * S) / 2;  // y-centre for A4
+
+      // Helper: called once per page right after creation/addPage
+      const applyPageTransform = () => {
+        (doc.page as any).width  = PW;
+        (doc.page as any).height = PH;
+        doc.translate(OFFSET_X, OFFSET_Y).scale(S);
+      };
 
       // -- Brand palette -----------------------------------------------------
       const NAVY      = '#0d1b3e';
@@ -340,20 +360,33 @@ export async function generateDnaResultCertificatePdf(
       const qrValue = data.useStaticQr ? 'https://www.petmaza.com' : data.verificationUrl;
       const qrBuffer: Buffer = await QRCode.toBuffer(qrValue, {
         errorCorrectionLevel: 'H',
-        width: 130,
+        width: 2400,                                         // high-res for card print quality
         margin: 1,
         color: { dark: NAVY_DEEP, light: PAPER },
       });
-      const logoPng96  = loadLogoBuffer(96);
-      const logoPng240 = loadLogoBuffer(240);
+      // Upscale logo to 2400px PNG — embeds at print resolution, pushes PDF to 4-5 MB
+      // Upscale logo to high-res RGB PNG (no alpha) — forces large XObject in PDF for print quality
+      const logoHighRes: Buffer | null = LOGO_BUFFER
+        ? await sharp(LOGO_BUFFER)
+            .resize(2400, 2400, { fit: 'cover' })
+            .flatten({ background: '#ffffff' })
+            .png({ compressionLevel: 9 })
+            .toBuffer()
+        : null;
+      console.log('[PDF] logoHighRes size:', logoHighRes ? logoHighRes.length : 'null', 'bytes');
+      const logoPng96  = logoHighRes;
+      const logoPng240 = logoHighRes;
 
-      const doc = new PDFDocument({ size: [PW, PH], margin: 0, autoFirstPage: true });
+      const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0, autoFirstPage: true });
       const buffers: Buffer[] = [];
       const pass = new PassThrough();
       pass.on('data', (c: Buffer) => buffers.push(c));
       pass.on('end', () => resolve(Buffer.concat(buffers)));
       pass.on('error', reject);
       doc.pipe(pass);
+
+      // -- Print-ready transform ---------------------------------------------
+      applyPageTransform();
 
       // ====================================================================
       //  ICON LIBRARY — simple geometric drawings, all sized by `s`
@@ -667,9 +700,10 @@ export async function generateDnaResultCertificatePdf(
       };
 
       // ====================================================================
-      //  PAGE 1 — COVER
+      //  PAGE 1 — COVER  (skipped when skipCover or printReady)
       // ====================================================================
-
+      const skipCover = !!data.skipCover || !!isPrintReady;
+      if (!skipCover) {
       doc.rect(0, 0, PW, PH).fill(CREAM);
 
       // Big centered PetMaza logo
@@ -730,11 +764,13 @@ export async function generateDnaResultCertificatePdf(
 
       drawFooterBand();
 
-      // ====================================================================
-      //  PAGE 2 — CERTIFICATE CARD
-      // ====================================================================
+      doc.addPage({ size: [PAGE_W, PAGE_H], margin: 0 });
+      applyPageTransform();
+      } // end cover-page block
 
-      doc.addPage({ size: [PW, PH], margin: 0 });
+      // ====================================================================
+      //  PAGE 2 — CERTIFICATE CARD  (only page in print-ready / card-print mode)
+      // ====================================================================
 
       doc.rect(0, 0, PW, PH).fill(CREAM);
       drawHeaderBand();
