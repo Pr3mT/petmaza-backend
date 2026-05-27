@@ -14,6 +14,7 @@ import {
   adminUpdateOrderStatus,
   adminAssignOrderToVendor,
   getOrderShippingDetails,
+  adminProcessRefund,
 } from '../controllers/orderController';
 import { verifyToken, checkRole } from '../middlewares/auth';
 import { validateCartPrices } from '../middlewares/validateCartPrices';
@@ -42,6 +43,7 @@ router.get('/vendor/:id', verifyToken, checkRole('vendor'), getVendorOrderDetail
 // Admin routes - for order management
 router.put('/admin/:id/status', verifyToken, checkRole('admin', 'sub_admin'), adminUpdateOrderStatus);
 router.put('/admin/:id/assign', verifyToken, checkRole('admin', 'sub_admin'), adminAssignOrderToVendor);
+router.post('/admin/:id/process-refund', verifyToken, checkRole('admin', 'sub_admin'), adminProcessRefund);
 router.get('/admin/:id/shipping-details', verifyToken, checkRole('admin', 'sub_admin'), getOrderShippingDetails);
 
 export default router;

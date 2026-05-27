@@ -486,6 +486,7 @@ export const initiateRefund = async (
     logger.info(`[PrimeVendor] Refund initiated for order ${id} by vendor ${vendor_id}`);
 
     // Send refund email to customer
+    let emailSendError: string | null = null;
     try {
       const customer = order.customer_id as any;
       if (customer?.email && customer?.name) {
@@ -494,19 +495,23 @@ export const initiateRefund = async (
           customer.email,
           customer.name,
           orderId,
-          order.total || 0,
+          order.grandTotal || order.total || 0,
           order.refundReason || 'Product not available'
         );
         logger.info(`[PrimeVendor] Refund email sent to ${customer.email} for order ${orderId}`);
+      } else {
+        logger.warn(`[PrimeVendor] No customer email/name — skipping refund email for order ${id}`);
       }
     } catch (emailError: any) {
+      emailSendError = emailError.message;
       logger.error(`[PrimeVendor] Failed to send refund email: ${emailError.message}`);
-      // Don't fail the refund if email fails
     }
 
     res.status(200).json({
       success: true,
       message: 'Refund initiated successfully. Customer has been notified via email.',
+      emailSent: !emailSendError,
+      ...(emailSendError ? { emailError: emailSendError } : {}),
       data: { order },
     });
   } catch (error: any) {

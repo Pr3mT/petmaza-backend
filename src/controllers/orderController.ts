@@ -16,6 +16,7 @@ import {
   sendOrderStatusUpdateEmail,
   sendVendorOrderNotificationEmail,
   sendPaymentSuccessEmail,
+  sendRefundCompletedEmail,
 } from '../services/emailer';
 import { orderQueue } from '../services/OrderQueue';
 
@@ -676,7 +677,7 @@ export const adminUpdateOrderStatus = async (
     const { status } = req.body;
 
     // Validate status
-    const allowedStatuses = ['PENDING', 'ASSIGNED', 'ACCEPTED', 'REJECTED', 'PACKED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'];
+    const allowedStatuses = ['PENDING', 'ASSIGNED', 'ACCEPTED', 'REJECTED', 'PACKED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED', 'REFUND_INITIATED', 'REFUNDED'];
     if (!status || !allowedStatuses.includes(status)) {
       return next(new AppError('Invalid status', 400));
     }
@@ -752,6 +753,66 @@ export const adminAssignOrderToVendor = async (
     });
   } catch (error: any) {
     console.error('[adminAssignOrderToVendor] Error:', error);
+    next(error);
+  }
+};
+
+// Admin: Process (approve) a refund for an order that is in REFUND_INITIATED state
+export const adminProcessRefund = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const orderId = req.params.id;
+
+    const mongoose = await import('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return next(new AppError('Invalid order ID format', 400));
+    }
+
+    const order = await Order.findById(orderId).populate('customer_id', 'name email');
+    if (!order) {
+      return next(new AppError('Order not found', 404));
+    }
+
+    if (order.status !== 'REFUND_INITIATED') {
+      return next(new AppError(`Cannot process refund: order status is ${order.status}. Only REFUND_INITIATED orders can be processed.`, 400));
+    }
+
+    // Mark order as fully refunded
+    order.status = 'REFUNDED';
+    order.refundStatus = 'COMPLETED';
+    order.payment_status = 'Refunded';
+    order.refundedAt = new Date();
+    await order.save();
+
+    console.log(`[adminProcessRefund] Refund processed for order ${orderId} by admin ${req.user._id}`);
+
+    // Send refund completed email to customer
+    try {
+      const customer = order.customer_id as any;
+      if (customer?.email) {
+        const shortId = `#${order._id.toString().slice(-8).toUpperCase()}`;
+        await sendRefundCompletedEmail(
+          customer.email,
+          customer.name || 'Customer',
+          shortId,
+          order.refundAmount || order.grandTotal || order.total || 0
+        );
+      }
+    } catch (emailError: any) {
+      console.error('[adminProcessRefund] Failed to send refund completed email:', emailError.message);
+      // Don't fail the refund if email fails
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Refund processed successfully. Customer has been notified.',
+      data: { order },
+    });
+  } catch (error: any) {
+    console.error('[adminProcessRefund] Error:', error);
     next(error);
   }
 };
