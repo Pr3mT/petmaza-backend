@@ -10,6 +10,14 @@ const RATE_LIMIT_DISABLED =
 
 const passthrough = (_req: Request, _res: Response, next: NextFunction) => next();
 
+// Allow trusted load-test traffic to bypass the limiters WITHOUT disabling
+// protection for everyone else. Set LOADTEST_BYPASS_TOKEN in the environment
+// and send the header `X-Loadtest-Bypass: <token>` on test requests. When the
+// env var is unset (the default), this never triggers and limits stay enforced.
+const bypassToken = process.env.LOADTEST_BYPASS_TOKEN;
+const skipForLoadTest = (req: Request): boolean =>
+  !!bypassToken && req.get('X-Loadtest-Bypass') === bypassToken;
+
 if (RATE_LIMIT_DISABLED) {
   // eslint-disable-next-line no-console
   console.log('[rateLimiter] disabled (NODE_ENV=' + (process.env.NODE_ENV || 'undefined') + ')');
@@ -26,6 +34,7 @@ export const generalLimiter = RATE_LIMIT_DISABLED
       max: 500,
       standardHeaders: true,
       legacyHeaders: false,
+      skip: skipForLoadTest,
       message: {
         success: false,
         message: 'Too many requests, please try again after 15 minutes.',
@@ -43,6 +52,7 @@ export const authLimiter = RATE_LIMIT_DISABLED
       max: 10,
       standardHeaders: true,
       legacyHeaders: false,
+      skip: skipForLoadTest,
       message: {
         success: false,
         message: 'Too many login attempts, please try again after 15 minutes.',
@@ -60,6 +70,7 @@ export const searchLimiter = RATE_LIMIT_DISABLED
       max: 500,
       standardHeaders: true,
       legacyHeaders: false,
+      skip: skipForLoadTest,
       message: {
         success: false,
         message: 'Too many search requests, please slow down.',

@@ -19,51 +19,69 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response, next: 
      * The authoritative payment amount is always fetched from the DB Order document.
      * If a hacker modifies the amount in transit, we detect the mismatch and block.
      */
-    const { currency = 'INR', receipt, db_order_id } = req.body;
+    const { currency = 'INR', receipt } = req.body;
     const frontendAmount: number | undefined = req.body.amount; // captured only for tamper detection
 
-    // db_order_id is mandatory — we must look up the DB-authoritative total
-    if (!db_order_id) {
+    // A checkout may produce ONE order or several (split shipments). Accept either
+    // `db_order_ids` (array) or a single `db_order_id`. The authoritative amount we
+    // charge is ALWAYS the combined DB total of all these orders — never the frontend.
+    const rawIds: any[] = Array.isArray(req.body.db_order_ids)
+      ? req.body.db_order_ids
+      : req.body.db_order_id
+      ? [req.body.db_order_id]
+      : [];
+
+    // De-duplicate while preserving order
+    const orderIds: string[] = Array.from(
+      new Set(rawIds.filter(Boolean).map((x: any) => x.toString()))
+    );
+
+    if (orderIds.length === 0) {
       return next(new AppError('Order reference is required to initiate payment', 400));
     }
 
-    // ── Fetch the order and verify ownership ─────────────────────────────────
-    const dbOrder = await Order.findById(db_order_id);
-    if (!dbOrder) {
-      return next(new AppError('Order not found', 404));
+    // ── Fetch ALL orders, verify ownership + unpaid, and SUM the DB totals ─────
+    const dbOrders = await Order.find({ _id: { $in: orderIds } });
+    if (dbOrders.length !== orderIds.length) {
+      return next(new AppError('One or more orders could not be found', 404));
     }
 
-    if (dbOrder.customer_id.toString() !== req.user._id.toString()) {
-      await logSecurityEvent({
-        event: 'UNAUTHORIZED_ORDER_ACCESS',
-        severity: 'HIGH',
-        userId: req.user._id,
-        orderId: db_order_id,
-        ipAddress: req.ip ?? req.socket?.remoteAddress,
-        userAgent: req.headers['user-agent'],
-        details: `User ${req.user._id} attempted to pay for order ${db_order_id} owned by ${dbOrder.customer_id}`,
-      });
-      return next(new AppError('Access denied', 403));
+    let serverAmount = 0;
+    for (const dbOrder of dbOrders) {
+      if (dbOrder.customer_id.toString() !== req.user._id.toString()) {
+        await logSecurityEvent({
+          event: 'UNAUTHORIZED_ORDER_ACCESS',
+          severity: 'HIGH',
+          userId: req.user._id,
+          orderId: dbOrder._id,
+          ipAddress: req.ip ?? req.socket?.remoteAddress,
+          userAgent: req.headers['user-agent'],
+          details: `User ${req.user._id} attempted to pay for order ${dbOrder._id} owned by ${dbOrder.customer_id}`,
+        });
+        return next(new AppError('Access denied', 403));
+      }
+
+      if (dbOrder.payment_status === 'Paid') {
+        return next(new AppError('This order has already been paid', 400));
+      }
+
+      serverAmount += dbOrder.grandTotal || dbOrder.total;
     }
 
-    if (dbOrder.payment_status === 'Paid') {
-      return next(new AppError('This order has already been paid', 400));
-    }
-
-    // ── Server-authoritative amount (DB total) ────────────────────────────────
-    const serverAmount: number = dbOrder.grandTotal || dbOrder.total;
+    // Round to 2 decimals to avoid float drift when summing split-order totals
+    serverAmount = Math.round(serverAmount * 100) / 100;
 
     if (!serverAmount || serverAmount <= 0) {
       return next(new AppError('Order total is invalid. Please contact support.', 400));
     }
 
-    // ── Tamper detection: compare frontend amount with DB total ───────────────
+    // ── Tamper detection: compare frontend amount with the COMBINED DB total ───
     if (frontendAmount !== undefined && Math.abs(frontendAmount - serverAmount) > AMOUNT_TOLERANCE) {
       await logSecurityEvent({
         event: 'PAYMENT_AMOUNT_TAMPERING',
         severity: 'CRITICAL',
         userId: req.user._id,
-        orderId: db_order_id,
+        orderId: orderIds[0],
         ipAddress: req.ip ?? req.socket?.remoteAddress,
         userAgent: req.headers['user-agent'],
         expected: serverAmount,
@@ -71,7 +89,7 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response, next: 
         details:
           `Payment amount tampering detected! ` +
           `Frontend sent ₹${frontendAmount}, server DB total is ₹${serverAmount} ` +
-          `for order ${db_order_id}`,
+          `for orders ${orderIds.join(', ')}`,
       });
       return next(
         new AppError(
@@ -86,6 +104,11 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response, next: 
     // ── Test / skip-payment mode ─────────────────────────────────────────────
     if (!razorpay || process.env.SKIP_PAYMENT === 'true') {
       const mockOrderId = `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Persist on ALL orders so the rest of the flow can resolve them by this id
+      await Order.updateMany(
+        { _id: { $in: orderIds } },
+        { $set: { razorpay_order_id: mockOrderId } }
+      );
       return res.status(200).json({
         success: true,
         testMode: true,
@@ -104,26 +127,27 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response, next: 
       });
     }
 
-    // ── Create Razorpay order using server-verified amount ────────────────────
+    // ── Create Razorpay order using server-verified combined amount ───────────
     const options: any = {
       amount: Math.round(serverAmount * 100), // paise, ALWAYS from DB
       currency,
       receipt: receipt || `receipt_${Date.now()}`,
-      notes: { db_order_id },
+      notes: { db_order_ids: orderIds.join(','), db_order_id: orderIds[0] },
     };
 
     const razorpayOrder = await razorpay.orders.create(options);
 
-    // Store the Razorpay order_id on the DB Order for webhook resolution
+    // Store the Razorpay order_id on ALL DB orders for webhook / verify resolution
     if (razorpayOrder?.id) {
-      await Order.findByIdAndUpdate(db_order_id, {
-        $set: { razorpay_order_id: razorpayOrder.id },
-      });
+      await Order.updateMany(
+        { _id: { $in: orderIds } },
+        { $set: { razorpay_order_id: razorpayOrder.id } }
+      );
     }
 
     logger.info(
       `[createPaymentOrder] ✅ Razorpay order created: ${razorpayOrder.id} | ` +
-        `DB order: ${db_order_id} | Amount: ₹${serverAmount}`
+        `DB orders: ${orderIds.join(', ')} | Amount: ₹${serverAmount}`
     );
 
     res.status(200).json({
@@ -214,24 +238,29 @@ export const verifyPayment = async (req: AuthRequest, res: Response, next: NextF
 
     const amountPaidRupees = razorpayPayment.amount / 100; // paise → rupees
 
-    // ── Step 3: Cross-check paid amount against DB order total ────────────────
-    const dbOrder = await Order.findOne({ razorpay_order_id });
-    if (dbOrder) {
-      const expectedAmount = dbOrder.grandTotal || dbOrder.total;
+    // ── Step 3: Cross-check paid amount against the COMBINED DB order total ────
+    // Split shipments share one razorpay_order_id across several orders, so we
+    // sum the authoritative total of ALL of them, not just one.
+    const dbOrders = await Order.find({ razorpay_order_id });
+    if (dbOrders.length > 0) {
+      const expectedAmount =
+        Math.round(dbOrders.reduce((sum, o) => sum + (o.grandTotal || o.total), 0) * 100) / 100;
 
       if (Math.abs(amountPaidRupees - expectedAmount) > AMOUNT_TOLERANCE) {
         await logSecurityEvent({
           event: 'PAYMENT_AMOUNT_MISMATCH_POST_PAYMENT',
           severity: 'CRITICAL',
           userId: req.user._id,
-          orderId: dbOrder._id,
+          orderId: dbOrders[0]._id,
           ipAddress: req.ip ?? req.socket?.remoteAddress,
           userAgent: req.headers['user-agent'],
           expected: expectedAmount,
           received: amountPaidRupees,
           details:
             `POST-PAYMENT AMOUNT MISMATCH: Razorpay captured ₹${amountPaidRupees} but ` +
-            `DB order total is ₹${expectedAmount} for order ${dbOrder._id} (payment: ${razorpay_payment_id})`,
+            `DB order total is ₹${expectedAmount} for orders ${dbOrders
+              .map((o) => o._id)
+              .join(', ')} (payment: ${razorpay_payment_id})`,
         });
         return next(
           new AppError(
@@ -243,7 +272,7 @@ export const verifyPayment = async (req: AuthRequest, res: Response, next: NextF
 
       logger.info(
         `[verifyPayment] ✅ Amount verified: ₹${amountPaidRupees} paid, ₹${expectedAmount} expected | ` +
-          `Order: ${dbOrder._id} | Payment: ${razorpay_payment_id}`
+          `Orders: ${dbOrders.map((o) => o._id).join(', ')} | Payment: ${razorpay_payment_id}`
       );
     } else {
       // No DB order found by razorpay_order_id — could be a timing issue; log but don't block

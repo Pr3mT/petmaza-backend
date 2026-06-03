@@ -260,7 +260,10 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
         return next(new AppError('Paid orders cannot be cancelled from payment flow', 400));
       }
 
-      if (order.status !== 'PENDING') {
+      // Idempotent: re-cancelling an already-cancelled unpaid order is a no-op
+      // success, so payment-failure cleanup retries never surface a scary
+      // "order cleanup did not complete" message to the customer.
+      if (order.status !== 'PENDING' && order.status !== 'CANCELLED') {
         return next(new AppError('Only pending orders can be cancelled from payment flow', 400));
       }
 
