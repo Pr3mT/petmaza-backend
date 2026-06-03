@@ -1287,6 +1287,64 @@ export async function sendRefundInitiatedEmail(
 }
 
 /**
+ * Send refund completed (processed by admin) notification to customer
+ */
+export async function sendRefundCompletedEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  refundAmount: number
+) {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
+        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
+      </div>
+
+      <div style="padding: 20px;">
+        <div style="background-color: #e8f5e9; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
+          <h2 style="margin: 0; font-size: 36px;">✅</h2>
+          <h2 style="margin: 10px 0 0 0; color: #2e7d32;">Refund Processed Successfully</h2>
+          <p style="margin: 10px 0 0 0; font-size: 14px;">Your refund has been approved and processed by our team</p>
+        </div>
+
+        <p>Hi ${customerName},</p>
+        <p>Great news! Your refund has been successfully processed. The amount will be credited to your original payment method shortly.</p>
+
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <p><strong>Order ID:</strong> ${orderId}</p>
+          <p><strong>Refund Amount:</strong> <span style="color: #2e7d32; font-size: 20px; font-weight: bold;">₹${refundAmount.toFixed(2)}</span></p>
+          <p><strong>Status:</strong> <span style="color: #2e7d32; font-weight: bold;">✓ REFUNDED</span></p>
+        </div>
+
+        <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #1976d2;">
+          <h4 style="margin-top: 0;">⏱️ When Will I Receive the Money?</h4>
+          <p style="margin: 5px 0;">The refund has been <strong>approved</strong>. Depending on your bank or payment provider, the amount will appear in your account within <strong>3-5 working days</strong>.</p>
+          <p style="margin: 5px 0;">✓ Original payment method used during purchase</p>
+          <p style="margin: 5px 0;">✓ Same account/card used for payment</p>
+        </div>
+
+        <p style="color: #666; font-size: 12px; margin-top: 20px;">
+          If you have any questions, please contact support@petmaza.com.
+        </p>
+      </div>
+
+      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
+        <p style="color: #999; font-size: 12px;">© ${new Date().getFullYear()} Petmaza. All rights reserved.</p>
+      </div>
+    </div>
+  `;
+
+  return sendEmail({
+    to: customerEmail,
+    subject: `Refund Processed - Order ${orderId}`,
+    html,
+    trigger: 'refund_completed',
+    orderId,
+  });
+}
+
+/**
  * Send email verification code
  */
 export async function sendVerificationEmail(email: string, verificationCode: string) {

@@ -237,7 +237,7 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     // Process refund
-    order.status = 'CANCELLED';
+    order.status = 'REFUND_INITIATED';
     order.refundReason = reason || 'Unable to fulfill order';
     order.refundedAt = new Date();
     
@@ -260,6 +260,7 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
     console.log(`Order ${orderId} refunded by MY_SHOP vendor ${vendor._id}. Reason: ${reason || 'None provided'}`);
 
     // Send refund initiated email to customer
+    let emailError: string | null = null;
     try {
       const customer = order.customer_id as any;
       if (customer?.email) {
@@ -270,14 +271,20 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
           order.refundAmount || order.total || 0,
           order.refundReason || 'Product not available'
         );
+        console.log(`[myShop:refundOrder] Refund email sent to ${customer.email}`);
+      } else {
+        console.warn('[myShop:refundOrder] No customer email found — skipping refund email');
       }
-    } catch (emailError: any) {
-      console.error('Failed to send refund initiated email:', emailError.message);
+    } catch (err: any) {
+      emailError = err.message;
+      console.error('[myShop:refundOrder] Failed to send refund email:', err.message);
     }
 
     res.status(200).json({
       success: true,
       message: 'Order refund initiated successfully',
+      emailSent: !emailError,
+      ...(emailError ? { emailError } : {}),
       data: { order },
     });
   } catch (error: any) {
