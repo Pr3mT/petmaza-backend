@@ -33,6 +33,82 @@ function shuffleWithSeed<T>(arr: T[], seed: number): T[] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class ProductService {
+  // ── In-memory cache for storefront listing (shuffle) responses ──────────────
+  // Storefront pages request a shuffled list (filters.seed is set). Without caching,
+  // every visitor triggers a full-collection load + Fisher-Yates shuffle — that is
+  // what spikes CPU/RAM under load. Instead we shuffle with a SHARED 30-minute
+  // time-bucket seed and cache the computed { products, total }, so 100s of visitors
+  // in one window share a single computation and the list auto-reshuffles every 30 min.
+  private static listingCache = new Map<string, { data: any; expiry: number }>();
+  private static listingInflight = new Map<string, Promise<any>>();
+  private static readonly LISTING_TTL_MS = 30 * 60 * 1000; // 30 minutes
+  private static readonly LISTING_CACHE_MAX = 200;          // cap distinct keys to bound memory
+
+  /** Invalidate the storefront listing cache — call after any product mutation. */
+  static clearListingCache() {
+    ProductService.listingCache.clear();
+    ProductService.listingInflight.clear();
+  }
+
+  /**
+   * Public entry point for product listings.
+   * Storefront "shuffle" requests (filters.seed set) are served from a shared,
+   * time-bucketed, in-memory cache so many visitors cost ONE computation per
+   * 30-min window. Admin / no-seed requests pass straight through (always fresh).
+   */
+  static async getAllProducts(filters: any = {}) {
+    if (filters.seed === undefined) {
+      return ProductService._getAllProductsUncached(filters);
+    }
+
+    // Shared 30-min bucket seed → identical order for everyone + one cache entry;
+    // it rolls over every 30 min, which is the automatic reshuffle.
+    const bucket = Math.floor(Date.now() / ProductService.LISTING_TTL_MS);
+
+    // Cache key = result-affecting filters + bucket (deliberately NOT the user's seed).
+    const key = JSON.stringify({
+      cat: filters.category_id ?? null,
+      main: filters.mainCategory ?? null,
+      sub: filters.subCategory ?? null,
+      brand: filters.brand_id ?? null,
+      prime: filters.isPrime ?? null,
+      active: filters.isActive ?? null,
+      search: filters.search ?? null,
+      min: filters.minPrice ?? null,
+      max: filters.maxPrice ?? null,
+      disc: filters.discount ?? null,
+      page: filters.page ?? 1,
+      limit: filters.limit ?? null,
+      bucket,
+    });
+
+    const cached = ProductService.listingCache.get(key);
+    if (cached && Date.now() < cached.expiry) {
+      return cached.data;
+    }
+
+    // Stampede protection: collapse concurrent misses for the same key into one compute.
+    const inflight = ProductService.listingInflight.get(key);
+    if (inflight) return inflight;
+
+    const promise = (async () => {
+      const data = await ProductService._getAllProductsUncached({ ...filters, seed: bucket });
+      if (ProductService.listingCache.size >= ProductService.LISTING_CACHE_MAX) {
+        const oldest = ProductService.listingCache.keys().next().value; // FIFO-ish eviction
+        if (oldest !== undefined) ProductService.listingCache.delete(oldest);
+      }
+      ProductService.listingCache.set(key, { data, expiry: Date.now() + ProductService.LISTING_TTL_MS });
+      return data;
+    })();
+
+    ProductService.listingInflight.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      ProductService.listingInflight.delete(key);
+    }
+  }
+
   // Create product
   static async createProduct(data: any) {
     // Validate category exists (only if category_id is provided for backward compatibility)
@@ -70,11 +146,12 @@ export class ProductService {
 
     const product = await Product.create(data);
 
+    ProductService.clearListingCache();
     return product;
   }
 
   // Get all products
-  static async getAllProducts(filters: {
+  private static async _getAllProductsUncached(filters: {
     category_id?: string;
     brand_id?: string | string[]; // Can be single brand_id or array of brand_ids
     isPrime?: boolean;
@@ -550,6 +627,7 @@ export class ProductService {
       brand_id: product?.brand_id
     });
 
+    ProductService.clearListingCache();
     return product;
   }
 
@@ -562,6 +640,7 @@ export class ProductService {
       throw new AppError('Product not found', 404);
     }
 
+    ProductService.clearListingCache();
     return product;
   }
 }
