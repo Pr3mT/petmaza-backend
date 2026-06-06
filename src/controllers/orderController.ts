@@ -120,9 +120,11 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     const hasNormalProducts = orders.some((o: any) => !o.isPrime);
     const isMixedOrder = hasPrimeProducts && hasNormalProducts;
 
+    const shippingSettings = await ShippingService.getSettings();
     let charges = await ShippingService.calculateCharges(combinedSubtotal);
-    if (hasPrimeProducts) charges.platformFee = 10;
-    if (isMixedOrder && charges.shippingCharges === 0) charges.shippingCharges = 50;
+    // Prime/mixed surcharges must still honor the admin kill-switches
+    if (hasPrimeProducts && shippingSettings.platformFeeEnabled) charges.platformFee = 10;
+    if (isMixedOrder && shippingSettings.shippingEnabled && charges.shippingCharges === 0) charges.shippingCharges = 50;
 
     const subtotalAfterDiscount = combinedSubtotal - discountAmount;
     charges.total = subtotalAfterDiscount + charges.shippingCharges + charges.platformFee;
@@ -901,7 +903,8 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
 
     // Calculate order total — sellingPrice IS the vendor price after unification
     const itemTotal = (primeListing.sellingPrice ?? 0) * quantity;
-    const platformFee = 10; // Fixed ₹10 for prime orders
+    const primeSettings = await ShippingService.getSettings();
+    const platformFee = primeSettings.platformFeeEnabled ? 10 : 0; // ₹10 for prime, unless platform fee disabled in admin
     const shippingCharges = 0; // Free shipping for prime
     const grandTotal = itemTotal + platformFee + shippingCharges;
 
