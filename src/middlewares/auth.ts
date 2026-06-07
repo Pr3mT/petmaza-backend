@@ -189,7 +189,6 @@ export const optionalAuth = async (
     next(error);
   }
 };
-export const authenticate = verifyToken;
 export const protect = verifyToken; // Common alias
 
 // Alias for checkRole

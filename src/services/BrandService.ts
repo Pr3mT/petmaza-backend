@@ -1,6 +1,7 @@
 import Brand from '../models/Brand';
 import Category from '../models/Category';
 import { AppError } from '../middlewares/errorHandler';
+import { isValidSubcategory } from '../constants/subcategories';
 import mongoose from 'mongoose';
 
 export class BrandService {

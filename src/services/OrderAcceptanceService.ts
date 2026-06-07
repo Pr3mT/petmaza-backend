@@ -423,7 +423,11 @@ export class OrderAcceptanceService {
       for (const item of updatedOrder.items) {
         const product = await Product.findById(item.product_id);
         if (product && product.subCategory) {
-          subcategories.add(product.subCategory);
+          // subCategory is an array in the schema, but some legacy docs store a plain string
+          const subs = Array.isArray(product.subCategory)
+            ? product.subCategory
+            : [product.subCategory];
+          subs.forEach((sub) => subcategories.add(sub));
         }
       }
 
