@@ -57,15 +57,24 @@ export class ProductService {
    * 30-min window. Admin / no-seed requests pass straight through (always fresh).
    */
   static async getAllProducts(filters: any = {}) {
-    if (filters.seed === undefined) {
+    // Cache PUBLIC storefront reads only: shuffle requests (seed set) OR active-only
+    // listings (isActive === true — the controller sets this for customers/public, and
+    // undefined for admins). Admin reads and search queries pass straight through fresh.
+    const isShuffle = filters.seed !== undefined;
+    const isPublicListing = (isShuffle || filters.isActive === true) && !filters.search;
+    if (!isPublicListing) {
       return ProductService._getAllProductsUncached(filters);
     }
 
-    // Shared 30-min bucket seed → identical order for everyone + one cache entry;
-    // it rolls over every 30 min, which is the automatic reshuffle.
+    // 30-min time bucket: rotates the cache + (for shuffle) the shared seed every 30 min.
     const bucket = Math.floor(Date.now() / ProductService.LISTING_TTL_MS);
 
-    // Cache key = result-affecting filters + bucket (deliberately NOT the user's seed).
+    // Shuffle requests get the SHARED bucket seed (same order for everyone); SORTED
+    // requests (Featured, Today's Picks, etc.) are left untouched so their order holds.
+    const effectiveFilters = isShuffle ? { ...filters, seed: bucket } : filters;
+
+    // Cache key = every result-affecting filter (incl. sort) + bucket. The user's
+    // per-session seed is deliberately excluded so all visitors share one entry.
     const key = JSON.stringify({
       cat: filters.category_id ?? null,
       main: filters.mainCategory ?? null,
@@ -73,10 +82,12 @@ export class ProductService {
       brand: filters.brand_id ?? null,
       prime: filters.isPrime ?? null,
       active: filters.isActive ?? null,
-      search: filters.search ?? null,
       min: filters.minPrice ?? null,
       max: filters.maxPrice ?? null,
       disc: filters.discount ?? null,
+      sortBy: filters.sortBy ?? null,
+      sortOrder: filters.sortOrder ?? null,
+      shuffle: isShuffle,
       page: filters.page ?? 1,
       limit: filters.limit ?? null,
       bucket,
@@ -92,7 +103,7 @@ export class ProductService {
     if (inflight) return inflight;
 
     const promise = (async () => {
-      const data = await ProductService._getAllProductsUncached({ ...filters, seed: bucket });
+      const data = await ProductService._getAllProductsUncached(effectiveFilters);
       if (ProductService.listingCache.size >= ProductService.LISTING_CACHE_MAX) {
         const oldest = ProductService.listingCache.keys().next().value; // FIFO-ish eviction
         if (oldest !== undefined) ProductService.listingCache.delete(oldest);

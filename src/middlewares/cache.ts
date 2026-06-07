@@ -21,15 +21,34 @@ setInterval(() => {
 export const clearCache = (pattern?: string) => {
   if (!pattern) {
     globalCache.clear();
+    invalidateProductListingCache(); // full clear also drops the storefront listing cache
     return;
   }
-  
+
   for (const key of globalCache.keys()) {
     if (key.includes(pattern)) {
       globalCache.delete(key);
     }
   }
+
+  // When products change, also drop the ProductService in-memory listing cache so the
+  // storefront reflects edits immediately. Every product mutation path already calls
+  // clearCache('/products') (variant stock toggle, bulk upload, prime changes, etc.),
+  // so this single hook covers them all.
+  if (pattern.includes('/products')) {
+    invalidateProductListingCache();
+  }
 };
+
+/** Clear the ProductService storefront listing cache. Lazy require avoids any import cycle. */
+function invalidateProductListingCache() {
+  try {
+    const { ProductService } = require('../services/ProductService');
+    ProductService.clearListingCache?.();
+  } catch {
+    /* ProductService unavailable — ignore */
+  }
+}
 
 /**
  * Response caching middleware for frequently accessed endpoints
