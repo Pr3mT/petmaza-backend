@@ -1,6 +1,11 @@
 import { Request, Response } from 'express';
 import Product from '../models/Product';
 import Review from '../models/Review';
+import {
+  parseQuery,
+  resolveMatchingBrandIds,
+  buildRelevancePipeline,
+} from '../services/searchRelevance';
 
 // Advanced product search with filters
 export const advancedSearch = async (req: Request, res: Response) => {
@@ -20,79 +25,64 @@ export const advancedSearch = async (req: Request, res: Response) => {
       limit = 20,
     } = req.query;
 
-    // Build search filter
-    const filter: any = { isActive: true };
+    // ── Facet (non-text) filters: applied as a plain $match before scoring ──
+    const baseMatch: any = { isActive: true };
 
-    // Text search — multi-keyword fuzzy across name, description, category fields
-    if (q) {
-      const fuzzyFilter = buildFuzzyFilter(q as string);
-      Object.assign(filter, fuzzyFilter);
-    }
-
-    // Category filter
-    if (category_id) {
-      filter.category_id = category_id;
-    }
-
-    // Main category (Pet type) filter
-    if (mainCategory) {
-      filter.mainCategory = mainCategory;
-    }
-
-    // Subcategory filter
-    if (subCategory) {
-      filter.subCategory = subCategory;
-    }
-
-    // Brand filter (can be multiple)
+    if (category_id) baseMatch.category_id = category_id;
+    if (mainCategory) baseMatch.mainCategory = mainCategory;
+    if (subCategory) baseMatch.subCategory = subCategory;
     if (brand_id) {
       const brandIds = Array.isArray(brand_id) ? brand_id : [brand_id];
-      filter.brand_id = { $in: brandIds };
+      baseMatch.brand_id = { $in: brandIds };
     }
-
-    // Price range filter
     if (minPrice || maxPrice) {
-      filter.sellingPrice = {};
-      if (minPrice) filter.sellingPrice.$gte = Number(minPrice);
-      if (maxPrice) filter.sellingPrice.$lte = Number(maxPrice);
+      baseMatch.sellingPrice = {};
+      if (minPrice) baseMatch.sellingPrice.$gte = Number(minPrice);
+      if (maxPrice) baseMatch.sellingPrice.$lte = Number(maxPrice);
     }
+    if (isPrime !== undefined) baseMatch.isPrime = isPrime === 'true';
 
-    // Prime filter
-    if (isPrime !== undefined) {
-      filter.isPrime = isPrime === 'true';
+    const skip = (Number(page) - 1) * Number(limit);
+    let products: any[];
+    let total: number;
+
+    if (q && (q as string).trim()) {
+      // ── Relevance-ranked text search via the scoring aggregation ──
+      const parsed = parseQuery(q as string);
+      const brandIds = await resolveMatchingBrandIds(parsed);
+      const pipeline = buildRelevancePipeline(parsed, brandIds, {
+        baseMatch,
+        sortBy: sortBy as string,
+        skip,
+        limit: Number(limit),
+      });
+      const [result] = await Product.aggregate(pipeline);
+      products = result?.data || [];
+      total = result?.total?.[0]?.count || 0;
+    } else {
+      // ── No text query: plain filtered listing (sorted per sortBy) ──
+      let sortCriteria: any;
+      switch (sortBy) {
+        case 'price_asc': sortCriteria = { sellingPrice: 1 }; break;
+        case 'price_desc': sortCriteria = { sellingPrice: -1 }; break;
+        case 'discount': sortCriteria = { discount: -1 }; break;
+        case 'newest':
+        default: sortCriteria = { createdAt: -1 };
+      }
+      [products, total] = await Promise.all([
+        Product.find(baseMatch)
+          .populate('category_id', 'name image')
+          .populate('brand_id', 'name image')
+          .sort(sortCriteria)
+          .limit(Number(limit))
+          .skip(skip)
+          .lean(),
+        Product.countDocuments(baseMatch),
+      ]);
     }
-
-    // Build sort criteria
-    let sortCriteria: any = {};
-    switch (sortBy) {
-      case 'price_asc':
-        sortCriteria = { sellingPrice: 1 };
-        break;
-      case 'price_desc':
-        sortCriteria = { sellingPrice: -1 };
-        break;
-      case 'newest':
-        sortCriteria = { createdAt: -1 };
-        break;
-      case 'discount':
-        sortCriteria = { discount: -1 };
-        break;
-      default:
-        sortCriteria = { createdAt: -1 }; // Default to newest
-    }
-
-    // Execute search
-    const products = await Product.find(filter)
-      .populate('category_id', 'name image')
-      .populate('brand_id', 'name image')
-      .sort(sortCriteria)
-      .limit(Number(limit))
-      .skip((Number(page) - 1) * Number(limit));
-
-    const total = await Product.countDocuments(filter);
 
     // Enrich with ratings
-    const productIds = products.map(p => p._id);
+    const productIds = products.map((p) => p._id);
     const ratings = await Review.aggregate([
       {
         $match: {
@@ -113,12 +103,14 @@ export const advancedSearch = async (req: Request, res: Response) => {
       ratings.map(r => [r._id.toString(), r])
     );
 
-    let enrichedProducts = products.map(product => {
+    let enrichedProducts = products.map((product: any) => {
+      // product is already a plain object (aggregation result or .lean())
       const ratingInfo = ratingMap.get(product._id.toString());
       return {
-        ...product.toObject(),
-        averageRating: ratingInfo?.averageRating || 0,
-        reviewCount: ratingInfo?.reviewCount || 0,
+        ...product,
+        // Prefer freshly-aggregated review rating; fall back to stored field.
+        averageRating: ratingInfo?.averageRating ?? product.averageRating ?? 0,
+        reviewCount: ratingInfo?.reviewCount ?? product.totalReviews ?? 0,
       };
     });
 
@@ -159,32 +151,8 @@ export const advancedSearch = async (req: Request, res: Response) => {
   }
 };
 
-// Helper: build a fuzzy multi-keyword filter across multiple product fields.
-// Splits the query into individual words; every word must match at least one
-// of: name, description, mainCategory, subCategory.
-// If the query is a single token it also falls back to a broader partial match.
-const buildFuzzyFilter = (rawQuery: string): object => {
-  // Escape special regex chars to avoid errors
-  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  const keywords = rawQuery.trim().split(/\s+/).filter(k => k.length >= 1);
-
-  if (keywords.length === 0) return {};
-
-  // Each keyword must match at least one searchable field (AND of ORs)
-  const keywordConditions = keywords.map(kw => ({
-    $or: [
-      { name: { $regex: escape(kw), $options: 'i' } },
-      { description: { $regex: escape(kw), $options: 'i' } },
-      { mainCategory: { $regex: escape(kw), $options: 'i' } },
-      { subCategory: { $regex: escape(kw), $options: 'i' } },
-    ],
-  }));
-
-  return { $and: keywordConditions };
-};
-
-// Get search suggestions (autocomplete)
+// Get search suggestions (autocomplete) — shares the same relevance engine as
+// the full results page so dropdown order matches the page order.
 export const getSearchSuggestions = async (req: Request, res: Response) => {
   try {
     const { q, limit = 8 } = req.query;
@@ -194,36 +162,28 @@ export const getSearchSuggestions = async (req: Request, res: Response) => {
       return res.status(200).json({ suggestions: [] });
     }
 
-    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const fuzzyFilter = buildFuzzyFilter(query);
+    const parsed = parseQuery(query);
+    if (!parsed.hasTokens) {
+      return res.status(200).json({ suggestions: [] });
+    }
 
-    // Fetch more candidates so we can re-rank by relevance
-    const fetchLimit = Math.max(Number(limit) * 4, 32);
-
-    const products = await Product.find({
-      isActive: true,
-      ...fuzzyFilter,
-    })
-      .select('name images mainCategory subCategory')
-      .limit(fetchLimit)
-      .lean();
-
-    // Rank by relevance: name starts-with query > name contains whole query > other
-    const lq = query.toLowerCase();
-    const scored = products.map(p => {
-      const lname = (p.name || '').toLowerCase();
-      let score = 0;
-      if (lname.startsWith(lq)) score = 3;           // best: starts with full query
-      else if (lname.includes(lq)) score = 2;        // good: name contains full query
-      else score = 1;                                  // rest: keyword matched other field
-      return { p, score };
+    const brandIds = await resolveMatchingBrandIds(parsed);
+    const pipeline = buildRelevancePipeline(parsed, brandIds, {
+      baseMatch: { isActive: true },
+      sortBy: 'relevance',
+      skip: 0,
+      limit: Number(limit),
+      // Lightweight payload — the dropdown only needs id, name, image.
+      projectFields: { _id: 1, name: 1, images: 1 },
     });
-    scored.sort((a, b) => b.score - a.score);
 
-    const suggestions = scored.slice(0, Number(limit)).map(({ p }) => ({
+    const [result] = await Product.aggregate(pipeline);
+    const products = result?.data || [];
+
+    const suggestions = products.map((p: any) => ({
       id: p._id,
       name: p.name,
-      image: (p.images as string[])[0] || null,
+      image: Array.isArray(p.images) && p.images.length ? p.images[0] : null,
     }));
 
     res.status(200).json({ suggestions });
