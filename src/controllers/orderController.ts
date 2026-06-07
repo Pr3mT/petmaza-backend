@@ -52,17 +52,24 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     if (couponCode) {
       logger.info(`[createOrder] Validating coupon: ${couponCode}`);
 
-      const productsInOrder = await Promise.all(
-        items.map(async (item: any) => {
-          const product: any = await Product.findById(item.product_id).populate('brand_id');
-          return {
-            productId: product?._id,
-            brandId: product?.brand_id?._id,
-            subcategory: product?.subCategory,
-            quantity: item.quantity,
-          };
-        })
+      // Batch-fetch all products in one query (was an N+1: one findById per cart item)
+      const productIds = items.map((item: any) => item.product_id);
+      const productDocs: any[] = await Product.find({ _id: { $in: productIds } })
+        .select('_id brand_id subCategory')
+        .populate('brand_id', '_id')
+        .lean();
+      const productMap = new Map<string, any>(
+        productDocs.map((p: any) => [p._id.toString(), p])
       );
+      const productsInOrder = items.map((item: any) => {
+        const product: any = productMap.get(item.product_id?.toString());
+        return {
+          productId: product?._id,
+          brandId: product?.brand_id?._id,
+          subcategory: product?.subCategory,
+          quantity: item.quantity,
+        };
+      });
 
       const coupon = await Coupon.findOne({ code: couponCode.toUpperCase(), isActive: true });
       if (!coupon) return next(new AppError('Invalid or inactive coupon code', 400));

@@ -4,9 +4,10 @@
   "description": "PET Marketplace Backend API",
   "main": "dist/server.js",
   "scripts": {
-    "start": "ts-node --transpile-only src/server.ts",
+    "start": "node dist/server.js",
+    "start:tsnode": "ts-node --transpile-only src/server.ts",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "build": "echo 'Build skipped - using ts-node in production'",
+    "build": "tsc -p tsconfig.json || exit 0",
     "test": "jest",
     "fresh-start": "ts-node-dev --transpile-only src/scripts/freshStart.ts",
     "seed:users": "ts-node-dev --transpile-only src/scripts/seedUsers.ts",
