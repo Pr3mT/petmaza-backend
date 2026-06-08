@@ -13,6 +13,7 @@ import { Server } from 'socket.io';
 import logger from './config/logger';
 import cron from 'node-cron';
 import { runStreamingBackupAndEmail } from './services/backupService';
+import { cancelAbandonedUnpaidOrders } from './services/orderMaintenance';
 import { errorHandler } from './middlewares/errorHandler';
 import { notFound } from './middlewares/notFound';
 import { initializeWebSocket } from './websocket/server';
@@ -333,6 +334,18 @@ cron.schedule('0 2 * * *', async () => {
   }
 }, {
   timezone: 'Asia/Kolkata', // IST — change to your server timezone if needed
+});
+
+// ─── Auto-cancel abandoned unpaid orders ─────────────────────────────────────
+// Orders are created PENDING/unpaid at checkout. Every 15 min, cancel any that
+// are still unpaid after UNPAID_ORDER_TTL_MINUTES (default 60) so they don't
+// linger looking "placed". Paid orders are never affected.
+cron.schedule('*/15 * * * *', async () => {
+  try {
+    await cancelAbandonedUnpaidOrders();
+  } catch (err: any) {
+    logger.error('[OrderMaintenance] ✖ Auto-cancel sweep failed:', err?.message || err);
+  }
 });
 // ─────────────────────────────────────────────────────────────────────────────
 

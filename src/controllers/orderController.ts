@@ -19,6 +19,7 @@ import {
   sendRefundCompletedEmail,
 } from '../services/emailer';
 import { orderQueue } from '../services/OrderQueue';
+import { assertCapturedPaymentForOrder } from '../services/paymentGuard';
 
 // Create order (customer)
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -257,8 +258,19 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     if (payment_status && ['Pending', 'Paid', 'Failed', 'Refunded'].includes(payment_status)) {
+      // SECURITY: a client cannot simply declare an order Paid. Before honoring
+      // 'Paid' we confirm with Razorpay that the payment is captured and belongs
+      // to this order's razorpay order id. (Refunded is set only by admin/refund
+      // flows that reach here with an already-Paid order.)
+      if (payment_status === 'Paid' && !wasPaidBeforeUpdate) {
+        await assertCapturedPaymentForOrder({
+          razorpayOrderId: (order as any).razorpay_order_id,
+          paymentId: payment_id || order.payment_id,
+        });
+      }
+
       order.payment_status = payment_status;
-      
+
       // Payment completion does NOT change order status to ASSIGNED
       // Order should remain PENDING until vendor accepts it
       // ASSIGNED status is set when vendor accepts the order

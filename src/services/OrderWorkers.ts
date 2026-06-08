@@ -48,34 +48,13 @@ orderQueue.on('order:created', async (payload: OrderCreatedPayload) => {
     totalAmount,
   } = payload;
 
-  // Populate product details for the email here (not in the critical API path)
-  try {
-    const orders = await Promise.all(
-      orderIds.map((id) => Order.findById(id).populate('items.product_id').lean())
-    );
-    const allItems = orders.flatMap((o: any) => o?.items ?? []);
-    const firstOrderLabel = `#${orderIds[0].slice(-8)}${
-      isSplitShipment ? ` (+${orderIds.length - 1} more)` : ''
-    }`;
-
-    await sendOrderConfirmationEmail(userEmail, userName, firstOrderLabel, {
-      totalAmount,
-      items: allItems,
-      customerAddress,
-      shippingCharges,
-      platformFee,
-      subtotal: combinedSubtotal,
-      subtotalBeforeCharges: combinedSubtotal,
-      discountAmount: discountAmount ?? 0,
-      couponCode: couponCode ?? undefined,
-      isSplitShipment,
-      splitOrderCount: orderIds.length,
-      splitOrderIds: orderIds.map((id) => `#${id.slice(-8)}`),
-    });
-    logger.info(`[OrderWorkers] ✅ Customer confirmation email sent → ${userEmail}`);
-  } catch (err: any) {
-    logger.error(`[OrderWorkers] ❌ Customer email failed: ${err.message}`);
-  }
+  // NOTE: the customer "Order Confirmation" email is intentionally NOT sent here.
+  // An order is created PENDING/unpaid at checkout, so confirming it before
+  // payment is misleading (and abandoned orders auto-cancel). The customer's
+  // confirmation is the post-payment "Payment Receipt" email, sent only after the
+  // payment is verified (see orderController.updateOrder → sendPaymentSuccessEmail).
+  void userEmail; void isSplitShipment; void combinedSubtotal; void shippingCharges;
+  void platformFee; void discountAmount; void couponCode; void customerAddress;
 
   // Admin notifications
   for (const adminEmail of adminEmails) {

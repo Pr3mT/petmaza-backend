@@ -4,6 +4,7 @@ import Order from '../models/Order';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest, isAdminRole } from '../middlewares/auth';
 import { getRazorpayInstance } from '../config/razorpay';
+import { assertCapturedPaymentForOrder } from '../services/paymentGuard';
 import { io } from '../server';
 import { sendPaymentSuccessEmail, sendPaymentFailureEmail } from '../services/emailer';
 import logger from '../config/logger';
@@ -422,57 +423,14 @@ export const completePayment = async (req: AuthRequest, res: Response, next: Nex
       });
     }
 
-    // ── SECURITY: Verify payment amount via Razorpay API before marking Paid ──
-    // Skip in test mode only
-    const razorpay = getRazorpayInstance();
-    if (razorpay && process.env.SKIP_PAYMENT !== 'true' && payment_id && !payment_id.startsWith('test_')) {
-      try {
-        const razorpayPayment = await razorpay.payments.fetch(payment_id);
-
-        if (!razorpayPayment || razorpayPayment.status !== 'captured') {
-          return next(
-            new AppError(
-              `Payment ${payment_id} has not been captured (status: ${razorpayPayment?.status ?? 'unknown'})`,
-              400
-            )
-          );
-        }
-
-        const amountPaidRupees = (razorpayPayment.amount as number) / 100;
-        const expectedAmount = order.grandTotal || order.total;
-
-        if (Math.abs(amountPaidRupees - expectedAmount) > AMOUNT_TOLERANCE) {
-          await logSecurityEvent({
-            event: 'PAYMENT_AMOUNT_MISMATCH_POST_PAYMENT',
-            severity: 'CRITICAL',
-            userId: req.user._id,
-            orderId: order._id,
-            ipAddress: req.ip ?? req.socket?.remoteAddress,
-            userAgent: req.headers['user-agent'],
-            expected: expectedAmount,
-            received: amountPaidRupees,
-            details:
-              `completePayment amount mismatch: Razorpay captured ₹${amountPaidRupees}, ` +
-              `DB order total ₹${expectedAmount} | Order: ${order._id} | Payment: ${payment_id}`,
-          });
-          return next(
-            new AppError(
-              'Payment amount does not match the order total. This transaction has been flagged. Please contact support.',
-              400
-            )
-          );
-        }
-
-        logger.info(
-          `[completePayment] ✅ Amount verified: ₹${amountPaidRupees} paid | Order: ${order._id}`
-        );
-      } catch (fetchErr: any) {
-        // If Razorpay API is unreachable, log a warning but proceed (webhook is the safety net)
-        logger.warn(
-          `[completePayment] ⚠️ Could not fetch payment ${payment_id} from Razorpay for amount check: ${fetchErr.message}`
-        );
-      }
-    }
+    // ── SECURITY: confirm the payment is captured and belongs to this order ──
+    // before marking Paid. Shared guard — no client-controllable bypass
+    // (test_/MANUAL ids rejected; only SKIP_PAYMENT env skips). An order-id match
+    // also pins the amount, since the razorpay order amount is the server total.
+    await assertCapturedPaymentForOrder({
+      razorpayOrderId: (order as any).razorpay_order_id,
+      paymentId: payment_id,
+    });
 
     // Update order payment status
     order.payment_status = 'Paid';
