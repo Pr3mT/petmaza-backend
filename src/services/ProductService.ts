@@ -415,49 +415,9 @@ export class ProductService {
       });
     }
 
-    // Pincode filter is now optional - products visible from any location
-    // if (filters.pincode) {
-    //   // Pincode filtering disabled to show all products
-    // }
-    
-    // Return all products without pincode restriction
-    if (false && filters.pincode) {
-      const productIds = products.map((p) => p._id);
-      
-      if (productIds.length === 0) {
-        return [];
-      }
-
-      const vendorPricing = await VendorProductPricing.find({
-        product_id: { $in: productIds },
-        isActive: true,
-        availableStock: { $gt: 0 },
-      });
-
-      if (vendorPricing.length === 0) {
-        return [];
-      }
-
-      const vendorIds = vendorPricing.map((vp) => vp.vendor_id);
-      const vendorDetails = await VendorDetails.find({
-        vendor_id: { $in: vendorIds },
-        serviceablePincodes: filters.pincode,
-        isApproved: true,
-      });
-
-      if (vendorDetails.length === 0) {
-        return [];
-      }
-
-      const availableVendorIds = vendorDetails.map((vd) => vd.vendor_id.toString());
-      const availableProductIds = vendorPricing
-        .filter((vp) => availableVendorIds.includes(vp.vendor_id.toString()))
-        .map((vp) => vp.product_id.toString());
-
-      products = products.filter((p) =>
-        availableProductIds.includes(p._id.toString())
-      );
-    }
+    // NOTE: products are visible from any location. The store is NOT
+    // pincode-hyperlocal — there is no serviceable-area filtering on the listing.
+    // (`filters.pincode` is ignored here; it's only part of the delivery address.)
 
     return { products, total };
   }
@@ -492,32 +452,8 @@ export class ProductService {
       inStock,
     };
 
-    // Get vendor pricing if pincode provided
-    if (pincode) {
-      const vendorPricing = await VendorProductPricing.find({
-        product_id: id,
-        isActive: true,
-      }).populate('vendor_id', 'name vendorType');
-
-      // Filter by serviceable pincodes
-      const VendorDetails = (await import('../models/VendorDetails')).default;
-      const vendorDetails = await VendorDetails.find({
-        vendor_id: { $in: vendorPricing.map((vp) => vp.vendor_id) },
-        serviceablePincodes: pincode,
-        isApproved: true,
-      });
-
-      const availableVendorIds = vendorDetails.map((vd) => vd.vendor_id.toString());
-      const availablePricing = vendorPricing.filter((vp) =>
-        availableVendorIds.includes(vp.vendor_id.toString())
-      );
-
-      return {
-        product: productWithStock,
-        vendorPricing: availablePricing,
-      };
-    }
-
+    // Pincode is part of the delivery address only — the store is not hyperlocal,
+    // so we do NOT compute per-area vendor pricing here. (`pincode` arg unused.)
     return { product: productWithStock };
   }
 

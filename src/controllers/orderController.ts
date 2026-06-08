@@ -631,6 +631,23 @@ export const updateOrderStatus = async (
       DELIVERED: 'delivered',
     };
 
+    // Courier name + tracking ID are REQUIRED at the shipping step (handover to
+    // courier = PICKED_UP, or IN_TRANSIT) so the customer always gets a real
+    // tracking ID in the Track Package view. Skipped if already captured earlier.
+    if (status === 'PICKED_UP' || status === 'IN_TRANSIT') {
+      const courierName = String(req.body.courier_name || req.body.courier || '').trim();
+      const trackingId = String(req.body.tracking_id || req.body.trackingNumber || '').trim();
+      const alreadyHasTracking = !!(order.courier && order.courier.name && order.courier.tracking_id);
+      if (!alreadyHasTracking && (!courierName || !trackingId)) {
+        return next(new AppError('Courier name and tracking ID are required to ship this order.', 400));
+      }
+      if (courierName && trackingId) {
+        if (!order.courier) order.courier = {};
+        order.courier.name = courierName;
+        order.courier.tracking_id = trackingId;
+      }
+    }
+
     // Update status
     order.status = status as any;
     await order.save();

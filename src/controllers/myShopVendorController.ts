@@ -397,6 +397,16 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
       return next(new AppError(`Cannot mark as in transit from status ${order.status}`, 400));
     }
 
+    // Courier name + tracking ID are REQUIRED to ship.
+    const courierName = String(req.body.courier_name || req.body.courier || '').trim();
+    const trackingId = String(req.body.tracking_id || req.body.trackingNumber || '').trim();
+    if (!courierName || !trackingId) {
+      return next(new AppError('Courier name and tracking ID are required to mark the order in transit.', 400));
+    }
+    if (!order.courier) order.courier = {};
+    order.courier.name = courierName;
+    order.courier.tracking_id = trackingId;
+
     order.status = 'IN_TRANSIT';
     await order.save();
 
@@ -409,7 +419,7 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
           customer.email,
           customer.name || 'Customer',
           `#${order._id.toString().slice(-8)}`,
-          undefined, // tracking info can be added later
+          `${courierName} - ${trackingId}`,
           '1-3 business days'
         );
       }
