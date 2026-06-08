@@ -353,7 +353,7 @@ export const rejectAndReassign = async (req: AuthRequest, res: Response, next: N
     order.rejectionReason = reason || 'Not available at warehouse';
     await order.save();
 
-    console.log(
+    logger.info(
       `Order ${orderId} rejected by warehouse fulfiller and reassigned to MY_SHOP ${myShopVendor._id} as PENDING. Reason: ${reason || 'None provided'}`
     );
 
@@ -377,10 +377,10 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
     const { orderId } = req.params;
     const fulfiller = req.user;
 
-    console.log('[markPacked] Request received:', { orderId, fulfillerId: fulfiller._id, vendorType: fulfiller.vendorType });
+    logger.info('[markPacked] Request received:', { orderId, fulfillerId: fulfiller._id, vendorType: fulfiller.vendorType });
 
     if (fulfiller.vendorType !== 'WAREHOUSE_FULFILLER') {
-      console.log('[markPacked] Access denied - not a warehouse fulfiller');
+      logger.info('[markPacked] Access denied - not a warehouse fulfiller');
       return next(
         new AppError('Access denied. Only warehouse fulfillers can update order status.', 403)
       );
@@ -389,11 +389,11 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
     const order = await Order.findById(orderId);
 
     if (!order) {
-      console.log('[markPacked] Order not found:', orderId);
+      logger.info('[markPacked] Order not found:', orderId);
       return next(new AppError('Order not found', 404));
     }
 
-    console.log('[markPacked] Order found:', {
+    logger.info('[markPacked] Order found:', {
       orderId: order._id,
       currentStatus: order.status,
       assignedVendorId: order.assignedVendorId,
@@ -401,12 +401,12 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
     });
 
     if (order.assignedVendorId?.toString() !== fulfiller._id.toString()) {
-      console.log('[markPacked] Order not assigned to this fulfiller');
+      logger.info('[markPacked] Order not assigned to this fulfiller');
       return next(new AppError('This order is not assigned to you', 403));
     }
 
     if (order.status !== 'ACCEPTED') {
-      console.log(`[markPacked] Invalid status. Expected: ACCEPTED, Got: ${order.status}`);
+      logger.info(`[markPacked] Invalid status. Expected: ACCEPTED, Got: ${order.status}`);
       return next(
         new AppError(
           `Cannot mark as packed. Order must be ACCEPTED first. Current status: ${order.status}`,
@@ -418,7 +418,7 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
     order.status = 'PACKED';
     await order.save();
 
-    console.log(`[markPacked] ✅ Order ${orderId} marked as PACKED by ${fulfiller._id}`);
+    logger.info(`[markPacked] ✅ Order ${orderId} marked as PACKED by ${fulfiller._id}`);
 
     res.status(200).json({
       success: true,
@@ -426,7 +426,7 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
       data: { order },
     });
   } catch (error: any) {
-    console.error('[markPacked] Error:', error);
+    logger.error('[markPacked] Error:', error);
     next(error);
   }
 };
@@ -467,7 +467,7 @@ export const markPickedUp = async (req: AuthRequest, res: Response, next: NextFu
     order.status = 'PICKED_UP';
     await order.save();
 
-    console.log(`Order ${orderId} marked as PICKED_UP by ${fulfiller._id}`);
+    logger.info(`Order ${orderId} marked as PICKED_UP by ${fulfiller._id}`);
 
     res.status(200).json({
       success: true,
@@ -515,7 +515,7 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
     order.status = 'IN_TRANSIT';
     await order.save();
 
-    console.log(`Order ${orderId} marked as IN_TRANSIT by ${fulfiller._id}`);
+    logger.info(`Order ${orderId} marked as IN_TRANSIT by ${fulfiller._id}`);
 
     // Send order shipped email to customer
     try {
@@ -531,7 +531,7 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
         );
       }
     } catch (emailError: any) {
-      console.error('Failed to send order shipped email:', emailError.message);
+      logger.error('Failed to send order shipped email:', emailError.message);
     }
 
     res.status(200).json({
@@ -580,22 +580,22 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
     order.status = 'DELIVERED';
     await order.save();
 
-    console.log(`[markDelivered] Order ${orderId} marked as DELIVERED by ${fulfiller._id}`);
+    logger.info(`[markDelivered] Order ${orderId} marked as DELIVERED by ${fulfiller._id}`);
 
     // Send delivery completed email to customer
-    console.log('[markDelivered] Starting customer email send process...');
+    logger.info('[markDelivered] Starting customer email send process...');
     try {
       const populatedOrder = await order.populate('customer_id');
       const customer = populatedOrder.customer_id as any;
       
-      console.log('[markDelivered] Customer populated:', {
+      logger.info('[markDelivered] Customer populated:', {
         customerId: customer?._id,
         email: customer?.email,
         name: customer?.name
       });
       
       if (customer?.email) {
-        console.log('[markDelivered] Sending delivery completed email to:', customer.email);
+        logger.info('[markDelivered] Sending delivery completed email to:', customer.email);
         await sendDeliveryCompletedEmail(
           customer.email,
           customer.name || 'Customer',
@@ -606,25 +606,25 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
             year: 'numeric' 
           })
         );
-        console.log('[markDelivered] ✅ Delivery completed email sent successfully!');
+        logger.info('[markDelivered] ✅ Delivery completed email sent successfully!');
       } else {
-        console.log('[markDelivered] ⚠️ No customer email found, skipping email');
+        logger.info('[markDelivered] ⚠️ No customer email found, skipping email');
       }
     } catch (emailError: any) {
-      console.error('[markDelivered] ❌ Failed to send delivery completed email:', emailError.message);
-      console.error('[markDelivered] Email error stack:', emailError.stack);
+      logger.error('[markDelivered] ❌ Failed to send delivery completed email:', emailError.message);
+      logger.error('[markDelivered] Email error stack:', emailError.stack);
     }
 
     // Send admin notification for delivered order
-    console.log('[markDelivered] Starting admin notification process...');
+    logger.info('[markDelivered] Starting admin notification process...');
     try {
       const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
-      console.log('[markDelivered] Admin emails:', adminEmails);
+      logger.info('[markDelivered] Admin emails:', adminEmails);
       
       const populatedOrder = await order.populate(['customer_id', 'items.product_id']);
       const customer = populatedOrder.customer_id as any;
       
-      console.log('[markDelivered] Sending admin notifications to', adminEmails.length, 'admins');
+      logger.info('[markDelivered] Sending admin notifications to', adminEmails.length, 'admins');
       
       for (const adminEmail of adminEmails) {
         await sendAdminDeliveryNotificationEmail(
@@ -639,10 +639,10 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
           }
         );
       }
-      console.log('[markDelivered] ✅ Admin delivery notifications sent successfully');
+      logger.info('[markDelivered] ✅ Admin delivery notifications sent successfully');
     } catch (emailError: any) {
-      console.error('[markDelivered] ❌ Failed to send admin delivery notification:', emailError.message);
-      console.error('[markDelivered] Admin email error stack:', emailError.stack);
+      logger.error('[markDelivered] ❌ Failed to send admin delivery notification:', emailError.message);
+      logger.error('[markDelivered] Admin email error stack:', emailError.stack);
     }
 
     res.status(200).json({

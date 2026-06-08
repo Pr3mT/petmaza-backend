@@ -417,7 +417,7 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
       (order.assignedVendors && order.assignedVendors.some((vid) => vid.toString() === userId));
 
     if (!isCustomer && !isAdmin && !isAssignedVendor) {
-      console.error('Access denied for order:', {
+      logger.error('Access denied for order:', {
         orderId: req.params.id,
         customerId,
         userId,
@@ -434,7 +434,7 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
     }
 
     // Debug logging for discount fields
-    console.log('DEBUG - getOrderById - Discount fields:', {
+    logger.info('DEBUG - getOrderById - Discount fields:', {
       orderId: order._id,
       discountAmount: order.discountAmount,
       couponCode: order.couponCode,
@@ -447,7 +447,7 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
       data: { order },
     });
   } catch (error: any) {
-    console.error('Error in getOrderById:', error);
+    logger.error('Error in getOrderById:', error);
     next(error);
   }
 };
@@ -456,7 +456,7 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
 export const getPendingOrders = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendorId = req.user._id.toString();
-    console.log(`[getPendingOrders Controller] Request from vendor: ${vendorId}, User object:`, {
+    logger.info(`[getPendingOrders Controller] Request from vendor: ${vendorId}, User object:`, {
       _id: req.user._id,
       email: req.user.email,
       role: req.user.role,
@@ -464,14 +464,14 @@ export const getPendingOrders = async (req: AuthRequest, res: Response, next: Ne
     
     const orders = await OrderAcceptanceService.getPendingOrders(vendorId);
     
-    console.log(`[getPendingOrders Controller] Returning ${orders.length} orders to vendor ${vendorId}`);
+    logger.info(`[getPendingOrders Controller] Returning ${orders.length} orders to vendor ${vendorId}`);
     
     res.status(200).json({
       success: true,
       data: { orders },
     });
   } catch (error: any) {
-    console.error(`[getPendingOrders Controller] Error:`, error);
+    logger.error(`[getPendingOrders Controller] Error:`, error);
     next(error);
   }
 };
@@ -519,7 +519,7 @@ export const getVendorOrders = async (req: AuthRequest, res: Response, next: Nex
     const vendorId = req.user._id;
     const vendorObjectId = new mongoose.Types.ObjectId(vendorId);
     
-    console.log(`[getVendorOrders] Fetching orders for vendor: ${vendorId}`);
+    logger.info(`[getVendorOrders] Fetching orders for vendor: ${vendorId}`);
     
     const orders = await Order.find({
       assignedVendorId: vendorObjectId,
@@ -530,14 +530,14 @@ export const getVendorOrders = async (req: AuthRequest, res: Response, next: Nex
       .populate('items.product_id', 'name images')
       .sort({ createdAt: -1 });
 
-    console.log(`[getVendorOrders] Found ${orders.length} orders for vendor ${vendorId}`);
+    logger.info(`[getVendorOrders] Found ${orders.length} orders for vendor ${vendorId}`);
     
     res.status(200).json({
       success: true,
       data: { orders: sanitizeOrdersForVendor(orders.map(o => o.toObject())) },
     });
   } catch (error: any) {
-    console.error('[getVendorOrders] Error:', error);
+    logger.error('[getVendorOrders] Error:', error);
     next(error);
   }
 };
@@ -674,7 +674,7 @@ export const updateOrderStatus = async (
       data: { order },
     });
   } catch (error: any) {
-    console.error('[updateOrderStatus] Error:', error);
+    logger.error('[updateOrderStatus] Error:', error);
     next(error);
   }
 };
@@ -707,7 +707,7 @@ export const adminUpdateOrderStatus = async (
     order.status = status as any;
     await order.save();
 
-    console.log(`[adminUpdateOrderStatus] Order ${orderId} status updated to ${status} by admin ${req.user._id}`);
+    logger.info(`[adminUpdateOrderStatus] Order ${orderId} status updated to ${status} by admin ${req.user._id}`);
 
     res.status(200).json({
       success: true,
@@ -715,7 +715,7 @@ export const adminUpdateOrderStatus = async (
       data: { order },
     });
   } catch (error: any) {
-    console.error('[adminUpdateOrderStatus] Error:', error);
+    logger.error('[adminUpdateOrderStatus] Error:', error);
     next(error);
   }
 };
@@ -756,7 +756,7 @@ export const adminAssignOrderToVendor = async (
     order.status = 'ASSIGNED';
     await order.save();
 
-    console.log(`[adminAssignOrderToVendor] Order ${orderId} assigned to vendor ${vendorId} by admin ${req.user._id}`);
+    logger.info(`[adminAssignOrderToVendor] Order ${orderId} assigned to vendor ${vendorId} by admin ${req.user._id}`);
 
     res.status(200).json({
       success: true,
@@ -764,7 +764,7 @@ export const adminAssignOrderToVendor = async (
       data: { order },
     });
   } catch (error: any) {
-    console.error('[adminAssignOrderToVendor] Error:', error);
+    logger.error('[adminAssignOrderToVendor] Error:', error);
     next(error);
   }
 };
@@ -799,7 +799,7 @@ export const adminProcessRefund = async (
     order.refundedAt = new Date();
     await order.save();
 
-    console.log(`[adminProcessRefund] Refund processed for order ${orderId} by admin ${req.user._id}`);
+    logger.info(`[adminProcessRefund] Refund processed for order ${orderId} by admin ${req.user._id}`);
 
     // Send refund completed email to customer
     try {
@@ -814,7 +814,7 @@ export const adminProcessRefund = async (
         );
       }
     } catch (emailError: any) {
-      console.error('[adminProcessRefund] Failed to send refund completed email:', emailError.message);
+      logger.error('[adminProcessRefund] Failed to send refund completed email:', emailError.message);
       // Don't fail the refund if email fails
     }
 
@@ -824,7 +824,7 @@ export const adminProcessRefund = async (
       data: { order },
     });
   } catch (error: any) {
-    console.error('[adminProcessRefund] Error:', error);
+    logger.error('[adminProcessRefund] Error:', error);
     next(error);
   }
 };
@@ -850,7 +850,7 @@ export const getOrderShippingDetails = async (
       data: { shippingDetails: shippingDetails || null },
     });
   } catch (error: any) {
-    console.error('[getOrderShippingDetails] Error:', error);
+    logger.error('[getOrderShippingDetails] Error:', error);
     next(error);
   }
 };

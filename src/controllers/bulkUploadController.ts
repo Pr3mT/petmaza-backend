@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response, NextFunction } from 'express';
 import ExcelJS from 'exceljs';
 import Product from '../models/Product';
@@ -640,7 +641,7 @@ export const bulkUploadProducts = async (
             // Use first variant's prices for vendor assignment record
             const refVariant = insertedProduct.variants?.[0];
             assignVendor(insertedProduct, vendorId, vendorTypeAssign, refVariant).catch(err =>
-              console.error(`[BulkUpload] Vendor assignment failed for ${insertedProduct._id}:`, err)
+              logger.error(`[BulkUpload] Vendor assignment failed for ${insertedProduct._id}:`, err)
             );
           }
         } else {

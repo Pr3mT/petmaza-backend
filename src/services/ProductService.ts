@@ -1,3 +1,5 @@
+import logger from '../config/logger';
+import mongoose from 'mongoose';
 import Product from '../models/Product';
 import Category from '../models/Category';
 import Brand from '../models/Brand';
@@ -272,26 +274,52 @@ export class ProductService {
       //   4. Concatenate (inStock first) and paginate
       // This guarantees out-of-stock products always appear at the END of every
       // page, while the order still varies freshly each browsing session.
-      const allStockDocs: any[] = await Product.find(query)
-        .select('_id isActive inStock hasVariants variants')
-        .lean();
+      // Compute effective in-stock status IN THE DATABASE so we never pull the
+      // (potentially large) per-product `variants` arrays across the wire just to
+      // partition. Only `{ _id, effectiveInStock }` is returned per matching doc.
+      //
+      // $match doesn't auto-cast like find(), so cast the ObjectId fields
+      // (category_id / brand_id) that the query builder leaves as strings.
+      const toOid = (v: any) =>
+        typeof v === 'string' && mongoose.isValidObjectId(v) ? new mongoose.Types.ObjectId(v) : v;
+      const matchQuery: any = { ...query };
+      if (matchQuery.category_id) matchQuery.category_id = toOid(matchQuery.category_id);
+      if (matchQuery.brand_id) {
+        if (matchQuery.brand_id.$in) matchQuery.brand_id = { $in: matchQuery.brand_id.$in.map(toOid) };
+        else matchQuery.brand_id = toOid(matchQuery.brand_id);
+      }
+
+      const allStockDocs: any[] = await Product.aggregate([
+        { $match: matchQuery },
+        {
+          $project: {
+            _id: 1,
+            effectiveInStock: {
+              $and: [
+                { $ne: ['$isActive', false] },
+                { $ne: ['$inStock', false] },
+                {
+                  $cond: [
+                    // variant product (has a non-empty variants array)?
+                    { $and: [{ $eq: ['$hasVariants', true] }, { $isArray: '$variants' }, { $gt: [{ $size: { $ifNull: ['$variants', []] } }, 0] }] },
+                    // in stock iff at least one variant is active
+                    { $anyElementTrue: { $map: { input: '$variants', as: 'v', in: { $ne: ['$$v.isActive', false] } } } },
+                    true,
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      ]);
 
       total = allStockDocs.length;
 
-      // Determine effective inStock for each product (mirrors the logic below)
+      // Partition (tiny objects now — no variants payload)
       const inStockDocs: any[] = [];
       const outOfStockDocs: any[] = [];
-
       for (const doc of allStockDocs) {
-        let effectiveInStock: boolean;
-        if (doc.hasVariants && doc.variants && doc.variants.length > 0) {
-          // Variant product: in-stock only if at least one variant is active
-          effectiveInStock = doc.isActive !== false && doc.inStock !== false &&
-            doc.variants.some((v: any) => v.isActive !== false);
-        } else {
-          effectiveInStock = doc.isActive !== false && doc.inStock !== false;
-        }
-        (effectiveInStock ? inStockDocs : outOfStockDocs).push(doc);
+        (doc.effectiveInStock ? inStockDocs : outOfStockDocs).push(doc);
       }
 
       // Shuffle each group with the same seed (use seed+1 for out-of-stock so
@@ -495,7 +523,7 @@ export class ProductService {
 
   // Update product
   static async updateProduct(id: string, data: any) {
-    console.log('ProductService.updateProduct called with:', {
+    logger.info('ProductService.updateProduct called with:', {
       id,
       mainCategory: data.mainCategory,
       subCategory: data.subCategory,
@@ -534,7 +562,7 @@ export class ProductService {
       throw new AppError('Product not found', 404);
     }
     
-    console.log('Existing product:', {
+    logger.info('Existing product:', {
       id: existingProduct._id,
       name: existingProduct.name,
       mainCategory: existingProduct.mainCategory,
@@ -562,10 +590,10 @@ export class ProductService {
           return variant;
         });
         
-        console.log('Updating with variants:', data.variants.length);
+        logger.info('Updating with variants:', data.variants.length);
       } else if (data.hasVariants === false) {
         // Switching from variant to non-variant product
-        console.log('Converting from variant to non-variant product');
+        logger.info('Converting from variant to non-variant product');
         data.variants = [];
       }
       
@@ -584,7 +612,7 @@ export class ProductService {
         }
       );
       
-      console.log('Variant product updated successfully:', {
+      logger.info('Variant product updated successfully:', {
         id: product?._id,
         name: product?.name,
         mainCategory: product?.mainCategory,
@@ -630,7 +658,7 @@ export class ProductService {
       runValidators: true,
     });
 
-    console.log('Product updated successfully:', {
+    logger.info('Product updated successfully:', {
       id: product?._id,
       name: product?.name,
       mainCategory: product?.mainCategory,

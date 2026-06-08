@@ -158,7 +158,7 @@ export async function sendOrderConfirmationEmail(
   orderData: any
 ) {
   // Debug logging
-  console.log('DEBUG - sendOrderConfirmationEmail - orderData:', {
+  logger.info('DEBUG - sendOrderConfirmationEmail - orderData:', {
     orderId,
     discountAmount: orderData.discountAmount,
     couponCode: orderData.couponCode,
@@ -637,9 +637,9 @@ export async function sendPaymentSuccessEmail(
       items: orderData?.items,
       customerAddress: orderData?.customerAddress,
     });
-    console.log('Payment receipt PDF generated successfully');
+    logger.info('Payment receipt PDF generated successfully');
   } catch (pdfError) {
-    console.error('Failed to generate payment receipt PDF:', pdfError);
+    logger.error('Failed to generate payment receipt PDF:', pdfError);
     // Continue without PDF if generation fails
   }
 

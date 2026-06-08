@@ -16,14 +16,14 @@ export class OrderAcceptanceService {
     const Order = (await import('../models/Order')).default;
     const User = (await import('../models/User')).default;
     
-    console.log(`[getPendingOrders Service] Called with vendor_id: ${vendor_id}`);
+    logger.info(`[getPendingOrders Service] Called with vendor_id: ${vendor_id}`);
     
     // Convert vendor_id to ObjectId
     let vendorObjectId: any;
     if (mongoose.Types.ObjectId.isValid(vendor_id)) {
       vendorObjectId = new mongoose.Types.ObjectId(vendor_id);
     } else {
-      console.error(`[getPendingOrders Service] Invalid vendor_id: ${vendor_id}`);
+      logger.error(`[getPendingOrders Service] Invalid vendor_id: ${vendor_id}`);
       return [];
     }
     
@@ -34,28 +34,28 @@ export class OrderAcceptanceService {
     });
     
     if (!vendorDetails) {
-      console.log(`[getPendingOrders] Vendor not found or not approved: ${vendor_id}`);
+      logger.info(`[getPendingOrders] Vendor not found or not approved: ${vendor_id}`);
       return [];
     }
 
     // MY_SHOP vendors don't see pending orders - all normal orders are directly assigned
     if (vendorDetails.vendorType === 'MY_SHOP') {
-      console.log(`[getPendingOrders] MY_SHOP vendor - no pending orders shown (orders are directly assigned)`);
+      logger.info(`[getPendingOrders] MY_SHOP vendor - no pending orders shown (orders are directly assigned)`);
       return [];
     }
 
     // WAREHOUSE_FULFILLER vendors see competitive broadcast orders
     if (vendorDetails.vendorType === 'WAREHOUSE_FULFILLER') {
-      console.log(`[getPendingOrders] WAREHOUSE_FULFILLER vendor - showing competitive broadcast orders`);
+      logger.info(`[getPendingOrders] WAREHOUSE_FULFILLER vendor - showing competitive broadcast orders`);
       
       // Get assigned subcategories for this fulfiller
       const assignedSubcategories = vendorDetails.assignedSubcategories || [];
       if (assignedSubcategories.length === 0) {
-        console.log(`[getPendingOrders] WAREHOUSE_FULFILLER has no assigned subcategories`);
+        logger.info(`[getPendingOrders] WAREHOUSE_FULFILLER has no assigned subcategories`);
         return [];
       }
 
-      console.log(`[getPendingOrders] Assigned subcategories:`, assignedSubcategories);
+      logger.info(`[getPendingOrders] Assigned subcategories:`, assignedSubcategories);
 
       // Find all products in these subcategories
       const Product = (await import('../models/Product')).default;
@@ -63,7 +63,7 @@ export class OrderAcceptanceService {
         subCategory: { $in: assignedSubcategories },
       }).distinct('_id');
 
-      console.log(`[getPendingOrders] Found ${subcategoryProductIds.length} products in assigned subcategories`);
+      logger.info(`[getPendingOrders] Found ${subcategoryProductIds.length} products in assigned subcategories`);
 
       // Get PENDING broadcast orders (assignedVendorId: null) with products from these subcategories
       const broadcastOrders = await Order.find({
@@ -80,7 +80,7 @@ export class OrderAcceptanceService {
         .sort({ createdAt: -1 })
         .lean();
 
-      console.log(`[getPendingOrders] Found ${broadcastOrders.length} broadcast orders for WAREHOUSE_FULFILLER`);
+      logger.info(`[getPendingOrders] Found ${broadcastOrders.length} broadcast orders for WAREHOUSE_FULFILLER`);
 
       // Add acceptance deadline and competitor count info; strip vendor-hidden financial fields
       const eligibleOrders = sanitizeOrdersForVendor(broadcastOrders.map(order => ({
@@ -89,12 +89,12 @@ export class OrderAcceptanceService {
         isCompetitive: true,
       })));
 
-      console.log(`[getPendingOrders] Returning ${eligibleOrders.length} eligible broadcast orders`);
+      logger.info(`[getPendingOrders] Returning ${eligibleOrders.length} eligible broadcast orders`);
       return eligibleOrders;
     }
 
     // Only PRIME vendors see pending Prime orders
-    console.log(`[getPendingOrders] PRIME vendor - showing pending Prime orders`);
+    logger.info(`[getPendingOrders] PRIME vendor - showing pending Prime orders`);
 
     // Get all PENDING Prime orders that are either:
     // 1. Not yet assigned (broadcast orders), OR
@@ -121,17 +121,17 @@ export class OrderAcceptanceService {
       .sort({ createdAt: -1 })
       .lean();
 
-    console.log(`[getPendingOrders] Found ${allPendingOrders.length} pending Prime orders`);
+    logger.info(`[getPendingOrders] Found ${allPendingOrders.length} pending Prime orders`);
     
     // Filter orders based on assignment and vendor details
     const eligibleOrders = [];
     
     for (const order of allPendingOrders) {
-      console.log(`[getPendingOrders] Checking order ${order._id}`);
+      logger.info(`[getPendingOrders] Checking order ${order._id}`);
       
       // If order is directly assigned to this vendor, skip all checks - it's theirs
       if (order.assignedVendorId && order.assignedVendorId.toString() === vendorObjectId.toString()) {
-        console.log(`[getPendingOrders] Order ${order._id} is directly assigned to this Prime vendor - adding to eligible orders`);
+        logger.info(`[getPendingOrders] Order ${order._id} is directly assigned to this Prime vendor - adding to eligible orders`);
         eligibleOrders.push(order);
         continue; // Skip brand and availability checks
       }
@@ -163,7 +163,7 @@ export class OrderAcceptanceService {
           
           if (!productBrandId || !vendorBrandIds.includes(productBrandId)) {
             const productName = typeof product === 'object' && product?.name ? product.name : 'unknown';
-            console.log(`[getPendingOrders] Order ${order._id} skipped - Prime vendor doesn't handle brand for product ${productName}`);
+            logger.info(`[getPendingOrders] Order ${order._id} skipped - Prime vendor doesn't handle brand for product ${productName}`);
             allProductsMatchBrand = false;
             break;
           }
@@ -173,22 +173,22 @@ export class OrderAcceptanceService {
           continue;
         }
         
-        console.log(`[getPendingOrders] Order ${order._id} passed Prime vendor brand check`);
+        logger.info(`[getPendingOrders] Order ${order._id} passed Prime vendor brand check`);
       } else {
         // No brands configured - show all Prime orders to this vendor
-        console.log(`[getPendingOrders] Order ${order._id} - Prime vendor has no brands configured, showing order`);
+        logger.info(`[getPendingOrders] Order ${order._id} - Prime vendor has no brands configured, showing order`);
       }
 
       eligibleOrders.push(order);
     }
 
-    console.log(`[getPendingOrders] Returning ${eligibleOrders.length} eligible Prime orders after filtering`);
+    logger.info(`[getPendingOrders] Returning ${eligibleOrders.length} eligible Prime orders after filtering`);
     return sanitizeOrdersForVendor(eligibleOrders);
   }
 
   // Accept order - first come first serve
   static async acceptOrder(order_id: string, vendor_id: string) {
-    console.log('[OrderAcceptanceService] acceptOrder called for order:', order_id, 'vendor:', vendor_id);
+    logger.info('[OrderAcceptanceService] acceptOrder called for order:', order_id, 'vendor:', vendor_id);
     const order = await Order.findById(order_id);
 
     if (!order) {
@@ -384,7 +384,7 @@ export class OrderAcceptanceService {
           selectedVariant: (item as any).selectedVariant,
         });
       } catch (error) {
-        console.error(`Failed to record sale for product ${item.product_id}:`, error);
+        logger.error(`Failed to record sale for product ${item.product_id}:`, error);
         // Continue even if sales history fails - order is already accepted
       }
     }
@@ -410,7 +410,7 @@ export class OrderAcceptanceService {
             customerAddress: updatedOrder.customerAddress,
           }
         ).catch((err: any) =>
-          console.error('[OrderAcceptanceService] Fulfiller assignment email failed:', err.message)
+          logger.error('[OrderAcceptanceService] Fulfiller assignment email failed:', err.message)
         );
       }
 
@@ -439,7 +439,7 @@ export class OrderAcceptanceService {
         vendor_id: { $ne: vendor_id }, // Exclude the vendor who accepted
       }).populate('vendor_id', 'name email');
 
-      console.log(`[OrderAcceptanceService] Found ${eligibleFulfillers.length} other fulfillers to notify about order ${order_id}`);
+      logger.info(`[OrderAcceptanceService] Found ${eligibleFulfillers.length} other fulfillers to notify about order ${order_id}`);
 
       // Notify losers via WebSocket (if available)
       try {
@@ -451,10 +451,10 @@ export class OrderAcceptanceService {
             winnerName: acceptingVendorName,
             message: `Order was accepted by ${acceptingVendorName}`,
           });
-          console.log(`📢 WebSocket notification sent to loser vendor ${loserId}`);
+          logger.info(`📢 WebSocket notification sent to loser vendor ${loserId}`);
         }
       } catch (wsError) {
-        console.error('[OrderAcceptanceService] WebSocket notification failed:', wsError);
+        logger.error('[OrderAcceptanceService] WebSocket notification failed:', wsError);
         // Continue even if WebSocket fails
       }
 
@@ -468,14 +468,14 @@ export class OrderAcceptanceService {
             updatedOrder._id.toString(),
             acceptingVendorName
           );
-          console.log(`📧 Order taken email sent to ${(fulfiller.vendor_id as any).email}`);
+          logger.info(`📧 Order taken email sent to ${(fulfiller.vendor_id as any).email}`);
         } catch (emailError) {
-          console.error(`Failed to queue email for ${(fulfiller.vendor_id as any).email}:`, emailError);
+          logger.error(`Failed to queue email for ${(fulfiller.vendor_id as any).email}:`, emailError);
           // Continue even if email fails
         }
       }
     } catch (notifyError) {
-      console.error('[OrderAcceptanceService] Failed to notify other vendors:', notifyError);
+      logger.error('[OrderAcceptanceService] Failed to notify other vendors:', notifyError);
       // Don't fail the acceptance if notifications fail - order is already accepted
     }
 
@@ -588,18 +588,18 @@ export class OrderAcceptanceService {
     
     const isAssigned = assignedVendorId !== null && assignedVendorId !== undefined;
 
-    console.log(`[getOrderDetails] Order ${order_id}, status: ${order.status}, assignedVendorId: ${assignedVendorId}, isAssigned: ${isAssigned}, vendor_id: ${vendor_id}`);
+    logger.info(`[getOrderDetails] Order ${order_id}, status: ${order.status}, assignedVendorId: ${assignedVendorId}, isAssigned: ${isAssigned}, vendor_id: ${vendor_id}`);
 
     // If order is already accepted/assigned to a vendor, only that vendor can view
     if (isAssigned && (order.status === 'ACCEPTED' || order.status === 'ASSIGNED')) {
       if (assignedVendorId !== vendor_id) {
-        console.log(`[getOrderDetails] Order is assigned to ${assignedVendorId}, but vendor ${vendor_id} is trying to access`);
+        logger.info(`[getOrderDetails] Order is assigned to ${assignedVendorId}, but vendor ${vendor_id} is trying to access`);
       throw new AppError('Order not assigned to this vendor', 403);
     }
     } 
     // If order is PENDING or ASSIGNED but not yet accepted, check if vendor is eligible
     else if (order.status === 'PENDING' || (order.status === 'ASSIGNED' && !isAssigned)) {
-      console.log(`[getOrderDetails] Order is pending/unassigned, checking vendor eligibility`);
+      logger.info(`[getOrderDetails] Order is pending/unassigned, checking vendor eligibility`);
 
       if (order.isPrime) {
         // After unification, Product IS the prime listing — check directly

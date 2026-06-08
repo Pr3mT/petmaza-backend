@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import Review from '../models/Review';
@@ -12,7 +13,7 @@ export const createReview = async (req: Request, res: Response) => {
     // Check if user is authenticated
     const user = (req as any).user;
     if (!user) {
-      console.log('❌ User not authenticated - req.user is missing');
+      logger.info('❌ User not authenticated - req.user is missing');
       return res.status(401).json({ 
         success: false,
         message: 'Authentication required' 
@@ -23,14 +24,14 @@ export const createReview = async (req: Request, res: Response) => {
     const customer_id = user._id || user.id;
     
     if (!customer_id) {
-      console.log('❌ User object exists but has no ID:', user);
+      logger.info('❌ User object exists but has no ID:', user);
       return res.status(401).json({ 
         success: false,
         message: 'Invalid user data' 
       });
     }
 
-    console.log('📝 Creating review with data:', { 
+    logger.info('📝 Creating review with data:', { 
       product_id, 
       order_id, 
       rating, 
@@ -42,7 +43,7 @@ export const createReview = async (req: Request, res: Response) => {
 
     // Validate required fields
     if (!product_id || !order_id || !rating) {
-      console.log('❌ Missing required fields');
+      logger.info('❌ Missing required fields');
       return res.status(400).json({ 
         success: false,
         message: 'Missing required fields: product_id, order_id, and rating are required' 
@@ -52,26 +53,26 @@ export const createReview = async (req: Request, res: Response) => {
     // First, check if order exists at all
     const orderExists = await Order.findById(order_id);
     if (!orderExists) {
-      console.log('❌ Order not found:', order_id);
+      logger.info('❌ Order not found:', order_id);
       return res.status(400).json({ 
         success: false,
         message: 'Order not found' 
       });
     }
 
-    console.log('✅ Order found:', orderExists._id, 'Status:', orderExists.status);
+    logger.info('✅ Order found:', orderExists._id, 'Status:', orderExists.status);
 
     // Check if order belongs to customer
     const orderCustomerId = orderExists.customer_id;
     if (orderCustomerId?.toString() !== customer_id.toString()) {
-      console.log('❌ Order does not belong to customer');
+      logger.info('❌ Order does not belong to customer');
       return res.status(403).json({ 
         success: false,
         message: 'This order does not belong to you' 
       });
     }
 
-    console.log('✅ Order belongs to customer');
+    logger.info('✅ Order belongs to customer');
 
     // Verify product is in the order
     const productInOrder = orderExists.items.some(item => {
@@ -79,26 +80,26 @@ export const createReview = async (req: Request, res: Response) => {
     });
     
     if (!productInOrder) {
-      console.log('❌ Product not in order. Order items:', orderExists.items.map(i => i.product_id));
+      logger.info('❌ Product not in order. Order items:', orderExists.items.map(i => i.product_id));
       return res.status(400).json({ 
         success: false,
         message: 'Product not found in this order' 
       });
     }
 
-    console.log('✅ Product is in order');
+    logger.info('✅ Product is in order');
 
     // Check if review already exists
     const existingReview = await Review.findOne({ product_id, order_id, customer_id });
     if (existingReview) {
-      console.log('❌ Review already exists');
+      logger.info('❌ Review already exists');
       return res.status(400).json({ 
         success: false,
         message: 'You have already reviewed this product for this order' 
       });
     }
 
-    console.log('✅ No existing review found, creating new review...');
+    logger.info('✅ No existing review found, creating new review...');
 
     // Create the review
     const review = await Review.create({
@@ -115,7 +116,7 @@ export const createReview = async (req: Request, res: Response) => {
 
     await review.populate('customer_id', 'name');
 
-    console.log('✅ Review created successfully:', review._id);
+    logger.info('✅ Review created successfully:', review._id);
 
     // Update product rating statistics
     await updateProductRatings(product_id);
@@ -126,12 +127,12 @@ export const createReview = async (req: Request, res: Response) => {
       review,
     });
   } catch (error: any) {
-    console.error('❌ ============ CREATE REVIEW ERROR ============');
-    console.error('Error message:', error.message);
-    console.error('Error name:', error.name);
-    console.error('Error stack:', error.stack);
-    console.error('Full error:', JSON.stringify(error, null, 2));
-    console.error('============================================');
+    logger.error('❌ ============ CREATE REVIEW ERROR ============');
+    logger.error('Error message:', error.message);
+    logger.error('Error name:', error.name);
+    logger.error('Error stack:', error.stack);
+    logger.error('Full error:', JSON.stringify(error, null, 2));
+    logger.error('============================================');
     
     res.status(500).json({
       success: false,
@@ -171,10 +172,10 @@ async function updateProductRatings(productId: any) {
         averageRating: Math.round(stats[0].averageRating * 10) / 10, // Round to 1 decimal
         totalReviews: stats[0].totalReviews,
       });
-      console.log('✅ Product ratings updated:', productId);
+      logger.info('✅ Product ratings updated:', productId);
     }
   } catch (error) {
-    console.error('❌ Error updating product ratings:', error);
+    logger.error('❌ Error updating product ratings:', error);
     // Don't throw - review is already created
   }
 }
@@ -246,7 +247,7 @@ export const getProductReviews = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Get reviews error:', error);
+    logger.error('Get reviews error:', error);
     res.status(500).json({ message: 'Failed to fetch reviews', error: error.message });
   }
 };
@@ -274,7 +275,7 @@ export const getCustomerReviews = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Get customer reviews error:', error);
+    logger.error('Get customer reviews error:', error);
     res.status(500).json({ message: 'Failed to fetch reviews', error: error.message });
   }
 };
@@ -303,7 +304,7 @@ export const updateReview = async (req: Request, res: Response) => {
       review,
     });
   } catch (error: any) {
-    console.error('Update review error:', error);
+    logger.error('Update review error:', error);
     res.status(500).json({ message: 'Failed to update review', error: error.message });
   }
 };
@@ -323,7 +324,7 @@ export const deleteReview = async (req: Request, res: Response) => {
       message: 'Review deleted successfully',
     });
   } catch (error: any) {
-    console.error('Delete review error:', error);
+    logger.error('Delete review error:', error);
     res.status(500).json({ message: 'Failed to delete review', error: error.message });
   }
 };
@@ -348,7 +349,7 @@ export const markReviewHelpful = async (req: Request, res: Response) => {
       helpfulCount: review.helpfulCount,
     });
   } catch (error: any) {
-    console.error('Mark helpful error:', error);
+    logger.error('Mark helpful error:', error);
     res.status(500).json({ message: 'Failed to mark review as helpful', error: error.message });
   }
 };
@@ -384,7 +385,7 @@ export const respondToReview = async (req: Request, res: Response) => {
       review,
     });
   } catch (error: any) {
-    console.error('Respond to review error:', error);
+    logger.error('Respond to review error:', error);
     res.status(500).json({ message: 'Failed to respond to review', error: error.message });
   }
 };
@@ -424,7 +425,7 @@ export const getReviewableProducts = async (req: Request, res: Response) => {
       reviewableProducts,
     });
   } catch (error: any) {
-    console.error('Get reviewable products error:', error);
+    logger.error('Get reviewable products error:', error);
     res.status(500).json({ message: 'Failed to fetch reviewable products', error: error.message });
   }
 };

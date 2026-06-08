@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response, NextFunction } from 'express';
 import ProductNotification from '../models/ProductNotification';
 import Product from '../models/Product';
@@ -74,11 +75,11 @@ export const notifyWaitingCustomers = async (productId: string, productName: str
   });
 
   if (notifications.length === 0) {
-    console.log(`📭 [Notify Me] No pending subscribers for product "${productName}" (${productId})`);
+    logger.info(`📭 [Notify Me] No pending subscribers for product "${productName}" (${productId})`);
     return;
   }
 
-  console.log(`📧 [Notify Me] Sending notifications to ${notifications.length} subscriber(s) for "${productName}"`);
+  logger.info(`📧 [Notify Me] Sending notifications to ${notifications.length} subscriber(s) for "${productName}"`);
 
   let successCount = 0;
   let failCount = 0;
@@ -86,7 +87,7 @@ export const notifyWaitingCustomers = async (productId: string, productName: str
   // Send emails sequentially to avoid rate-limiting issues with ZeptoMail
   for (const notification of notifications) {
     try {
-      console.log(`📨 [Notify Me] Emailing: ${notification.email}`);
+      logger.info(`📨 [Notify Me] Emailing: ${notification.email}`);
       await sendProductAvailableEmail({
         email: notification.email,
         name: notification.name || 'Customer',
@@ -100,14 +101,14 @@ export const notifyWaitingCustomers = async (productId: string, productName: str
       notification.notifiedAt = new Date();
       await notification.save();
 
-      console.log(`✅ [Notify Me] Notified: ${notification.email}`);
+      logger.info(`✅ [Notify Me] Notified: ${notification.email}`);
       successCount++;
     } catch (error: any) {
-      console.error(`❌ [Notify Me] Failed to notify ${notification.email}:`, error?.message || error);
+      logger.error(`❌ [Notify Me] Failed to notify ${notification.email}:`, error?.message || error);
       failCount++;
       // Continue to next subscriber even if this one fails
     }
   }
 
-  console.log(`📬 [Notify Me] Done for "${productName}": ${successCount} sent, ${failCount} failed`);
+  logger.info(`📬 [Notify Me] Done for "${productName}": ${successCount} sent, ${failCount} failed`);
 };

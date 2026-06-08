@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response, NextFunction } from 'express';
 import { ProductService } from '../services/ProductService';
 import { AppError } from '../middlewares/errorHandler';
@@ -20,9 +21,9 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     }
 
     // ── DEBUG: Log the incoming payload so mismatches are visible in logs ──
-    console.log('\n[createProduct] ===== INCOMING req.body =====');
-    console.log(JSON.stringify(req.body, null, 2));
-    console.log('[createProduct] =============================================\n');
+    logger.info('\n[createProduct] ===== INCOMING req.body =====');
+    logger.info(JSON.stringify(req.body, null, 2));
+    logger.info('[createProduct] =============================================\n');
     
     let productData = { 
       ...req.body,
@@ -91,17 +92,17 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     const product = await ProductService.createProduct(productData);
 
     // ── DEBUG: Log the final saved product so pricing can be verified ──
-    console.log('\n[createProduct] ===== PRODUCT SAVED TO DB =====');
-    console.log(`ID: ${product._id}`);
-    console.log(`hasVariants: ${product.hasVariants}`);
-    console.log(`mrp: ${product.mrp}  sellingPrice: ${product.sellingPrice}  purchasePrice: ${product.purchasePrice}`);
-    console.log(`discount: ${product.discount}  sellingPercentage: ${product.sellingPercentage}  purchasePercentage: ${product.purchasePercentage}`);
+    logger.info('\n[createProduct] ===== PRODUCT SAVED TO DB =====');
+    logger.info(`ID: ${product._id}`);
+    logger.info(`hasVariants: ${product.hasVariants}`);
+    logger.info(`mrp: ${product.mrp}  sellingPrice: ${product.sellingPrice}  purchasePrice: ${product.purchasePrice}`);
+    logger.info(`discount: ${product.discount}  sellingPercentage: ${product.sellingPercentage}  purchasePercentage: ${product.purchasePercentage}`);
     if (product.variants && product.variants.length > 0) {
-      console.log('variants:', JSON.stringify(product.variants.map((v: any) => ({
+      logger.info('variants:', JSON.stringify(product.variants.map((v: any) => ({
         mrp: v.mrp, sellingPrice: v.sellingPrice, purchasePrice: v.purchasePrice, discount: v.discount
       })), null, 2));
     }
-    console.log('[createProduct] =============================================\n');
+    logger.info('[createProduct] =============================================\n');
     
     // Clear product cache so customers see the new product immediately
     clearCache('/products');
@@ -205,7 +206,7 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
     }
 
     // Debug logging
-    console.log('🔍 getProducts - User Info:', {
+    logger.info('🔍 getProducts - User Info:', {
       hasUser: !!req.user,
       userRole: req.user?.role,
       userEmail: req.user?.email,
@@ -219,11 +220,11 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
     if (req.user && isAdminRole(req.user.role)) {
       // Admin sees everything (including inactive)
       filters.isActive = undefined;
-      console.log('✅ Admin detected - showing all products');
+      logger.info('✅ Admin detected - showing all products');
     } else {
       // Customers see only active products
       filters.isActive = true;
-      console.log('👤 Customer/public - showing active products only');
+      logger.info('👤 Customer/public - showing active products only');
     }
 
     const { products, total } = await ProductService.getAllProducts(filters);
@@ -326,11 +327,11 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
           });
         if (newMapping) {
           req.body.addedBy = newMapping.fulfiller_id;
-          console.log(`[updateProduct] ✅ subCategory changed '${oldSubCat}' -> '${newSubCat}', re-assigning addedBy to fulfiller ${newMapping.fulfiller_id}`);
+          logger.info(`[updateProduct] ✅ subCategory changed '${oldSubCat}' -> '${newSubCat}', re-assigning addedBy to fulfiller ${newMapping.fulfiller_id}`);
         } else {
           // No fulfiller mapped for this subcategory — clear ownership
           req.body.addedBy = null;
-          console.log(`[updateProduct] ⚠️ No fulfiller mapped for '${newSubCat}', clearing addedBy`);
+          logger.info(`[updateProduct] ⚠️ No fulfiller mapped for '${newSubCat}', clearing addedBy`);
         }
       }
     }
@@ -343,7 +344,7 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
 
     if (nowActive || nowInStock) {
       const reason = nowActive ? 'isActive false→true' : 'inStock false→true';
-      console.log(`🔔 [Notify Me] Product "${product.name}" became available (${reason}) — sending notifications`);
+      logger.info(`🔔 [Notify Me] Product "${product.name}" became available (${reason}) — sending notifications`);
       try {
         await notifyWaitingCustomers(
           product._id.toString(),
@@ -352,7 +353,7 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
         );
       } catch (err) {
         // Log but don't fail the product update response
-        console.error('❌ [Notify Me] Error during customer notification:', err);
+        logger.error('❌ [Notify Me] Error during customer notification:', err);
       }
     }
     

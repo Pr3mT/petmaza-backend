@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response } from 'express';
 import recommendationService from '../services/recommendationService';
 
@@ -17,7 +18,7 @@ export const getPersonalizedRecommendations = async (req: Request, res: Response
       type: 'personalized',
     });
   } catch (error: any) {
-    console.error('Get personalized recommendations error:', error);
+    logger.error('Get personalized recommendations error:', error);
     res.status(500).json({ message: 'Failed to fetch recommendations', error: error.message });
   }
 };
@@ -38,7 +39,7 @@ export const getSimilarProducts = async (req: Request, res: Response) => {
       type: 'similar',
     });
   } catch (error: any) {
-    console.error('Get similar products error:', error);
+    logger.error('Get similar products error:', error);
     res.status(500).json({ message: 'Failed to fetch similar products', error: error.message });
   }
 };
@@ -55,7 +56,7 @@ export const getTrendingProducts = async (req: Request, res: Response) => {
       type: 'trending',
     });
   } catch (error: any) {
-    console.error('Get trending products error:', error);
+    logger.error('Get trending products error:', error);
     res.status(500).json({ message: 'Failed to fetch trending products', error: error.message });
   }
 };
@@ -72,7 +73,7 @@ export const getTopRatedProducts = async (req: Request, res: Response) => {
       type: 'top_rated',
     });
   } catch (error: any) {
-    console.error('Get top rated products error:', error);
+    logger.error('Get top rated products error:', error);
     res.status(500).json({ message: 'Failed to fetch top rated products', error: error.message });
   }
 };
@@ -93,7 +94,7 @@ export const getFrequentlyBoughtTogether = async (req: Request, res: Response) =
       type: 'frequently_bought_together',
     });
   } catch (error: any) {
-    console.error('Get frequently bought together error:', error);
+    logger.error('Get frequently bought together error:', error);
     res.status(500).json({
       message: 'Failed to fetch frequently bought together products',
       error: error.message,
@@ -120,7 +121,7 @@ export const getHomepageRecommendations = async (req: Request, res: Response) =>
       forYou: featured,
     });
   } catch (error: any) {
-    console.error('Get homepage recommendations error:', error);
+    logger.error('Get homepage recommendations error:', error);
     res.status(500).json({
       message: 'Failed to fetch homepage recommendations',
       error: error.message,

@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import Razorpay from 'razorpay';
@@ -524,7 +525,7 @@ export const downloadResultCertificatePdf = async (req: AuthRequest, res: Respon
     const frontendUrl = process.env.FRONTEND_URL || 'https://petmaza.com';
     const verificationUrl = `${frontendUrl}/dna-verify?requestId=${id}&birdIndex=${birdPosition}`;
 
-    console.log('[PDF Debug] birdName:', JSON.stringify(bird.birdName), '| collectionDateTime:', bird.collectionDateTime, '| updatedAt:', serviceRequest.updatedAt);
+    logger.info('[PDF Debug] birdName:', JSON.stringify(bird.birdName), '| collectionDateTime:', bird.collectionDateTime, '| updatedAt:', serviceRequest.updatedAt);
 
     const pdfBuffer = await generateDnaResultCertificatePdf({
       requestId: id,

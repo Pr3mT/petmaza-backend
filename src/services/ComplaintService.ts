@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import Complaint from '../models/Complaint';
 import Order from '../models/Order';
 import Product from '../models/Product';
@@ -16,8 +17,8 @@ export class ComplaintService {
     priority?: 'low' | 'medium' | 'high' | 'urgent';
     issueType?: 'product_quality' | 'damaged_defective' | 'incorrect_product' | 'missing_items' | 'description_mismatch' | 'other';
   }) {
-    console.log('📋 ===== COMPLAINT SERVICE - START =====');
-    console.log('📥 Received data:', JSON.stringify(data, null, 2));
+    logger.info('📋 ===== COMPLAINT SERVICE - START =====');
+    logger.info('📥 Received data:', JSON.stringify(data, null, 2));
     
     let vendor_id;
     let fulfiller_id;
@@ -30,19 +31,19 @@ export class ComplaintService {
       data.order_id.trim().length > 10 // MongoDB ObjectId is 24 chars, but at least 10
     );
 
-    console.log('🔍 Should validate order?', shouldValidateOrder);
-    console.log('📦 order_id value:', data.order_id, '| type:', typeof data.order_id);
+    logger.info('🔍 Should validate order?', shouldValidateOrder);
+    logger.info('📦 order_id value:', data.order_id, '| type:', typeof data.order_id);
 
     if (shouldValidateOrder) {
       try {
-        console.log('✅ VALIDATING ORDER:', data.order_id);
+        logger.info('✅ VALIDATING ORDER:', data.order_id);
         const order = await Order.findById(data.order_id);
         if (!order) {
-          console.log('❌ Order not found with ID:', data.order_id);
+          logger.info('❌ Order not found with ID:', data.order_id);
           throw new AppError('Order not found', 404);
         }
 
-        console.log('✅ Order found:', order._id);
+        logger.info('✅ Order found:', order._id);
 
         if (order.customer_id.toString() !== data.customer_id) {
           throw new AppError('Order does not belong to this customer', 403);
@@ -62,35 +63,35 @@ export class ComplaintService {
         fulfiller_id = (order as any).fulfiller_id; // fulfiller assigned to this order if any
         finalOrderId = data.order_id;
         
-        console.log('✅ Order validation complete. Vendor:', vendor_id, '| Fulfiller:', fulfiller_id);
+        logger.info('✅ Order validation complete. Vendor:', vendor_id, '| Fulfiller:', fulfiller_id);
       } catch (error) {
-        console.error('❌ Order validation failed:', error);
+        logger.error('❌ Order validation failed:', error);
         throw error;
       }
     } else {
-      console.log('⏭️  SKIPPING ORDER VALIDATION - Creating complaint without order');
+      logger.info('⏭️  SKIPPING ORDER VALIDATION - Creating complaint without order');
     }
 
     // Get product details
-    console.log('📦 Fetching product with ID:', data.product_id);
+    logger.info('📦 Fetching product with ID:', data.product_id);
     const product = await Product.findById(data.product_id);
     if (!product) {
-      console.log('❌ Product not found with ID:', data.product_id);
+      logger.info('❌ Product not found with ID:', data.product_id);
       throw new AppError('Product not found', 404);
     }
-    console.log('✅ Product found:', product.name);
+    logger.info('✅ Product found:', product.name);
 
     // If no order, get vendor from product
     if (!shouldValidateOrder && !vendor_id) {
       // Check for primeVendor_id (for prime products) or addedBy (for regular products)
       vendor_id = product.primeVendor_id || product.addedBy;
       if (vendor_id) {
-        console.log('🏪 Using vendor from product:', vendor_id);
-        console.log('   - isPrime:', product.isPrime);
-        console.log('   - primeVendor_id:', product.primeVendor_id);
-        console.log('   - addedBy:', product.addedBy);
+        logger.info('🏪 Using vendor from product:', vendor_id);
+        logger.info('   - isPrime:', product.isPrime);
+        logger.info('   - primeVendor_id:', product.primeVendor_id);
+        logger.info('   - addedBy:', product.addedBy);
       } else {
-        console.log('⚠️ No vendor found for product');
+        logger.info('⚠️ No vendor found for product');
       }
     }
 
@@ -116,14 +117,14 @@ export class ComplaintService {
       complaintData.fulfiller_id = fulfiller_id;
     }
 
-    console.log('💾 Creating complaint with cleaned data:');
-    console.log(JSON.stringify(complaintData, null, 2));
+    logger.info('💾 Creating complaint with cleaned data:');
+    logger.info(JSON.stringify(complaintData, null, 2));
 
     const complaint = await Complaint.create(complaintData);
 
-    console.log('✅ ===== COMPLAINT CREATED SUCCESSFULLY =====');
-    console.log('🎉 Complaint ID:', complaint._id);
-    console.log('');
+    logger.info('✅ ===== COMPLAINT CREATED SUCCESSFULLY =====');
+    logger.info('🎉 Complaint ID:', complaint._id);
+    logger.info('');
     
     return complaint;
   }
@@ -168,13 +169,13 @@ export class ComplaintService {
 
   // Get complaints for fulfiller
   static async getFulfillerComplaints(fulfiller_id: string) {
-    console.log('🚚 ===== GET FULFILLER COMPLAINTS =====');
-    console.log('📥 Fulfiller ID:', fulfiller_id);
+    logger.info('🚚 ===== GET FULFILLER COMPLAINTS =====');
+    logger.info('📥 Fulfiller ID:', fulfiller_id);
 
     // 1. Get fulfiller's assigned subcategories
     const vendorDetails = await VendorDetails.findOne({ vendor_id: fulfiller_id });
     const assignedSubcategories = vendorDetails?.assignedSubcategories || [];
-    console.log('📦 Assigned subcategories:', assignedSubcategories);
+    logger.info('📦 Assigned subcategories:', assignedSubcategories);
 
     // 2. Find products in those subcategories
     let productIdsInSubcategories: any[] = [];
@@ -182,7 +183,7 @@ export class ComplaintService {
       const products = await Product.find({ subCategory: { $in: assignedSubcategories } }).select('_id');
       productIdsInSubcategories = products.map(p => p._id);
     }
-    console.log(`📦 Products in subcategories: ${productIdsInSubcategories.length}`);
+    logger.info(`📦 Products in subcategories: ${productIdsInSubcategories.length}`);
 
     // 3. Query: fulfiller_id matches OR product is in fulfiller's subcategories
     const query: any = {
@@ -201,16 +202,16 @@ export class ComplaintService {
       .populate('resolvedBy', 'name email')
       .sort({ createdAt: -1 });
 
-    console.log(`✅ Found ${complaints.length} complaints for fulfiller`);
-    console.log('');
+    logger.info(`✅ Found ${complaints.length} complaints for fulfiller`);
+    logger.info('');
 
     return complaints;
   }
 
   // Get complaints for vendor (prime/myshop)
   static async getVendorComplaints(vendor_id: string) {
-    console.log('🏪 ===== GET VENDOR COMPLAINTS =====');
-    console.log('📥 Vendor ID:', vendor_id);
+    logger.info('🏪 ===== GET VENDOR COMPLAINTS =====');
+    logger.info('📥 Vendor ID:', vendor_id);
     
     const complaints = await Complaint.find({ vendor_id })
       .populate('customer_id', 'name email phone')
@@ -221,8 +222,8 @@ export class ComplaintService {
       .populate('resolvedBy', 'name email')
       .sort({ createdAt: -1 });
 
-    console.log(`✅ Found ${complaints.length} complaints for vendor`);
-    console.log('');
+    logger.info(`✅ Found ${complaints.length} complaints for vendor`);
+    logger.info('');
     
     return complaints;
   }

@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import sharp from 'sharp';
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from './errorHandler';
@@ -111,11 +112,11 @@ export const compressImage = async (
     const compressedSize = compressedBuffer.length;
     const savings = ((1 - compressedSize / originalSize) * 100).toFixed(1);
     
-    console.log(`Image compressed: ${(originalSize / 1024).toFixed(1)}KB → ${(compressedSize / 1024).toFixed(1)}KB (${savings}% savings)`);
+    logger.info(`Image compressed: ${(originalSize / 1024).toFixed(1)}KB → ${(compressedSize / 1024).toFixed(1)}KB (${savings}% savings)`);
     
     return compressedBuffer;
   } catch (error: any) {
-    console.error('Image compression error:', error);
+    logger.error('Image compression error:', error);
     throw new Error(`Failed to compress image: ${error.message}`);
   }
 };
@@ -135,7 +136,7 @@ export const compressUploadedImages = (preset: string | CompressionConfig = 'def
 
       // Handle single file upload
       if (req.file) {
-        console.log(`Compressing single image: ${req.file.originalname}`);
+        logger.info(`Compressing single image: ${req.file.originalname}`);
         req.file.buffer = await compressImage(req.file.buffer, config);
         
         // Update mimetype to match the compressed format
@@ -150,7 +151,7 @@ export const compressUploadedImages = (preset: string | CompressionConfig = 'def
 
       // Handle multiple files upload
       if (req.files && Array.isArray(req.files)) {
-        console.log(`Compressing ${req.files.length} images`);
+        logger.info(`Compressing ${req.files.length} images`);
         const compressionPromises = req.files.map(async (file) => {
           file.buffer = await compressImage(file.buffer, config);
           

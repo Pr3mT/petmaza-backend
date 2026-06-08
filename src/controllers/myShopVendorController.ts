@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middlewares/auth';
 import Order from '../models/Order';
@@ -75,7 +76,7 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
     const { orderId } = req.params;
     const vendor = req.user;
 
-    console.log('[myShop:acceptOrder] Request received:', {
+    logger.info('[myShop:acceptOrder] Request received:', {
       orderId,
       userId: vendor?._id,
       userRole: vendor?.role,
@@ -83,35 +84,35 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
     });
 
     if (vendor.vendorType !== 'MY_SHOP') {
-      console.log('[myShop:acceptOrder] Access denied - not a MY_SHOP vendor');
+      logger.info('[myShop:acceptOrder] Access denied - not a MY_SHOP vendor');
       return next(new AppError('Access denied. Only MY_SHOP vendors can accept orders.', 403));
     }
 
     const order = await Order.findById(orderId);
 
     if (!order) {
-      console.log('[myShop:acceptOrder] Order not found:', orderId);
+      logger.info('[myShop:acceptOrder] Order not found:', orderId);
       return next(new AppError('Order not found', 404));
     }
 
-    console.log('[myShop:acceptOrder] Order found:', {
+    logger.info('[myShop:acceptOrder] Order found:', {
       orderId: order._id,
       status: order.status,
       assignedVendorId: order.assignedVendorId,
     });
 
     if (order.assignedVendorId?.toString() !== vendor._id.toString()) {
-      console.log('[myShop:acceptOrder] Order not assigned to this vendor');
+      logger.info('[myShop:acceptOrder] Order not assigned to this vendor');
       return next(new AppError('This order is not assigned to you', 403));
     }
 
     if (order.status !== 'PENDING') {
-      console.log('[myShop:acceptOrder] Order not pending:', order.status);
+      logger.info('[myShop:acceptOrder] Order not pending:', order.status);
       return next(new AppError(`Order is already ${order.status}`, 400));
     }
 
     if (order.payment_status !== 'Paid') {
-      console.log('[myShop:acceptOrder] Order payment is not completed:', order.payment_status);
+      logger.info('[myShop:acceptOrder] Order payment is not completed:', order.payment_status);
       return next(new AppError('Order cannot be accepted before successful payment', 400));
     }
 
@@ -132,29 +133,29 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
         });
       } catch (error: any) {
         // Log error but don't fail order acceptance
-        console.error(`Failed to record sale for product ${item.product_id}:`, error);
+        logger.error(`Failed to record sale for product ${item.product_id}:`, error);
       }
     }
 
     order.status = 'ACCEPTED';
     await order.save();
 
-    console.log(`[myShop:acceptOrder] Order ${orderId} accepted successfully by ${vendor._id}`);
+    logger.info(`[myShop:acceptOrder] Order ${orderId} accepted successfully by ${vendor._id}`);
 
     // Send email to customer
-    console.log('[myShop:acceptOrder] Starting email send process...');
+    logger.info('[myShop:acceptOrder] Starting email send process...');
     try {
       const populatedOrder = await order.populate('customer_id');
       const customer = populatedOrder.customer_id as any;
       
-      console.log('[myShop:acceptOrder] Customer populated:', {
+      logger.info('[myShop:acceptOrder] Customer populated:', {
         customerId: customer?._id,
         email: customer?.email,
         name: customer?.name
       });
       
       if (customer?.email) {
-        console.log('[myShop:acceptOrder] Sending order accepted email to:', customer.email);
+        logger.info('[myShop:acceptOrder] Sending order accepted email to:', customer.email);
         await sendOrderAcceptedEmail(
           customer.email,
           customer.name || 'Customer',
@@ -162,13 +163,13 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
           vendor.name || 'Shop Manager',
           '2-5 business days'
         );
-        console.log('[myShop:acceptOrder] ✅ Order accepted email sent successfully!');
+        logger.info('[myShop:acceptOrder] ✅ Order accepted email sent successfully!');
       } else {
-        console.log('[myShop:acceptOrder] ⚠️ No customer email found, skipping email');
+        logger.info('[myShop:acceptOrder] ⚠️ No customer email found, skipping email');
       }
     } catch (emailError: any) {
-      console.error('[myShop:acceptOrder] ❌ Failed to send order accepted email:', emailError.message);
-      console.error('[myShop:acceptOrder] Email error stack:', emailError.stack);
+      logger.error('[myShop:acceptOrder] ❌ Failed to send order accepted email:', emailError.message);
+      logger.error('[myShop:acceptOrder] Email error stack:', emailError.stack);
     }
 
     res.status(200).json({
@@ -190,7 +191,7 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
     const { reason } = req.body;
     const vendor = req.user;
 
-    console.log('[myShop:refundOrder] Request received:', {
+    logger.info('[myShop:refundOrder] Request received:', {
       orderId,
       vendorId: vendor._id,
       reason,
@@ -231,7 +232,7 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
             selectedVariant: item.selectedVariant,
           });
         } catch (error) {
-          console.error(`Failed to reverse sale for product ${item.product_id}:`, error);
+          logger.error(`Failed to reverse sale for product ${item.product_id}:`, error);
         }
       }
     }
@@ -257,7 +258,7 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     await order.save();
 
-    console.log(`Order ${orderId} refunded by MY_SHOP vendor ${vendor._id}. Reason: ${reason || 'None provided'}`);
+    logger.info(`Order ${orderId} refunded by MY_SHOP vendor ${vendor._id}. Reason: ${reason || 'None provided'}`);
 
     // Send refund initiated email to customer
     let emailError: string | null = null;
@@ -271,13 +272,13 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
           order.refundAmount || order.total || 0,
           order.refundReason || 'Product not available'
         );
-        console.log(`[myShop:refundOrder] Refund email sent to ${customer.email}`);
+        logger.info(`[myShop:refundOrder] Refund email sent to ${customer.email}`);
       } else {
-        console.warn('[myShop:refundOrder] No customer email found — skipping refund email');
+        logger.warn('[myShop:refundOrder] No customer email found — skipping refund email');
       }
     } catch (err: any) {
       emailError = err.message;
-      console.error('[myShop:refundOrder] Failed to send refund email:', err.message);
+      logger.error('[myShop:refundOrder] Failed to send refund email:', err.message);
     }
 
     res.status(200).json({
@@ -413,7 +414,7 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
         );
       }
     } catch (emailError: any) {
-      console.error('Failed to send order shipped email:', emailError.message);
+      logger.error('Failed to send order shipped email:', emailError.message);
     }
 
     res.status(200).json({
@@ -456,22 +457,22 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
     order.deliveredAt = new Date();
     await order.save();
 
-    console.log(`[myShop:markDelivered] Order ${orderId} marked as DELIVERED by ${vendor._id}`);
+    logger.info(`[myShop:markDelivered] Order ${orderId} marked as DELIVERED by ${vendor._id}`);
 
     // Send delivery completed email to customer
-    console.log('[myShop:markDelivered] Starting customer email send process...');
+    logger.info('[myShop:markDelivered] Starting customer email send process...');
     try {
       const populatedOrder = await order.populate('customer_id');
       const customer = populatedOrder.customer_id as any;
       
-      console.log('[myShop:markDelivered] Customer populated:', {
+      logger.info('[myShop:markDelivered] Customer populated:', {
         customerId: customer?._id,
         email: customer?.email,
         name: customer?.name
       });
       
       if (customer?.email) {
-        console.log('[myShop:markDelivered] Sending delivery completed email to:', customer.email);
+        logger.info('[myShop:markDelivered] Sending delivery completed email to:', customer.email);
         await sendDeliveryCompletedEmail(
           customer.email,
           customer.name || 'Customer',
@@ -482,25 +483,25 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
             year: 'numeric' 
           })
         );
-        console.log('[myShop:markDelivered] ✅ Delivery completed email sent successfully!');
+        logger.info('[myShop:markDelivered] ✅ Delivery completed email sent successfully!');
       } else {
-        console.log('[myShop:markDelivered] ⚠️ No customer email found, skipping email');
+        logger.info('[myShop:markDelivered] ⚠️ No customer email found, skipping email');
       }
     } catch (emailError: any) {
-      console.error('[myShop:markDelivered] ❌ Failed to send delivery completed email:', emailError.message);
-      console.error('[myShop:markDelivered] Email error stack:', emailError.stack);
+      logger.error('[myShop:markDelivered] ❌ Failed to send delivery completed email:', emailError.message);
+      logger.error('[myShop:markDelivered] Email error stack:', emailError.stack);
     }
 
     // Send admin notification for delivered order
-    console.log('[myShop:markDelivered] Starting admin notification process...');
+    logger.info('[myShop:markDelivered] Starting admin notification process...');
     try {
       const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
-      console.log('[myShop:markDelivered] Admin emails:', adminEmails);
+      logger.info('[myShop:markDelivered] Admin emails:', adminEmails);
       
       const populatedOrder = await order.populate(['customer_id', 'items.product_id']);
       const customer = populatedOrder.customer_id as any;
       
-      console.log('[myShop:markDelivered] Sending admin notifications to', adminEmails.length, 'admins');
+      logger.info('[myShop:markDelivered] Sending admin notifications to', adminEmails.length, 'admins');
       
       for (const adminEmail of adminEmails) {
         await sendAdminDeliveryNotificationEmail(
@@ -515,10 +516,10 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
           }
         );
       }
-      console.log('[myShop:markDelivered] ✅ Admin delivery notifications sent successfully');
+      logger.info('[myShop:markDelivered] ✅ Admin delivery notifications sent successfully');
     } catch (emailError: any) {
-      console.error('[myShop:markDelivered] ❌ Failed to send admin delivery notification:', emailError.message);
-      console.error('[myShop:markDelivered] Admin email error stack:', emailError.stack);
+      logger.error('[myShop:markDelivered] ❌ Failed to send admin delivery notification:', emailError.message);
+      logger.error('[myShop:markDelivered] Admin email error stack:', emailError.stack);
     }
 
     res.status(200).json({

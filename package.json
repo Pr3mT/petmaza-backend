@@ -24,6 +24,7 @@
     "test:pending": "ts-node-dev --transpile-only src/scripts/testPendingOrders.ts",
     "fix:vendor-billing": "ts-node --transpile-only fix-vendor-billing.ts",
     "backup": "npx ts-node backup-db.ts",
+    "backup:email": "ts-node --transpile-only src/scripts/runBackupNow.ts",
     "seed:all": "npm run seed:users && npm run seed:products"
   },
   "keywords": [

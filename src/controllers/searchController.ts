@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response } from 'express';
 import Product from '../models/Product';
 import Review from '../models/Review';
@@ -146,7 +147,7 @@ export const advancedSearch = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Advanced search error:', error);
+    logger.error('Advanced search error:', error);
     res.status(500).json({ message: 'Search failed', error: error.message });
   }
 };
@@ -188,7 +189,7 @@ export const getSearchSuggestions = async (req: Request, res: Response) => {
 
     res.status(200).json({ suggestions });
   } catch (error: any) {
-    console.error('Search suggestions error:', error);
+    logger.error('Search suggestions error:', error);
     res.status(500).json({ message: 'Failed to fetch suggestions', error: error.message });
   }
 };
@@ -274,7 +275,7 @@ export const getFilterOptions = async (req: Request, res: Response) => {
       ratingDistribution,
     });
   } catch (error: any) {
-    console.error('Get filter options error:', error);
+    logger.error('Get filter options error:', error);
     res.status(500).json({ message: 'Failed to fetch filter options', error: error.message });
   }
 };
@@ -316,7 +317,7 @@ export const getPopularSearches = async (req: Request, res: Response) => {
       popularSearches: popularProducts,
     });
   } catch (error: any) {
-    console.error('Get popular searches error:', error);
+    logger.error('Get popular searches error:', error);
     res.status(500).json({
       message: 'Failed to fetch popular searches',
       error: error.message,

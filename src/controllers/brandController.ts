@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response, NextFunction } from 'express';
 import { BrandService } from '../services/BrandService';
 import { AppError } from '../middlewares/errorHandler';
@@ -6,11 +7,11 @@ import { clearCache } from '../middlewares/cache';
 
 export const createBrand = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    console.log('Create brand request - Data:', JSON.stringify(req.body, null, 2));
+    logger.info('Create brand request - Data:', JSON.stringify(req.body, null, 2));
     
     const brand = await BrandService.createBrand(req.body);
     
-    console.log('Brand created successfully:', {
+    logger.info('Brand created successfully:', {
       id: brand._id,
       name: brand.name,
       subcategories: brand.subcategories,
@@ -26,7 +27,7 @@ export const createBrand = async (req: Request, res: Response, next: NextFunctio
       data: { brand },
     });
   } catch (error: any) {
-    console.error('Error creating brand:', error.message);
+    logger.error('Error creating brand:', error.message);
     next(error);
   }
 };
@@ -72,12 +73,12 @@ export const getBrandById = async (req: Request, res: Response, next: NextFuncti
 
 export const updateBrand = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    console.log('Update brand request - ID:', req.params.id);
-    console.log('Update brand data:', JSON.stringify(req.body, null, 2));
+    logger.info('Update brand request - ID:', req.params.id);
+    logger.info('Update brand data:', JSON.stringify(req.body, null, 2));
     
     const brand = await BrandService.updateBrand(req.params.id, req.body);
     
-    console.log('Brand updated successfully:', brand._id);
+    logger.info('Brand updated successfully:', brand._id);
     
     // Clear brand cache so customers see the updated brand
     clearCache('/api/brands');
@@ -88,7 +89,7 @@ export const updateBrand = async (req: Request, res: Response, next: NextFunctio
       data: { brand },
     });
   } catch (error: any) {
-    console.error('Error updating brand:', error.message);
+    logger.error('Error updating brand:', error.message);
     next(error);
   }
 };

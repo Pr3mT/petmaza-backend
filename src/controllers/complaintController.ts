@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response, NextFunction } from 'express';
 import { ComplaintService } from '../services/ComplaintService';
 import { AuthRequest } from '../middlewares/auth';
@@ -6,14 +7,14 @@ import Complaint from '../models/Complaint';
 
 export const createComplaint = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    console.log('🎯 CreateComplaint - Request body:', JSON.stringify(req.body, null, 2));
-    console.log('👤 User ID:', req.user._id.toString());
+    logger.info('🎯 CreateComplaint - Request body:', JSON.stringify(req.body, null, 2));
+    logger.info('👤 User ID:', req.user._id.toString());
     
     // Clean the request body - remove any empty or undefined order_id
     const cleanedBody = { ...req.body };
     if (cleanedBody.order_id === '' || cleanedBody.order_id === null || cleanedBody.order_id === undefined) {
       delete cleanedBody.order_id;
-      console.log('🧹 Removed empty/null/undefined order_id from request');
+      logger.info('🧹 Removed empty/null/undefined order_id from request');
     }
     
     const complaint = await ComplaintService.createComplaint({
@@ -27,7 +28,7 @@ export const createComplaint = async (req: AuthRequest, res: Response, next: Nex
       data: { complaint },
     });
   } catch (error: any) {
-    console.error('❌ Error creating complaint:', error.message);
+    logger.error('❌ Error creating complaint:', error.message);
     next(error);
   }
 };

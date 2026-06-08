@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import SalesHistory from '../models/SalesHistory';
 import Product from '../models/Product';
 import { AppError } from '../middlewares/errorHandler';
@@ -91,7 +92,7 @@ export class SalesService {
       } else {
         // Variant not found in variants array - update general counters instead
         const variantLabel = selectedVariant.size ? selectedVariant.size : `${selectedVariant.weight || ''}${selectedVariant.unit || ''}`;
-        console.log(`Variant ${variantLabel} not in variants, updating general counters`);
+        logger.info(`Variant ${variantLabel} not in variants, updating general counters`);
         const updateFields: any = {
           $inc: {},
         };

@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import rateLimit from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
 
@@ -20,7 +21,7 @@ const skipForLoadTest = (req: Request): boolean =>
 
 if (RATE_LIMIT_DISABLED) {
   // eslint-disable-next-line no-console
-  console.log('[rateLimiter] disabled (NODE_ENV=' + (process.env.NODE_ENV || 'undefined') + ')');
+  logger.info('[rateLimiter] disabled (NODE_ENV=' + (process.env.NODE_ENV || 'undefined') + ')');
 }
 
 /**

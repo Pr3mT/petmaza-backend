@@ -12,7 +12,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import logger from './config/logger';
 import cron from 'node-cron';
-import { runBackup } from './services/backupService';
+import { runStreamingBackupAndEmail } from './services/backupService';
 import { errorHandler } from './middlewares/errorHandler';
 import { notFound } from './middlewares/notFound';
 import { initializeWebSocket } from './websocket/server';
@@ -319,21 +319,15 @@ startServer();
 startKeepAliveCron();
 
 // ─── Automatic Daily Database Backup ─────────────────────────────────────────
-// Runs every day at 02:00 AM server time.
-// Exports all MongoDB collections to  backups/YYYY-MM-DD_HH-MM-SS/
-// Old backups beyond BACKUP_RETENTION_DAYS (default 30) are pruned automatically.
+// Runs every day at 02:00 AM IST (inside the 2–3 AM low-traffic window).
+// Streams every collection ONE DOC AT A TIME through a gzip pipe (bounded
+// memory — safe on a memory-limited dyno) and emails the .ndjson.gz archive to
+// ADMIN_EMAILS. NOTE: no longer uses the RAM-heavy runBackup() — that's reserved
+// for the local `npm run backup` CLI where memory isn't a constraint.
 cron.schedule('0 2 * * *', async () => {
   logger.info('[Backup] Scheduled daily backup triggered…');
   try {
-    const result = await runBackup();
-    if (result.success) {
-      logger.info(
-        `[Backup] ✔ Daily backup complete — ${result.totalDocuments} docs, ` +
-        `${(result.totalSizeBytes / 1024).toFixed(1)} KB, ${result.durationMs}ms → ${result.backupDir}`
-      );
-    } else {
-      logger.warn('[Backup] ⚠ Daily backup finished with errors — check manifest.json in backup folder.');
-    }
+    await runStreamingBackupAndEmail();
   } catch (err: any) {
     logger.error('[Backup] ✖ Daily backup crashed:', err?.message || err);
   }

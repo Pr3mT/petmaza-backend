@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response, NextFunction } from 'express';
 import VendorProductPricing from '../models/VendorProductPricing';
 import Product from '../models/Product';
@@ -129,14 +130,14 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
         // No subcategories assigned — show only explicitly owned non-prime products
         productFilter = { isPrime: false, addedBy: vendor._id };
       }
-      console.log(`🔓 WAREHOUSE_FULFILLER ${vendor.name} - assignedSubcategories: ${assignedSubcategories.length}`);
+      logger.info(`🔓 WAREHOUSE_FULFILLER ${vendor.name} - assignedSubcategories: ${assignedSubcategories.length}`);
     } else if (vendor.vendorType === 'MY_SHOP') {
       // MY_SHOP manager sees ALL products — both non-prime and prime
       productFilter = {}; // no filter — full catalog visibility
-      console.log(`🔓 MY_SHOP vendor - showing all products (prime + non-prime)`);
+      logger.info(`🔓 MY_SHOP vendor - showing all products (prime + non-prime)`);
     } else {
       productFilter = { isPrime: false };
-      console.log(`🔓 ${vendor.vendorType} vendor - showing all non-prime products`);
+      logger.info(`🔓 ${vendor.vendorType} vendor - showing all non-prime products`);
     }
 
     const allProducts = await Product.find(productFilter)
@@ -155,15 +156,15 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
           product_id: product._id,
         });
         
-        console.log(`\n🔍 Checking product: ${product.name}`);
-        console.log('Found existing VendorProductPricing:', !!vendorProduct);
+        logger.info(`\n🔍 Checking product: ${product.name}`);
+        logger.info('Found existing VendorProductPricing:', !!vendorProduct);
         if (vendorProduct && vendorProduct.variantStock) {
-          console.log('Existing variantStock:', JSON.stringify(vendorProduct.variantStock.map((v: any) => ({ weight: v.weight, unit: v.unit, stock: v.availableStock })), null, 2));
+          logger.info('Existing variantStock:', JSON.stringify(vendorProduct.variantStock.map((v: any) => ({ weight: v.weight, unit: v.unit, stock: v.availableStock })), null, 2));
         }
 
         // If no pricing entry exists, create one
         if (!vendorProduct) {
-          console.log('⚠️ No VendorProductPricing found. Creating new one with 0 stock.');
+          logger.info('⚠️ No VendorProductPricing found. Creating new one with 0 stock.');
           // Sync isActive with product.inStock so newly added products show as Available immediately
           const initialActive = product.inStock !== false;
           vendorProduct = await VendorProductPricing.create({
@@ -624,20 +625,20 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
         // Update product-level inStock status (keep isActive=true so product stays visible to customers)
         // Check BOTH inStock and isActive for legacy docs (old out-of-stock products have isActive:false, inStock:undefined)
         const wasOutOfStock = product.inStock === false || product.isActive === false;
-        console.log(`📝 Updating product ${product._id} inStock: ${product.inStock} -> ${isActive}`);
+        logger.info(`📝 Updating product ${product._id} inStock: ${product.inStock} -> ${isActive}`);
         product.inStock = isActive;
         product.isActive = true; // always keep visible; inStock controls purchase availability
         await product.save();
-        console.log(`✅ Product saved. inStock: ${product.inStock}, isActive: ${product.isActive}`);
+        logger.info(`✅ Product saved. inStock: ${product.inStock}, isActive: ${product.isActive}`);
 
         // If product was out-of-stock and is now back in stock, notify waiting customers
         if (wasOutOfStock && isActive === true) {
-          console.log('🔔 Product marked available - triggering notify-me emails');
+          logger.info('🔔 Product marked available - triggering notify-me emails');
           notifyWaitingCustomers(
             product._id.toString(),
             product.name,
             product.images && product.images.length > 0 ? product.images[0] : undefined
-          ).catch(err => console.error('Error notifying customers:', err));
+          ).catch(err => logger.error('Error notifying customers:', err));
         }
 
         // Clear product cache so customers see updated stock status immediately
@@ -654,7 +655,7 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
       await product.populate('brand_id', 'name _id');
       await product.populate('category_id', 'name _id');
 
-      console.log(`📤 Returning updated product. inStock: ${product.inStock}`);
+      logger.info(`📤 Returning updated product. inStock: ${product.inStock}`);
 
       res.status(200).json({
         success: true,

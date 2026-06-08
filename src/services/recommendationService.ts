@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import Product from '../models/Product';
 import Order from '../models/Order';
 import Review from '../models/Review';
@@ -69,7 +70,7 @@ class RecommendationService {
 
       return enrichedRecommendations;
     } catch (error) {
-      console.error('Personalized recommendations error:', error);
+      logger.error('Personalized recommendations error:', error);
       return [];
     }
   }
@@ -99,7 +100,7 @@ class RecommendationService {
       const enrichedProducts = await this.enrichWithRatings(similarProducts);
       return enrichedProducts;
     } catch (error) {
-      console.error('Similar products error:', error);
+      logger.error('Similar products error:', error);
       return [];
     }
   }
@@ -142,7 +143,7 @@ class RecommendationService {
       const enrichedProducts = await this.enrichWithRatings(products);
       return enrichedProducts;
     } catch (error) {
-      console.error('Trending products error:', error);
+      logger.error('Trending products error:', error);
       return [];
     }
   }
@@ -186,7 +187,7 @@ class RecommendationService {
 
       return enrichedProducts;
     } catch (error) {
-      console.error('Top rated products error:', error);
+      logger.error('Top rated products error:', error);
       return [];
     }
   }
@@ -203,7 +204,7 @@ class RecommendationService {
       const enrichedProducts = await this.enrichWithRatings(products);
       return enrichedProducts;
     } catch (error) {
-      console.error('Featured products error:', error);
+      logger.error('Featured products error:', error);
       return [];
     }
   }
@@ -246,7 +247,7 @@ class RecommendationService {
       const enrichedProducts = await this.enrichWithRatings(products);
       return enrichedProducts;
     } catch (error) {
-      console.error('Frequently bought together error:', error);
+      logger.error('Frequently bought together error:', error);
       return [];
     }
   }
@@ -285,7 +286,7 @@ class RecommendationService {
         };
       });
     } catch (error) {
-      console.error('Enrich with ratings error:', error);
+      logger.error('Enrich with ratings error:', error);
       return products;
     }
   }

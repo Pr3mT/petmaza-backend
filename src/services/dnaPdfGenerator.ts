@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 ﻿import PDFDocument from 'pdfkit';
 import { PassThrough } from 'stream';
 import QRCode from 'qrcode';
@@ -24,14 +25,14 @@ const LOGO_BUFFER: Buffer | null = (() => {
     try {
       if (fs.existsSync(p)) {
         const buf = fs.readFileSync(p);
-        console.log('[PetMaza DNA] Logo loaded from:', p, '(' + buf.length + ' bytes)');
+        logger.info('[PetMaza DNA] Logo loaded from:', p, '(' + buf.length + ' bytes)');
         return buf;
       }
     } catch (e) {
-      console.error('[PetMaza DNA] Failed to read logo at:', p, e);
+      logger.error('[PetMaza DNA] Failed to read logo at:', p, e);
     }
   }
-  console.warn('[PetMaza DNA] Logo not found — tried:', candidates);
+  logger.warn('[PetMaza DNA] Logo not found — tried:', candidates);
   return null;
 })();
 
@@ -373,7 +374,7 @@ export async function generateDnaResultCertificatePdf(
             .png({ compressionLevel: 9 })
             .toBuffer()
         : null;
-      console.log('[PDF] logoHighRes size:', logoHighRes ? logoHighRes.length : 'null', 'bytes');
+      logger.info('[PDF] logoHighRes size:', logoHighRes ? logoHighRes.length : 'null', 'bytes');
       const logoPng96  = logoHighRes;
       const logoPng240 = logoHighRes;
 

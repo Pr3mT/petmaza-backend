@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import Brand from '../models/Brand';
 import Category from '../models/Category';
 import { AppError } from '../middlewares/errorHandler';
@@ -12,7 +13,7 @@ export class BrandService {
     image?: string;
     subcategories?: string[];
   }) {
-    console.log('BrandService.createBrand - Input data:', JSON.stringify(data, null, 2));
+    logger.info('BrandService.createBrand - Input data:', JSON.stringify(data, null, 2));
     
     // Check if brand already exists
     const existingBrand = await Brand.findOne({ name: data.name });
@@ -22,7 +23,7 @@ export class BrandService {
 
     // Validate subcategories if provided (must be valid ObjectIds and exist in DB)
     if (data.subcategories && data.subcategories.length > 0) {
-      console.log('Validating subcategory IDs:', data.subcategories);
+      logger.info('Validating subcategory IDs:', data.subcategories);
       
       // Check if all are valid ObjectIds
       const invalidIds = data.subcategories.filter(id => !mongoose.Types.ObjectId.isValid(id));
@@ -42,7 +43,7 @@ export class BrandService {
         throw new AppError(`Categories not found or inactive: ${notFound.join(', ')}`, 400);
       }
       
-      console.log(`All ${categories.length} categories validated successfully`);
+      logger.info(`All ${categories.length} categories validated successfully`);
     }
 
     const brand = await Brand.create(data);
@@ -50,7 +51,7 @@ export class BrandService {
     // Populate subcategories for the response
     await brand.populate('subcategories');
     
-    console.log('Brand created in DB:', JSON.stringify(brand.toObject(), null, 2));
+    logger.info('Brand created in DB:', JSON.stringify(brand.toObject(), null, 2));
     
     return brand;
   }
@@ -66,10 +67,10 @@ export class BrandService {
       .populate('subcategories', 'name description image')
       .sort({ name: 1 });
     
-    console.log(`BrandService.getAllBrands - Found ${brands.length} brands`);
+    logger.info(`BrandService.getAllBrands - Found ${brands.length} brands`);
     if (brands.length > 0) {
-      console.log('First brand subcategories:', brands[0].subcategories);
-      console.log('First brand subcategories length:', brands[0].subcategories?.length);
+      logger.info('First brand subcategories:', brands[0].subcategories);
+      logger.info('First brand subcategories length:', brands[0].subcategories?.length);
     }
     
     return brands;
@@ -93,8 +94,8 @@ export class BrandService {
     subcategories?: string[];
     isActive?: boolean;
   }) {
-    console.log('BrandService.updateBrand - ID:', id);
-    console.log('BrandService.updateBrand - Input data:', JSON.stringify(data, null, 2));
+    logger.info('BrandService.updateBrand - ID:', id);
+    logger.info('BrandService.updateBrand - Input data:', JSON.stringify(data, null, 2));
     
     // Check if name is being updated and already exists
     if (data.name) {
@@ -106,7 +107,7 @@ export class BrandService {
 
     // Validate subcategories if provided (must be valid ObjectIds and exist in DB)
     if (data.subcategories !== undefined && data.subcategories.length > 0) {
-      console.log('Validating subcategory IDs:', data.subcategories);
+      logger.info('Validating subcategory IDs:', data.subcategories);
       
       // Check if all are valid ObjectIds
       const invalidIds = data.subcategories.filter(id => !mongoose.Types.ObjectId.isValid(id));
@@ -126,7 +127,7 @@ export class BrandService {
         throw new AppError(`Categories not found or inactive: ${notFound.join(', ')}`, 400);
       }
       
-      console.log(`All ${categories.length} categories validated successfully`);
+      logger.info(`All ${categories.length} categories validated successfully`);
     }
 
     const brand = await Brand.findByIdAndUpdate(id, data, {
@@ -138,7 +139,7 @@ export class BrandService {
       throw new AppError('Brand not found', 404);
     }
 
-    console.log('Brand updated in DB:', JSON.stringify(brand.toObject(), null, 2));
+    logger.info('Brand updated in DB:', JSON.stringify(brand.toObject(), null, 2));
 
     return brand;
   }

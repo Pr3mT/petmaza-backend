@@ -258,7 +258,7 @@ export const googleAuth = async (req: Request, res: Response, next: NextFunction
       },
     });
   } catch (error: any) {
-    console.error('Google Auth Error:', error);
+    logger.error('Google Auth Error:', error);
     next(new AppError('Google authentication failed', 401));
   }
 };

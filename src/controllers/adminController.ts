@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response, NextFunction } from 'express';
 import User from '../models/User';
 import Product from '../models/Product';
@@ -55,23 +56,23 @@ export const getUsers = async (req: AuthRequest, res: Response, next: NextFuncti
 export const getUserById = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
-    console.log('🔍 getUserById called with id:', id);
+    logger.info('🔍 getUserById called with id:', id);
 
     const user = await User.findById(id).select('-password');
-    console.log('📦 User found:', user ? 'Yes' : 'No');
+    logger.info('📦 User found:', user ? 'Yes' : 'No');
 
     if (!user) {
-      console.log('❌ User not found for id:', id);
+      logger.info('❌ User not found for id:', id);
       return next(new AppError('User not found', 404));
     }
 
-    console.log('✅ Returning user:', user._id);
+    logger.info('✅ Returning user:', user._id);
     res.status(200).json({
       success: true,
       data: { user },
     });
   } catch (error: any) {
-    console.error('❌ Error in getUserById:', error.message);
+    logger.error('❌ Error in getUserById:', error.message);
     next(error);
   }
 };
@@ -993,7 +994,7 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
     // Load all settlement records for the vendors in this result set
     const vendorIds = [...new Set(invoices.map((inv) => inv.vendorId.toString()))];
     const settlements = await Settlement.find({ vendorId: { $in: vendorIds } }).lean();
-    console.log(`[getVendorWeeklyBilling] Found ${settlements.length} settlement(s) for ${vendorIds.length} vendor(s)`);
+    logger.info(`[getVendorWeeklyBilling] Found ${settlements.length} settlement(s) for ${vendorIds.length} vendor(s)`);
 
     // Build lookup map: "vendorId_weekStart(YYYY-MM-DD)" -> settlement
     const settlementMap: Record<string, any> = {};
@@ -1027,7 +1028,7 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
 
     res.status(200).json({ success: true, data: invoices });
   } catch (error: any) {
-    console.error('[getVendorWeeklyBilling] Error:', error);
+    logger.error('[getVendorWeeklyBilling] Error:', error);
     next(error);
   }
 };
@@ -1064,21 +1065,21 @@ export const markWeeklyInvoicePaid = async (req: AuthRequest, res: Response, nex
       });
     }
 
-    console.log(`[markWeeklyInvoicePaid] Saved: vendorId=${vendorId} weekStart=${weekStartDate.toISOString()}`);
+    logger.info(`[markWeeklyInvoicePaid] Saved: vendorId=${vendorId} weekStart=${weekStartDate.toISOString()}`);
 
     // Clear the vendor's wallet so their balance shows ₹0 after payout
     try {
       const { WalletService } = await import('../services/WalletService');
       await WalletService.resetWallet(vendorId);
-      console.log(`[markWeeklyInvoicePaid] Wallet cleared for vendorId=${vendorId}`);
+      logger.info(`[markWeeklyInvoicePaid] Wallet cleared for vendorId=${vendorId}`);
     } catch (walletError: any) {
       // Non-blocking — don't fail the invoice marking if wallet reset fails
-      console.error('[markWeeklyInvoicePaid] Wallet reset failed:', walletError.message);
+      logger.error('[markWeeklyInvoicePaid] Wallet reset failed:', walletError.message);
     }
 
     res.status(200).json({ success: true, message: 'Invoice marked as paid', paidAt });
   } catch (error: any) {
-    console.error('[markWeeklyInvoicePaid] Error:', error.message);
+    logger.error('[markWeeklyInvoicePaid] Error:', error.message);
     next(error);
   }
 };
@@ -1125,8 +1126,8 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
       }
     }
 
-    console.log('[getVendorBilling] Total vendors found:', vendors.length);
-    console.log('[getVendorBilling] Vendor types:', vendors.map(v => v.vendorType));
+    logger.info('[getVendorBilling] Total vendors found:', vendors.length);
+    logger.info('[getVendorBilling] Vendor types:', vendors.map(v => v.vendorType));
 
     // Get all orders assigned to or fulfilled by vendors
     // Include: PENDING (with vendor), ASSIGNED, ACCEPTED, PACKED, PICKED_UP, IN_TRANSIT, DELIVERED
@@ -1145,11 +1146,11 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
       .sort({ createdAt: -1 })
       .lean();
 
-    console.log('[getVendorBilling] Total orders found:', orders.length);
-    console.log('[getVendorBilling] Order filter:', JSON.stringify(orderFilter));
+    logger.info('[getVendorBilling] Total orders found:', orders.length);
+    logger.info('[getVendorBilling] Order filter:', JSON.stringify(orderFilter));
     if (orders.length > 0) {
-      console.log('[getVendorBilling] First order status:', orders[0].status);
-      console.log('[getVendorBilling] First order has assignedVendorId:', !!orders[0].assignedVendorId);
+      logger.info('[getVendorBilling] First order status:', orders[0].status);
+      logger.info('[getVendorBilling] First order has assignedVendorId:', !!orders[0].assignedVendorId);
     } else {
       // Debug: Check what orders exist in total
       const totalOrders = await Order.countDocuments(dateFilter);
@@ -1157,15 +1158,15 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
         ...dateFilter, 
         assignedVendorId: { $exists: true, $ne: null } 
       });
-      console.log('[getVendorBilling] DEBUG - Total orders in DB:', totalOrders);
-      console.log('[getVendorBilling] DEBUG - Orders with assignedVendorId:', ordersWithVendor);
+      logger.info('[getVendorBilling] DEBUG - Total orders in DB:', totalOrders);
+      logger.info('[getVendorBilling] DEBUG - Orders with assignedVendorId:', ordersWithVendor);
       
       // Check status distribution
       const statusCounts = await Order.aggregate([
         { $match: dateFilter },
         { $group: { _id: '$status', count: { $sum: 1 } } }
       ]);
-      console.log('[getVendorBilling] DEBUG - Order status distribution:', statusCounts);
+      logger.info('[getVendorBilling] DEBUG - Order status distribution:', statusCounts);
     }
 
     // Calculate stats by vendor type
@@ -1329,7 +1330,7 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
       },
     });
   } catch (error: any) {
-    console.error('[getVendorBilling] Error:', error);
+    logger.error('[getVendorBilling] Error:', error);
     next(error);
   }
 };
@@ -1413,10 +1414,10 @@ export const upsertCategoryMapping = async (
         { $addToSet: { assignedSubcategories: subCategory.trim() } },
         { new: true }
       );
-      console.log(`[upsertCategoryMapping] ✅ Added '${subCategory.trim()}' to ${fulfiller.name}'s assignedSubcategories`);
+      logger.info(`[upsertCategoryMapping] ✅ Added '${subCategory.trim()}' to ${fulfiller.name}'s assignedSubcategories`);
     }
 
-    console.log(`[upsertCategoryMapping] ✅ Mapping saved: ${mainCategory} / ${subCategory || '*'} → ${fulfiller.name}`);
+    logger.info(`[upsertCategoryMapping] ✅ Mapping saved: ${mainCategory} / ${subCategory || '*'} → ${fulfiller.name}`);
 
     res.status(200).json({
       success: true,
@@ -1449,7 +1450,7 @@ export const deleteCategoryMapping = async (
         { vendor_id: mapping.fulfiller_id },
         { $pull: { assignedSubcategories: mapping.subCategory } }
       );
-      console.log(`[deleteCategoryMapping] ✅ Removed '${mapping.subCategory}' from fulfiller ${mapping.fulfiller_id}'s assignedSubcategories`);
+      logger.info(`[deleteCategoryMapping] ✅ Removed '${mapping.subCategory}' from fulfiller ${mapping.fulfiller_id}'s assignedSubcategories`);
     }
 
     res.status(200).json({ success: true, message: 'Mapping deleted' });

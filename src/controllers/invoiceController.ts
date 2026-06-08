@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response } from 'express';
 import Invoice from '../models/Invoice';
 import Order from '../models/Order';
@@ -87,7 +88,7 @@ export const createInvoice = async (req: Request, res: Response) => {
       invoice,
     });
   } catch (error: any) {
-    console.error('Create invoice error:', error);
+    logger.error('Create invoice error:', error);
     res.status(500).json({ message: 'Failed to create invoice', error: error.message });
   }
 };
@@ -114,7 +115,7 @@ export const getInvoice = async (req: Request, res: Response) => {
 
     res.status(200).json({ invoice });
   } catch (error: any) {
-    console.error('Get invoice error:', error);
+    logger.error('Get invoice error:', error);
     res.status(500).json({ message: 'Failed to fetch invoice', error: error.message });
   }
 };
@@ -141,7 +142,7 @@ export const getInvoiceByOrderId = async (req: Request, res: Response) => {
 
     res.status(200).json({ invoice });
   } catch (error: any) {
-    console.error('Get invoice by order error:', error);
+    logger.error('Get invoice by order error:', error);
     res.status(500).json({ message: 'Failed to fetch invoice', error: error.message });
   }
 };
@@ -168,7 +169,7 @@ export const getCustomerInvoices = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Get customer invoices error:', error);
+    logger.error('Get customer invoices error:', error);
     res.status(500).json({ message: 'Failed to fetch invoices', error: error.message });
   }
 };
@@ -202,7 +203,7 @@ export const getAllInvoices = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Get all invoices error:', error);
+    logger.error('Get all invoices error:', error);
     res.status(500).json({ message: 'Failed to fetch invoices', error: error.message });
   }
 };
@@ -315,7 +316,7 @@ export const sendInvoiceEmail = async (req: Request, res: Response) => {
       message: 'Invoice sent successfully',
     });
   } catch (error: any) {
-    console.error('Send invoice email error:', error);
+    logger.error('Send invoice email error:', error);
     res.status(500).json({ message: 'Failed to send invoice', error: error.message });
   }
 };

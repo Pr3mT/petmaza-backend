@@ -1,3 +1,4 @@
+import logger from '../config/logger';
 import { Request, Response } from 'express';
 import ProductQuestion from '../models/ProductQuestion';
 import Product from '../models/Product';
@@ -27,7 +28,7 @@ export const createQuestion = async (req: Request, res: Response) => {
       question,
     });
   } catch (error: any) {
-    console.error('Create question error:', error);
+    logger.error('Create question error:', error);
     res.status(500).json({ message: 'Failed to post question', error: error.message });
   }
 };
@@ -61,7 +62,7 @@ export const getProductQuestions = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Get questions error:', error);
+    logger.error('Get questions error:', error);
     res.status(500).json({ message: 'Failed to fetch questions', error: error.message });
   }
 };
@@ -98,7 +99,7 @@ export const answerQuestion = async (req: Request, res: Response) => {
       question,
     });
   } catch (error: any) {
-    console.error('Answer question error:', error);
+    logger.error('Answer question error:', error);
     res.status(500).json({ message: 'Failed to post answer', error: error.message });
   }
 };
@@ -123,7 +124,7 @@ export const markQuestionHelpful = async (req: Request, res: Response) => {
       helpfulCount: question.helpfulCount,
     });
   } catch (error: any) {
-    console.error('Mark helpful error:', error);
+    logger.error('Mark helpful error:', error);
     res.status(500).json({ message: 'Failed to mark question as helpful', error: error.message });
   }
 };
@@ -148,7 +149,7 @@ export const markAnswerHelpful = async (req: Request, res: Response) => {
       question,
     });
   } catch (error: any) {
-    console.error('Mark answer helpful error:', error);
+    logger.error('Mark answer helpful error:', error);
     res.status(500).json({ message: 'Failed to mark answer as helpful', error: error.message });
   }
 };
@@ -177,7 +178,7 @@ export const getCustomerQuestions = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Get customer questions error:', error);
+    logger.error('Get customer questions error:', error);
     res.status(500).json({ message: 'Failed to fetch questions', error: error.message });
   }
 };

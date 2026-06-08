@@ -1,3 +1,4 @@
+import logger from './config/logger';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -22,5 +23,5 @@ app.get('/api/health', (req: Request, res: Response) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  logger.info(`Server is running on port ${PORT}`);
 });

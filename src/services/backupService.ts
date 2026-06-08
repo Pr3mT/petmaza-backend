@@ -17,8 +17,11 @@
 
 import mongoose from 'mongoose';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import zlib from 'zlib';
 import logger from '../config/logger';
+import { sendEmail } from './emailer';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -219,4 +222,152 @@ export async function runBackup(db?: mongoose.mongo.Db): Promise<BackupResult> {
     totalSizeBytes,
     durationMs,
   };
+}
+
+// ── Memory-safe streaming backup (for the in-process daily cron) ──────────────
+// Unlike runBackup() (which .toArray()s every collection into RAM — fine for the
+// local CLI, dangerous on a memory-bound server), this streams documents ONE AT
+// A TIME through a gzip pipe to a single temp file. Memory stays bounded by the
+// cursor batch size regardless of DB size. Output: <tmp>/petmaza-backup-<ts>.ndjson.gz
+// (newline-delimited JSON; each collection preceded by a {"__collection__":…} line).
+
+const MAX_EMAIL_ATTACHMENT_BYTES = 12 * 1024 * 1024; // ZeptoMail/Gmail-safe ceiling
+
+export interface StreamBackupResult {
+  success: boolean;
+  filePath: string;
+  fileName: string;
+  fileSizeBytes: number;
+  totalDocuments: number;
+  collections: { name: string; documentCount: number }[];
+  durationMs: number;
+  error?: string;
+}
+
+export async function runStreamingBackup(db?: mongoose.mongo.Db): Promise<StreamBackupResult> {
+  const start = Date.now();
+  const timestamp = formatTimestamp(new Date());
+  const fileName = `petmaza-backup-${timestamp}.ndjson.gz`;
+  const filePath = path.join(os.tmpdir(), fileName);
+
+  const targetDb: mongoose.mongo.Db = db || (mongoose.connection.db as mongoose.mongo.Db);
+  if (!targetDb) {
+    return { success: false, filePath, fileName, fileSizeBytes: 0, totalDocuments: 0, collections: [], durationMs: Date.now() - start, error: 'No active MongoDB connection.' };
+  }
+
+  const gzip = zlib.createGzip();
+  const out = fs.createWriteStream(filePath);
+  gzip.pipe(out);
+
+  let streamErr: Error | null = null;
+  gzip.on('error', (e) => { streamErr = e; });
+  out.on('error', (e) => { streamErr = e; });
+
+  // Write with backpressure — never buffer more than one chunk past the high-water mark.
+  const write = (s: string) => new Promise<void>((resolve) => {
+    if (streamErr) return resolve();
+    if (gzip.write(s)) resolve();
+    else gzip.once('drain', () => resolve());
+  });
+
+  const collections: { name: string; documentCount: number }[] = [];
+  let totalDocuments = 0;
+
+  try {
+    const infos = await targetDb.listCollections().toArray();
+    const names = infos.map((c) => c.name).filter((n) => !SKIP_COLLECTIONS.includes(n)).sort();
+
+    for (const name of names) {
+      if (streamErr) throw streamErr;
+      await write(JSON.stringify({ __collection__: name }) + '\n');
+      const cursor = targetDb.collection(name).find({}).batchSize(500);
+      let n = 0;
+      for await (const doc of cursor) {
+        await write(JSON.stringify(doc) + '\n');
+        n++;
+      }
+      collections.push({ name, documentCount: n });
+      totalDocuments += n;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      out.on('finish', () => resolve());
+      out.on('error', reject);
+      gzip.end();
+    });
+    if (streamErr) throw streamErr;
+
+    const fileSizeBytes = fileSize(filePath);
+    logger.info(`[Backup] ✔ Streaming backup — ${totalDocuments} docs, ${(fileSizeBytes / 1024).toFixed(1)} KB gz, ${Date.now() - start}ms → ${filePath}`);
+    return { success: true, filePath, fileName, fileSizeBytes, totalDocuments, collections, durationMs: Date.now() - start };
+  } catch (err: any) {
+    gzip.destroy();
+    out.destroy();
+    const msg = err?.message || String(err);
+    logger.error(`[Backup] ✖ Streaming backup failed: ${msg}`);
+    return { success: false, filePath, fileName, fileSizeBytes: fileSize(filePath), totalDocuments, collections, durationMs: Date.now() - start, error: msg };
+  }
+}
+
+// Runs the streaming backup and emails the gzip archive to ADMIN_EMAILS.
+// Always deletes the temp file afterwards (server /tmp is ephemeral anyway).
+export async function runStreamingBackupAndEmail(db?: mongoose.mongo.Db): Promise<StreamBackupResult> {
+  const result = await runStreamingBackup(db);
+
+  const recipients = (process.env.ADMIN_EMAILS || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+
+  if (!recipients.length) {
+    logger.warn('[Backup] ADMIN_EMAILS not set — skipping backup email.');
+    safeUnlink(result.filePath);
+    return result;
+  }
+
+  const sizeKB = (result.fileSizeBytes / 1024).toFixed(1);
+  const rows = result.collections
+    .map((c) => `<tr><td style="padding:2px 10px;">${c.name}</td><td style="padding:2px 10px;text-align:right;">${c.documentCount}</td></tr>`)
+    .join('');
+  const tooBig = result.fileSizeBytes > MAX_EMAIL_ATTACHMENT_BYTES;
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+      <h2 style="color:${result.success ? '#2e7d32' : '#c62828'};">PETMAZA Daily DB Backup ${result.success ? '✔' : '✖'}</h2>
+      <p>Date: <strong>${result.fileName}</strong></p>
+      <p>Total documents: <strong>${result.totalDocuments}</strong> across ${result.collections.length} collections<br>
+         Archive size: <strong>${sizeKB} KB</strong> (gzip) &middot; Duration: ${result.durationMs} ms</p>
+      ${result.error ? `<p style="color:#c62828;">Error: ${result.error}</p>` : ''}
+      ${tooBig ? `<p style="color:#b45309;">⚠ Archive exceeds the ${(MAX_EMAIL_ATTACHMENT_BYTES / 1024 / 1024)}MB email limit — not attached. Configure off-box storage (e.g. S3) for backups this large.</p>` : ''}
+      <table style="border-collapse:collapse;font-size:13px;margin-top:10px;"><thead><tr><th style="text-align:left;padding:2px 10px;">Collection</th><th style="text-align:right;padding:2px 10px;">Docs</th></tr></thead><tbody>${rows}</tbody></table>
+      <p style="color:#999;font-size:12px;margin-top:16px;">Restore: gunzip the file → newline-delimited JSON; each collection starts with a {"__collection__":"name"} marker line.</p>
+    </div>`;
+
+  try {
+    let attachments;
+    if (result.success && !tooBig && result.fileSizeBytes > 0) {
+      attachments = [{
+        filename: result.fileName,
+        content: fs.readFileSync(result.filePath), // small gzip — safe to read for the attachment
+        contentType: 'application/gzip',
+      }];
+    }
+    await sendEmail({
+      to: recipients[0],
+      cc: recipients.slice(1),
+      subject: `PETMAZA DB Backup ${result.success ? '' : '(FAILED) '}— ${result.fileName}`,
+      html,
+      trigger: 'daily_db_backup',
+      attachments,
+    });
+    logger.info(`[Backup] Backup email sent to ${recipients.join(', ')}${attachments ? ' with attachment' : ' (no attachment)'}`);
+  } catch (err: any) {
+    logger.error(`[Backup] Failed to email backup: ${err?.message || err}`);
+  } finally {
+    safeUnlink(result.filePath);
+  }
+
+  return result;
+}
+
+function safeUnlink(p: string): void {
+  try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
 }

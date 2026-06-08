@@ -579,7 +579,7 @@ export const handlePaymentFailure = async (req: AuthRequest, res: Response, next
         );
       }
     } catch (emailError: any) {
-      console.error('Failed to send payment failure email:', emailError.message);
+      logger.error('Failed to send payment failure email:', emailError.message);
       // Don't fail the error handling if email fails
     }
 
