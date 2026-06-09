@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middlewares/auth';
 import Order from '../models/Order';
 import Product from '../models/Product';
+import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
 import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
@@ -252,53 +253,32 @@ export const rejectPrimeOrder = async (
       return next(new AppError('Order not found or already processed', 404));
     }
 
-    order.status = 'REJECTED';
-    order.rejectionReason = reason || 'Vendor rejected the order';
+    // Reassign to the MY_SHOP vendor instead of cancelling/refunding. No stock
+    // changes (the store doesn't track per-order stock) and no refund — the shop
+    // takes over fulfilment. It lands in MY_SHOP as PENDING (they must accept it).
+    const myShopVendor = await User.findOne({
+      role: 'vendor',
+      vendorType: 'MY_SHOP',
+      isApproved: true,
+    });
+
+    if (!myShopVendor) {
+      return next(new AppError('No shop vendor available to take over this order. Please contact admin.', 404));
+    }
+
+    order.assignedVendorId = myShopVendor._id as any;
+    order.status = 'PENDING';
+    order.rejectionReason = reason || 'Prime vendor rejected the order';
+    order.rejectedByName = (req.user as any).name || 'Prime Vendor';
+    order.rejectedByType = 'Prime Vendor';
+    order.acceptanceDeadline = undefined;
     await order.save();
 
-    // Return stock to the Product document
-    for (const item of order.items) {
-      const productId = (item.product_id as any)?._id || item.product_id;
-      if (productId) {
-        await Product.findByIdAndUpdate(productId, {
-          $inc: { stock: item.quantity },
-        });
-      }
-    }
-
-    logger.info(`[PrimeVendor] Order ${id} rejected by vendor ${vendor_id}`);
-
-    // Send rejection email with refund notification to customer
-    try {
-      const orderId = order._id.toString().slice(-8).toUpperCase();
-      
-      // Check if customer_id is populated (has email property)
-      const customer = order.customer_id as any;
-      const customerEmail = customer?.email;
-      const customerName = customer?.name;
-      
-      logger.info(`[PrimeVendor] Customer data - Email: ${customerEmail}, Name: ${customerName}`);
-      
-      if (customerEmail && customerName) {
-        sendOrderRejectionEmail(
-          customerEmail,
-          customerName,
-          orderId,
-          reason || 'Vendor rejected the order',
-          order.total || 0
-        ).then(() => logger.info(`[PrimeVendor] Rejection email sent for order ${orderId} to ${customerEmail}`))
-         .catch((e: any) => logger.error(`[PrimeVendor] Rejection email failed: ${e.message}`));
-      } else {
-        logger.error(`[PrimeVendor] Cannot send rejection email - Missing customer data. Email: ${customerEmail}, Name: ${customerName}`);
-      }
-    } catch (emailError: any) {
-      logger.error(`[PrimeVendor] Error sending rejection email: ${emailError.message}`);
-      // Don't fail the rejection if email fails
-    }
+    logger.info(`[PrimeVendor] Order ${id} rejected by ${(req.user as any).name} → reassigned to MY_SHOP ${myShopVendor._id} as PENDING`);
 
     res.status(200).json({
       success: true,
-      message: 'Prime order rejected successfully',
+      message: 'Order reassigned to shop vendor successfully',
       data: { order },
     });
   } catch (error: any) {

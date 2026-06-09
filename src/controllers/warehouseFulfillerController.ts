@@ -351,6 +351,8 @@ export const rejectAndReassign = async (req: AuthRequest, res: Response, next: N
     order.assignedVendorId = myShopVendor._id;
     order.status = 'PENDING';
     order.rejectionReason = reason || 'Not available at warehouse';
+    order.rejectedByName = (fulfiller as any).name || 'Warehouse Fulfiller';
+    order.rejectedByType = 'Warehouse Fulfiller';
     await order.save();
 
     logger.info(

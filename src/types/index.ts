@@ -191,7 +191,9 @@ export interface IOrder extends Document {
   platformFee?: number; // Platform fee applied to order (₹10 for prime orders)
   grandTotal?: number; // Total including platform fee and shipping (total + platformFee + shippingCharges)
   subtotalBeforeCharges?: number; // Subtotal before shipping and platform fees
-  rejectionReason?: string; // Reason for rejection by warehouse fulfiller
+  rejectionReason?: string; // Reason for rejection by warehouse fulfiller / prime vendor
+  rejectedByName?: string; // Name of the vendor who rejected before reassignment to MY_SHOP
+  rejectedByType?: string; // 'Prime Vendor' | 'Warehouse Fulfiller'
   refundReason?: string; // Reason for refund by MY_SHOP vendor
   refundedAt?: Date; // When the refund was processed
   refundStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'; // Refund status

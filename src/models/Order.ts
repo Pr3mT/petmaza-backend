@@ -215,6 +215,15 @@ const orderSchema = new Schema<IOrder>(
     rejectionReason: {
       type: String,
     },
+    // Who rejected the order before it was reassigned to MY_SHOP (so the shop
+    // vendor can see who passed it on). Type is a human label e.g. 'Prime Vendor'
+    // or 'Warehouse Fulfiller'.
+    rejectedByName: {
+      type: String,
+    },
+    rejectedByType: {
+      type: String,
+    },
     refundReason: {
       type: String,
     },
