@@ -76,6 +76,10 @@ router.put('/shipping-settings', updateShippingSettings);
 // Fulfiller management routes
 router.post('/fulfillers', createFulfiller);
 router.get('/fulfillers', getFulfillers);
+// Accept BOTH PATCH and PUT: the frontend's api.update() sends PATCH, but this
+// route was originally only registered as PUT → PATCH fell through to the global
+// 404 ("Route ... not found"). Register both so the Edit Fulfiller form works.
+router.patch('/fulfillers/:id', updateFulfiller);
 router.put('/fulfillers/:id', updateFulfiller);
 router.delete('/fulfillers/:id', deleteFulfiller);
 
