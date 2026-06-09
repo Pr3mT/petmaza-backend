@@ -2,11 +2,16 @@
  * orderMaintenance.ts
  * Cancels abandoned unpaid orders so they don't linger looking "placed".
  *
- * An order is created PENDING/unpaid at checkout; if the customer never completes
- * payment it would otherwise sit forever. We cancel PENDING orders that are still
- * unpaid after UNPAID_ORDER_TTL_MINUTES (default 60). Paid orders are never
- * touched. Stock isn't restored because vendor fulfilment / sales recording are
- * deferred until payment, so nothing was reserved for an unpaid order.
+ * An order is created unpaid at checkout; if the customer never completes payment
+ * it would otherwise sit forever. We cancel such orders after
+ * UNPAID_ORDER_TTL_MINUTES (default 60).
+ *
+ * Status scope: PENDING (awaiting vendor accept) AND ACCEPTED — MY_SHOP vendors
+ * auto-accept orders at creation (before payment), so an abandoned MY_SHOP order
+ * sits in ACCEPTED while still unpaid. Both are pre-fulfilment states; vendors are
+ * only notified after payment, so an unpaid order is never actually being worked.
+ * Paid orders are never touched (payment_status !== 'Paid' guard). No stock to
+ * restore — fulfilment/sales recording are deferred until payment.
  */
 import Order from '../models/Order';
 import logger from '../config/logger';
@@ -18,7 +23,7 @@ export async function cancelAbandonedUnpaidOrders(
 
   const res = await Order.updateMany(
     {
-      status: 'PENDING',
+      status: { $in: ['PENDING', 'ACCEPTED'] },
       payment_status: { $ne: 'Paid' },
       createdAt: { $lt: cutoff },
     },

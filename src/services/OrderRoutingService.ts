@@ -467,7 +467,7 @@ export class OrderRoutingService {
             total,
             totalPurchasePrice,
             totalProfit,
-            status: 'ACCEPTED', // MY_SHOP auto-accepts
+            status: 'PENDING', // NO auto-accept — MY_SHOP vendor must manually accept (only after payment)
             isPrime: false,
             isSplitShipment,
             assignedVendorId: myShopVendor._id,
@@ -517,14 +517,15 @@ export class OrderRoutingService {
     const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
     const totalProfit = total - totalPurchasePrice;
 
-    // Create order - directly assigned to MY_SHOP, status ACCEPTED (no pending)
+    // Create order assigned to MY_SHOP as PENDING — NO auto-accept. The MY_SHOP
+    // vendor must manually accept it (and only after payment succeeds).
     const order = await Order.create({
       customer_id,
       items: orderItems,
       total,
       totalPurchasePrice,
       totalProfit,
-      status: 'ACCEPTED', // Directly accepted by MY_SHOP, no waiting
+      status: 'PENDING', // NO auto-accept — awaits manual acceptance (after payment)
       isPrime: false,
       isSplitShipment: false,
       assignedVendorId: myShopVendor._id, // Direct assignment
