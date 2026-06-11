@@ -42,6 +42,6 @@ router.put('/:id', verifyToken, updateProduct); // MY_SHOP vendors can update th
 router.patch('/:id', verifyToken, updateProduct);
 router.patch('/:id/variants/:variantId/status', verifyToken, checkPrimeVendor, patchVariantStatus); // Admin + Prime Vendor: toggle variant in-stock / out-of-stock
 router.delete('/:id/variants/:variantId', verifyToken, checkRole('admin', 'sub_admin'), deleteVariant); // Admin can delete a single variant
-router.delete('/:id', verifyToken, checkRole('admin', 'vendor'), deleteProduct); // Admin can delete any, vendors can delete own
+router.delete('/:id', verifyToken, checkRole('admin', 'sub_admin', 'vendor'), deleteProduct); // Admin/sub-admin can delete any, vendors can delete own
 
 export default router;
