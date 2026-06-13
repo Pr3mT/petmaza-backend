@@ -493,7 +493,8 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
   try {
     const order = await OrderAcceptanceService.acceptOrder(
       req.params.id,
-      req.user._id.toString()
+      req.user._id.toString(),
+      req.body?.priceUpdates
     );
     res.status(200).json({
       success: true,

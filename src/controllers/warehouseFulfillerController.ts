@@ -1,10 +1,14 @@
 import { Response, NextFunction } from 'express';
 import Order from '../models/Order';
 import User from '../models/User';
+import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import logger from '../config/logger';
 import { sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
+import cloudinary from '../config/cloudinary';
+import streamifier from 'streamifier';
+import { applyVendorPriceAdjustments } from '../utils/applyVendorPriceAdjustments';
 import { 
   sendOrderAcceptedEmail,
   sendOrderShippedEmail,
@@ -229,6 +233,15 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
     if (order.status !== 'PENDING') {
       logger.warn('[acceptOrder] Order not pending:', order.status);
       return next(new AppError(`Order is already ${order.status}`, 400));
+    }
+
+    // Apply any vendor-adjusted purchase prices submitted with the acceptance.
+    const adj = applyVendorPriceAdjustments(order.items as any, req.body?.priceUpdates);
+    if (adj.changed) {
+      order.totalPurchasePrice = adj.totalPurchasePrice;
+      order.totalProfit = adj.totalProfit;
+      order.markModified('items');
+      logger.info(`[acceptOrder] Vendor adjusted prices on order ${orderId}. New totalPurchasePrice=${adj.totalPurchasePrice}`);
     }
 
     // Assign the order to this fulfiller and mark as accepted
@@ -514,12 +527,68 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
       );
     }
 
-    // Courier name + tracking ID are REQUIRED to ship.
-    const courierName = String(req.body.courier_name || req.body.courier || '').trim();
+    // ── Full shipping details are REQUIRED to ship (same as Prime Vendor flow) ──
+    const courierName = String(
+      req.body.shipping_company || req.body.courier_name || req.body.courier || ''
+    ).trim();
     const trackingId = String(req.body.tracking_id || req.body.trackingNumber || '').trim();
-    if (!courierName || !trackingId) {
-      return next(new AppError('Courier name and tracking ID are required to mark the order in transit.', 400));
+    const { total_weight, weight_unit, delivery_type } = req.body;
+
+    if (!courierName) {
+      return next(new AppError('Courier / shipping company name is required to mark the order in transit.', 400));
     }
+    if (!trackingId) {
+      return next(new AppError('Tracking ID is required to mark the order in transit.', 400));
+    }
+    if (!total_weight || isNaN(Number(total_weight)) || Number(total_weight) <= 0) {
+      return next(new AppError('Total weight must be a positive number', 400));
+    }
+    if (!weight_unit || !['kg', 'g'].includes(weight_unit)) {
+      return next(new AppError('Weight unit must be kg or g', 400));
+    }
+    if (!delivery_type || !['inter_state', 'out_of_state'].includes(delivery_type)) {
+      return next(new AppError('Delivery type must be inter_state or out_of_state', 400));
+    }
+    if (!req.file) {
+      return next(new AppError('Shipping receipt file is required', 400));
+    }
+
+    // ── Prevent duplicate shipping details for this order ──────────────────────
+    const existing = await ShippingDetails.findOne({ order_id: orderId });
+    if (existing) {
+      return next(new AppError('Shipping details already submitted for this order', 409));
+    }
+
+    // ── Upload receipt to Cloudinary ───────────────────────────────────────────
+    const isPdf = req.file.mimetype === 'application/pdf';
+    const uploadResult: any = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'petmaza/shipping-receipts',
+          resource_type: isPdf ? 'raw' : 'image',
+          ...(isPdf ? { format: 'pdf' } : {}),
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      streamifier.createReadStream(req.file!.buffer).pipe(stream);
+    });
+
+    // ── Save shipping details ──────────────────────────────────────────────────
+    await ShippingDetails.create({
+      order_id: orderId,
+      vendor_id: fulfiller._id,
+      shipping_company: courierName,
+      receipt_file_url: uploadResult.secure_url,
+      receipt_file_public_id: uploadResult.public_id,
+      tracking_id: trackingId,
+      total_weight: Number(total_weight),
+      weight_unit,
+      delivery_type,
+    });
+
     if (!order.courier) order.courier = {};
     order.courier.name = courierName;
     order.courier.tracking_id = trackingId;

@@ -8,6 +8,10 @@ import Transaction from '../models/Transaction';
 import ShippingSettings from '../models/ShippingSettings';
 import Settlement from '../models/Settlement';
 import CategoryFulfillerMapping from '../models/CategoryFulfillerMapping';
+// Registers the PrimeProduct schema so `.populate('items.primeProduct_id')` in
+// getVendorBilling works. The model file self-registers on import; without this
+// the populate throws MissingSchemaError and the endpoint 500s.
+import '../models/PrimeProduct';
 import { VendorProductPricingService } from '../services/VendorProductPricingService';
 import { ShippingService } from '../services/ShippingService';
 import { AppError } from '../middlewares/errorHandler';
