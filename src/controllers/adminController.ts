@@ -925,7 +925,7 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
     if (vendorId) orderFilter.assignedVendorId = vendorId;
 
     const orders = await Order.find(orderFilter)
-      .populate('assignedVendorId', 'name email vendorType')
+      .populate('assignedVendorId', 'name email phone vendorType')
       .populate('customer_id', 'name email')
       .populate('items.product_id', 'name images')
       .populate('items.primeProduct_id', 'name images')
@@ -967,6 +967,7 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
           vendorId: vendor._id,
           vendorName: vendor.name,
           vendorEmail: vendor.email,
+          vendorPhone: vendor.phone || null,
           vendorType: typeLabel,
           totalAmount: 0,
           paidAt: null,

@@ -395,7 +395,7 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
   try {
     const order = await Order.findById(req.params.id)
       .populate('items.product_id', 'name images')
-      .populate('assignedVendorId', 'name email')
+      .populate('assignedVendorId', 'name email phone vendorType')
       .populate('customer_id', 'name email');
 
     if (!order) {
@@ -454,9 +454,16 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
       total: order.total,
     });
 
+    // The assigned vendor's phone is exposed for admins only (so they can call
+    // a vendor who adjusted prices). Never leak vendor contact to the customer.
+    const orderResponse: any = order.toObject();
+    if (!isAdmin && orderResponse.assignedVendorId && typeof orderResponse.assignedVendorId === 'object') {
+      delete orderResponse.assignedVendorId.phone;
+    }
+
     res.status(200).json({
       success: true,
-      data: { order },
+      data: { order: orderResponse },
     });
   } catch (error: any) {
     logger.error('Error in getOrderById:', error);
