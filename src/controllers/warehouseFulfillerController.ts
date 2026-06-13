@@ -659,6 +659,7 @@ export const markDelivered = async (req: AuthRequest, res: Response, next: NextF
     }
 
     order.status = 'DELIVERED';
+    order.deliveredAt = new Date();
     await order.save();
 
     logger.info(`[markDelivered] Order ${orderId} marked as DELIVERED by ${fulfiller._id}`);

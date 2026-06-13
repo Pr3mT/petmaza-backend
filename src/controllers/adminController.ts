@@ -917,10 +917,10 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
       return { start: mon, end: sun, label };
     };
 
-    // Fetch all delivered orders assigned to a vendor
+    // Settlement is per completed work: only DELIVERED orders are billed to a vendor.
     const orderFilter: any = {
       assignedVendorId: { $exists: true, $ne: null },
-      status: { $nin: ['CANCELLED', 'REJECTED', 'PENDING'] },
+      status: 'DELIVERED',
     };
     if (vendorId) orderFilter.assignedVendorId = vendorId;
 
@@ -939,7 +939,13 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
       const vendor = order.assignedVendorId as any;
       if (!vendor) continue;
 
-      const weekInfo = getWeekRange(new Date(order.createdAt as any));
+      // Group by the week the order was DELIVERED (what you pay for this week),
+      // not when it was created. Fulfiller deliveries don't set deliveredAt, so
+      // fall back to updatedAt (the delivery status change), then createdAt.
+      const billingDate = new Date(
+        (order as any).deliveredAt || (order as any).updatedAt || order.createdAt
+      );
+      const weekInfo = getWeekRange(billingDate);
       const weekKey = `${vendor._id.toString()}_${weekInfo.start.toISOString().slice(0, 10)}`;
 
       if (!groupMap[weekKey]) {
@@ -969,27 +975,37 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
         };
       }
 
+      // What we OWE the vendor for this order = sum of the accepted purchase
+      // prices (purchaseSubtotal), NOT the customer's selling total.
+      const orderPayout = (order.items || []).reduce(
+        (s: number, it: any) => s + (Number(it.purchaseSubtotal) || 0),
+        0
+      );
+
       const entry = groupMap[weekKey];
-      entry.totalAmount += (order as any).total || 0;
+      entry.totalAmount += orderPayout;
       entry.orders.push({
         orderId: (order as any).order_id || order._id,
         orderDate: order.createdAt,
+        deliveredAt: (order as any).deliveredAt || (order as any).updatedAt || null,
         orderStatus: order.status,
         items: (order.items || []).map((item: any) => {
           const product = item.product_id || item.primeProduct_id;
-          // Order model uses sellingPrice / subtotal (not price / total)
-          const unitPrice = item.sellingPrice ?? item.price ?? 0;
           const qty = item.quantity || 1;
-          const lineTotal = item.subtotal ?? item.purchaseSubtotal ?? (qty * unitPrice);
+          // Vendor's accepted unit purchase price (what we pay them).
+          const unitPrice = item.purchasePrice ?? 0;
+          const lineTotal = item.purchaseSubtotal ?? (qty * unitPrice);
           return {
             productId: product?._id ? String(product._id) : 'N/A',
             productName: product?.name || 'Unknown Product',
             quantity: qty,
             price: unitPrice,
             total: lineTotal,
+            priceAdjusted: !!item.priceAdjusted,
+            quotedPrice: item.quotedPurchasePrice ?? null,
           };
         }),
-        grandTotal: order.total || 0,
+        grandTotal: orderPayout,
       });
     }
 
@@ -1042,7 +1058,7 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
  */
 export const markWeeklyInvoicePaid = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { weekStart, vendorId } = req.body;
+    const { weekStart, vendorId, totalAmount, orderIds } = req.body;
 
     if (!weekStart || !vendorId) {
       return res.status(400).json({ success: false, message: 'weekStart and vendorId are required' });
@@ -1050,6 +1066,11 @@ export const markWeeklyInvoicePaid = async (req: AuthRequest, res: Response, nex
 
     const paidAt = new Date();
     const weekStartDate = new Date(weekStart);
+    const amountPaid = Number(totalAmount) || 0;
+    // Keep only valid ObjectId strings so this audit field can never break the payout.
+    const settledOrders = (Array.isArray(orderIds) ? orderIds : []).filter(
+      (id: any) => typeof id === 'string' && /^[a-f\d]{24}$/i.test(id)
+    );
 
     // Find existing settlement or create new one — avoids $setOnInsert path-conflict errors
     const existing = await Settlement.findOne({ vendorId, weekStart: weekStartDate });
@@ -1057,6 +1078,8 @@ export const markWeeklyInvoicePaid = async (req: AuthRequest, res: Response, nex
     if (existing) {
       existing.status = 'paid';
       existing.processedAt = paidAt;
+      existing.totalDue = amountPaid;
+      if (settledOrders.length) existing.orders = settledOrders as any;
       await existing.save();
     } else {
       await Settlement.create({
@@ -1064,8 +1087,8 @@ export const markWeeklyInvoicePaid = async (req: AuthRequest, res: Response, nex
         weekStart: weekStartDate,
         status: 'paid',
         processedAt: paidAt,
-        totalDue: 0,
-        orders: [],
+        totalDue: amountPaid,
+        orders: settledOrders,
       });
     }
 
