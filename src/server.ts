@@ -171,6 +171,7 @@ import debugRoutes from './routes/debug';
 import shippingRoutes from './routes/shipping';
 import productNotificationRoutes from './routes/productNotifications';
 import couponRoutes from './routes/coupons';
+import visitorRoutes from './routes/visitors';
 
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/products', generalLimiter, productRoutes);
@@ -204,6 +205,7 @@ app.use('/api/search', searchLimiter, searchRoutes);
 app.use('/api/debug', generalLimiter, debugRoutes);
 app.use('/api/shipping', generalLimiter, shippingRoutes);
 app.use('/api/coupons', generalLimiter, couponRoutes);
+app.use('/api/visits', generalLimiter, visitorRoutes);
 
 // Error handling
 app.use(notFound);

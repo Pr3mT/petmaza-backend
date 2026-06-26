@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { protect } from '../middlewares/auth';
 import * as myShopVendorController from '../controllers/myShopVendorController';
+import { uploadReceipt } from '../config/cloudinary';
 import Review from '../models/Review';
 import Product from '../models/Product';
 
@@ -21,7 +22,7 @@ router.post('/orders/:orderId/refund', myShopVendorController.refundOrder);
 // Update order status
 router.post('/orders/:orderId/packed', myShopVendorController.markPacked);
 router.post('/orders/:orderId/picked-up', myShopVendorController.markPickedUp);
-router.post('/orders/:orderId/in-transit', myShopVendorController.markInTransit);
+router.post('/orders/:orderId/in-transit', uploadReceipt.single('receipt'), myShopVendorController.markInTransit);
 router.post('/orders/:orderId/delivered', myShopVendorController.markDelivered);
 
 // Get reviews for vendor's products

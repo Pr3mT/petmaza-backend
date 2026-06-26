@@ -1,6 +1,7 @@
 import express from 'express';
 import { protect } from '../middlewares/auth';
 import * as warehouseFulfillerController from '../controllers/warehouseFulfillerController';
+import { uploadReceipt } from '../config/cloudinary';
 import Review from '../models/Review';
 import Order from '../models/Order';
 
@@ -27,7 +28,7 @@ router.post('/orders/:orderId/reject', warehouseFulfillerController.rejectAndRea
 // Update order status stages
 router.post('/orders/:orderId/packed', warehouseFulfillerController.markPacked);
 router.post('/orders/:orderId/picked-up', warehouseFulfillerController.markPickedUp);
-router.post('/orders/:orderId/in-transit', warehouseFulfillerController.markInTransit);
+router.post('/orders/:orderId/in-transit', uploadReceipt.single('receipt'), warehouseFulfillerController.markInTransit);
 router.post('/orders/:orderId/delivered', warehouseFulfillerController.markDelivered);
 
 // Get reviews for fulfilled products

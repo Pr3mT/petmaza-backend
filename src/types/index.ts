@@ -125,7 +125,9 @@ export interface IOrderItem {
   vendor_id?: Types.ObjectId | string;
   quantity: number;
   sellingPrice: number; // Global selling price
-  purchasePrice: number; // Vendor-specific purchase price
+  purchasePrice: number; // Vendor-specific purchase price (accepted price)
+  quotedPurchasePrice?: number; // Original platform-quoted price, kept when vendor adjusts
+  priceAdjusted?: boolean; // Vendor changed purchasePrice while accepting
   subtotal: number; // quantity * sellingPrice
   purchaseSubtotal: number; // quantity * purchaseSubtotal
   profit: number; // subtotal - purchaseSubtotal

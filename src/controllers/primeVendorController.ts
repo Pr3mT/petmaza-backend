@@ -11,6 +11,7 @@ import { sendOrderStatusUpdateEmail, sendOrderRejectionEmail, sendRefundInitiate
 import { sanitizeOrderForVendor, sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
+import { applyVendorPriceAdjustments } from '../utils/applyVendorPriceAdjustments';
 
 /**
  * Fix orders where purchasePrice was stored as 0.
@@ -176,6 +177,15 @@ export const acceptPrimeOrder = async (
 
     if (!order) {
       return next(new AppError('Order not found or already processed', 404));
+    }
+
+    // Apply any vendor-adjusted purchase prices submitted with the acceptance.
+    const adj = applyVendorPriceAdjustments(order.items as any, req.body?.priceUpdates);
+    if (adj.changed) {
+      order.totalPurchasePrice = adj.totalPurchasePrice;
+      order.totalProfit = adj.totalProfit;
+      order.markModified('items');
+      logger.info(`[PrimeVendor] Vendor adjusted prices on order ${id}. New totalPurchasePrice=${adj.totalPurchasePrice}`);
     }
 
     order.status = 'ACCEPTED';

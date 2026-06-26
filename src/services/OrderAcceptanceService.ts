@@ -187,7 +187,7 @@ export class OrderAcceptanceService {
   }
 
   // Accept order - first come first serve
-  static async acceptOrder(order_id: string, vendor_id: string) {
+  static async acceptOrder(order_id: string, vendor_id: string, priceUpdates?: any[]) {
     logger.info('[OrderAcceptanceService] acceptOrder called for order:', order_id, 'vendor:', vendor_id);
     const order = await Order.findById(order_id);
 
@@ -340,6 +340,16 @@ export class OrderAcceptanceService {
         newTotalPurchasePrice += purchaseSubtotal;
         newTotalProfit += profit;
       }
+    }
+
+    // Apply any vendor-adjusted purchase prices submitted with the acceptance.
+    // (Overrides the vendor's configured pricing recalculated above.)
+    const { applyVendorPriceAdjustments } = await import('../utils/applyVendorPriceAdjustments');
+    const adj = applyVendorPriceAdjustments(updatedItems, priceUpdates);
+    if (adj.changed) {
+      newTotalPurchasePrice = adj.totalPurchasePrice;
+      newTotalProfit = adj.totalProfit;
+      logger.info(`[OrderAcceptanceService] Vendor adjusted prices on order ${order_id}. New totalPurchasePrice=${newTotalPurchasePrice}`);
     }
 
     // Use atomic update to ensure only first vendor can accept

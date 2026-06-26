@@ -31,6 +31,16 @@ const orderItemSchema = new Schema(
       required: true,
       min: 0,
     },
+    // Original platform-quoted purchase price, snapshotted the first time a
+    // vendor adjusts their accepted price. Lets admin compare quoted vs accepted.
+    quotedPurchasePrice: {
+      type: Number,
+    },
+    // True when the vendor changed purchasePrice while accepting the order.
+    priceAdjusted: {
+      type: Boolean,
+      default: false,
+    },
     subtotal: {
       type: Number,
       required: true,
