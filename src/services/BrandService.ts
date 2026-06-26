@@ -159,22 +159,59 @@ export class BrandService {
     return brand;
   }
 
+  // Resolve subcategory name(s) to Category ObjectIds.
+  // Brand.subcategories stores ObjectId refs to Category, but callers pass
+  // human-readable names (e.g. "Cat Food") from SUBCATEGORIES_BY_MAIN_CATEGORY.
+  // Querying the ObjectId field with a string throws a CastError, so we map
+  // names -> ids first. IDs are passed through unchanged.
+  private static async resolveSubcategoryIds(names: string[]): Promise<mongoose.Types.ObjectId[]> {
+    if (names.length === 0) return [];
+
+    const ids: mongoose.Types.ObjectId[] = [];
+    const lookupNames: string[] = [];
+
+    for (const value of names) {
+      if (mongoose.Types.ObjectId.isValid(value)) {
+        ids.push(new mongoose.Types.ObjectId(value));
+      } else {
+        lookupNames.push(value);
+      }
+    }
+
+    if (lookupNames.length > 0) {
+      const categories = await Category.find({ name: { $in: lookupNames } }).select('_id');
+      ids.push(...categories.map((c) => c._id as mongoose.Types.ObjectId));
+    }
+
+    return ids;
+  }
+
   // Get brands by subcategory
   static async getBrandsBySubcategory(subcategory: string) {
+    const subcategoryIds = await this.resolveSubcategoryIds([subcategory]);
+    if (subcategoryIds.length === 0) return [];
+
     const brands = await Brand.find({
-      subcategories: subcategory,
+      subcategories: { $in: subcategoryIds },
       isActive: true,
-    }).sort({ name: 1 });
+    })
+      .populate('subcategories', 'name description image')
+      .sort({ name: 1 });
 
     return brands;
   }
 
   // Get brands by multiple subcategories
   static async getBrandsBySubcategories(subcategories: string[]) {
+    const subcategoryIds = await this.resolveSubcategoryIds(subcategories);
+    if (subcategoryIds.length === 0) return [];
+
     const brands = await Brand.find({
-      subcategories: { $in: subcategories },
+      subcategories: { $in: subcategoryIds },
       isActive: true,
-    }).sort({ name: 1 });
+    })
+      .populate('subcategories', 'name description image')
+      .sort({ name: 1 });
 
     return brands;
   }
