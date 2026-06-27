@@ -140,96 +140,84 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
       logger.info(`🔓 ${vendor.vendorType} vendor - showing all non-prime products`);
     }
 
+    // ── Step 1: Fetch all products in ONE query (with full population) ──────────
     const allProducts = await Product.find(productFilter)
       .populate('brand_id', 'name _id')
       .populate('category_id', 'name _id')
+      .populate('addedBy', 'name _id vendorType')
+      .populate('primeVendor_id', 'name _id vendorType')
       .sort({ createdAt: -1 });
 
-    // Check if vendor is MY_SHOP
-    const isMyShop = ['WAREHOUSE', 'MY_SHOP'].includes(vendor.vendorType);
+    const productIds = allProducts.map((p) => p._id);
 
-    // Get or create VendorProductPricing entries for each product
-    const productsWithPricing = await Promise.all(
-      allProducts.map(async (product) => {
-        let vendorProduct = await VendorProductPricing.findOne({
-          vendor_id: vendor._id,
-          product_id: product._id,
-        });
-        
-        logger.info(`\n🔍 Checking product: ${product.name}`);
-        logger.info('Found existing VendorProductPricing:', !!vendorProduct);
-        if (vendorProduct && vendorProduct.variantStock) {
-          logger.info('Existing variantStock:', JSON.stringify(vendorProduct.variantStock.map((v: any) => ({ weight: v.weight, unit: v.unit, stock: v.availableStock })), null, 2));
-        }
-
-        // If no pricing entry exists, create one
-        if (!vendorProduct) {
-          logger.info('⚠️ No VendorProductPricing found. Creating new one with 0 stock.');
-          // Sync isActive with product.inStock so newly added products show as Available immediately
-          const initialActive = product.inStock !== false;
-          vendorProduct = await VendorProductPricing.create({
-            vendor_id: vendor._id,
-            product_id: product._id,
-            purchasePercentage: product.purchasePercentage || 60,
-            purchasePrice: product.hasVariants && product.variants?.length > 0 
-              ? 0 
-              : Math.round((product.mrp || 0) * ((product.purchasePercentage || 60) / 100)),
-            availableStock: 0,
-            isActive: initialActive, // Sync with product.inStock so newly added products are Available
-            variantStock: product.hasVariants && product.variants?.length > 0
-              ? product.variants.map((variant: any) => ({
-                  weight: variant.weight,
-                  unit: variant.unit,
-                  size: variant.size,
-                  displayWeight: variant.displayWeight,
-                  availableStock: 0,
-                  totalSoldWebsite: 0,
-                  totalSoldStore: 0,
-                  isActive: variant.isActive !== false, // Sync with variant's active status
-                }))
-              : undefined,
-          });
-        } else {
-          let needsSave = false;
-          // Only initialize variantStock if product has variants but vendor pricing doesn't
-          if (!vendorProduct.variantStock && product.hasVariants && product.variants?.length > 0) {
-            vendorProduct.variantStock = product.variants.map((variant: any) => ({
-              weight: variant.weight,
-              unit: variant.unit,
-              size: variant.size,
-              displayWeight: variant.displayWeight,
-              availableStock: 0,
-              totalSoldWebsite: 0,
-              totalSoldStore: 0,
-              isActive: variant.isActive,
-            }));
-            needsSave = true;
-          }
-          // For MY_SHOP and WAREHOUSE_FULFILLER, sync isActive from product.inStock so the badge is always correct
-          const isMyShopVendor = ['WAREHOUSE', 'MY_SHOP', 'WAREHOUSE_FULFILLER'].includes(vendor.vendorType);
-          if (isMyShopVendor && !product.hasVariants) {
-            const expectedActive = product.inStock !== false;
-            if (vendorProduct.isActive !== expectedActive) {
-              vendorProduct.isActive = expectedActive;
-              needsSave = true;
-            }
-          }
-          if (needsSave) await vendorProduct.save();
-        }
-
-        // Populate product_id with full product data
-        await vendorProduct.populate({
-          path: 'product_id',
-          populate: [
-            { path: 'brand_id', select: 'name _id' },
-            { path: 'addedBy', select: 'name _id vendorType' },
-            { path: 'primeVendor_id', select: 'name _id vendorType' },
-          ],
-        });
-
-        return vendorProduct;
-      })
+    // ── Step 2: Fetch ALL existing VendorProductPricing in ONE query ─────────
+    const existingPricings = await VendorProductPricing.find({
+      vendor_id: vendor._id,
+      product_id: { $in: productIds },
+    });
+    const pricingMap = new Map<string, any>(
+      existingPricings.map((p) => [p.product_id.toString(), p])
     );
+
+    // ── Step 3: Bulk-create missing entries in ONE insertMany ────────────────
+    const missingProducts = allProducts.filter((p) => !pricingMap.has(p._id.toString()));
+    if (missingProducts.length > 0) {
+      const newDocs = missingProducts.map((product) => ({
+        vendor_id: vendor._id,
+        product_id: product._id,
+        purchasePercentage: product.purchasePercentage || 60,
+        purchasePrice:
+          product.hasVariants && product.variants?.length > 0
+            ? 0
+            : Math.round((product.mrp || 0) * ((product.purchasePercentage || 60) / 100)),
+        availableStock: 0,
+        isActive: product.inStock !== false,
+        variantStock:
+          product.hasVariants && product.variants?.length > 0
+            ? product.variants.map((v: any) => ({
+                weight: v.weight, unit: v.unit, size: v.size,
+                displayWeight: v.displayWeight,
+                availableStock: 0, totalSoldWebsite: 0, totalSoldStore: 0,
+                isActive: v.isActive !== false,
+              }))
+            : undefined,
+      }));
+      const inserted = await VendorProductPricing.insertMany(newDocs, { ordered: false });
+      for (const doc of inserted) pricingMap.set(doc.product_id.toString(), doc);
+    }
+
+    // ── Step 4: Patch only entries that actually need updating ───────────────
+    const isMyShopVendor = ['WAREHOUSE', 'MY_SHOP', 'WAREHOUSE_FULFILLER'].includes(vendor.vendorType);
+    const patchSaves: Promise<any>[] = [];
+    for (const product of allProducts) {
+      const pricing = pricingMap.get(product._id.toString());
+      if (!pricing) continue;
+      let dirty = false;
+      if (!pricing.variantStock && product.hasVariants && product.variants?.length > 0) {
+        pricing.variantStock = product.variants.map((v: any) => ({
+          weight: v.weight, unit: v.unit, size: v.size, displayWeight: v.displayWeight,
+          availableStock: 0, totalSoldWebsite: 0, totalSoldStore: 0, isActive: v.isActive !== false,
+        }));
+        dirty = true;
+      }
+      if (isMyShopVendor && !product.hasVariants) {
+        const expected = product.inStock !== false;
+        if (pricing.isActive !== expected) { pricing.isActive = expected; dirty = true; }
+      }
+      if (dirty) patchSaves.push(pricing.save());
+    }
+    if (patchSaves.length > 0) await Promise.all(patchSaves);
+
+    // ── Step 5: Attach already-populated product to each pricing entry ───────
+    const productsWithPricing = allProducts
+      .map((product) => {
+        const pricing = pricingMap.get(product._id.toString());
+        if (!pricing) return null;
+        const obj: any = pricing.toObject ? pricing.toObject({ virtuals: true }) : { ...pricing };
+        obj.product_id = product.toObject ? product.toObject({ virtuals: true }) : product;
+        return obj;
+      })
+      .filter(Boolean);
 
     // For MY_SHOP: determine which vendor "owns" each non-prime product
     // Primary: match product.subCategory against VendorDetails.assignedSubcategories
@@ -283,11 +271,10 @@ export const getVendorProducts = async (req: AuthRequest, res: Response, next: N
       }
     }
 
-    const responseProducts = productsWithPricing.map((item) => {
-      const obj = item.toObject({ virtuals: true }) as any;
-      const pid = obj.product_id?._id?.toString() || obj.product_id?.toString();
-      if (pid) obj.ownerVendor = productOwnerMap.get(pid) || null;
-      return obj;
+    const responseProducts = (productsWithPricing as any[]).map((item) => {
+      const pid = item.product_id?._id?.toString() || item.product_id?.toString();
+      if (pid) item.ownerVendor = productOwnerMap.get(pid) || null;
+      return item;
     });
 
     res.status(200).json({
