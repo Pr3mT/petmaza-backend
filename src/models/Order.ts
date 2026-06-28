@@ -247,6 +247,9 @@ const orderSchema = new Schema<IOrder>(
     refundAmount: {
       type: Number,
     },
+    refundId: {
+      type: String,
+    },
     couponCode: {
       type: String,
       trim: true,

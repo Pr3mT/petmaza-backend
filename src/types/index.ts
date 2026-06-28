@@ -200,6 +200,7 @@ export interface IOrder extends Document {
   refundedAt?: Date; // When the refund was processed
   refundStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'; // Refund status
   refundAmount?: number; // Amount to be refunded
+  refundId?: string; // Razorpay refund id (rfnd_xxx) returned by the refund API
   couponCode?: string; // Coupon code applied to order
   discountAmount?: number; // Discount amount from coupon
   deliveredAt?: Date; // When the order was delivered

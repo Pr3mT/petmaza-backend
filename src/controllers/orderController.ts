@@ -20,6 +20,7 @@ import {
 } from '../services/emailer';
 import { orderQueue } from '../services/OrderQueue';
 import { assertCapturedPaymentForOrder } from '../services/paymentGuard';
+import { getRazorpayInstance } from '../config/razorpay';
 
 // Create order (customer)
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -806,7 +807,8 @@ export const adminAssignOrderToVendor = async (
   }
 };
 
-// Admin: Process (approve) a refund for an order that is in REFUND_INITIATED state
+// Admin: Process a refund for a paid order. Hits the Razorpay refund API for the
+// captured payment, then marks the order REFUNDED.
 export const adminProcessRefund = async (
   req: AuthRequest,
   res: Response,
@@ -825,14 +827,55 @@ export const adminProcessRefund = async (
       return next(new AppError('Order not found', 404));
     }
 
-    if (order.status !== 'REFUND_INITIATED') {
-      return next(new AppError(`Cannot process refund: order status is ${order.status}. Only REFUND_INITIATED orders can be processed.`, 400));
+    // Already refunded — nothing to do.
+    if (order.status === 'REFUNDED' || order.payment_status === 'Refunded') {
+      return next(new AppError('This order has already been refunded.', 400));
     }
 
-    // Mark order as fully refunded
+    // Only a captured (Paid) payment can be refunded back to the customer.
+    if (order.payment_status !== 'Paid') {
+      return next(new AppError(`Cannot refund: order payment status is "${order.payment_status}". Only Paid orders can be refunded.`, 400));
+    }
+
+    // Amount to send back (in rupees). Razorpay expects the smallest unit (paise).
+    const refundAmountRupees = order.refundAmount || order.grandTotal || order.total || 0;
+    if (refundAmountRupees <= 0) {
+      return next(new AppError('Refund amount could not be determined for this order.', 400));
+    }
+
+    // Hit the Razorpay refund API for the captured payment. When payments are
+    // disabled (SKIP_PAYMENT / no keys, e.g. local dev) we skip the gateway call.
+    const razorpay = getRazorpayInstance();
+    if (razorpay) {
+      if (!order.payment_id) {
+        return next(new AppError('This order has no Razorpay payment id, so it cannot be refunded automatically.', 400));
+      }
+      try {
+        const refund = await razorpay.payments.refund(order.payment_id, {
+          amount: Math.round(refundAmountRupees * 100),
+          speed: 'normal',
+          notes: {
+            orderId: order._id.toString(),
+            reason: order.refundReason || 'Refund processed by admin',
+          },
+        });
+        order.refundId = refund.id;
+        order.refundStatus = refund.status === 'processed' ? 'COMPLETED' : 'PROCESSING';
+        logger.info(`[adminProcessRefund] Razorpay refund ${refund.id} created for order ${orderId} (₹${refundAmountRupees}, status: ${refund.status})`);
+      } catch (rzpError: any) {
+        const desc = rzpError?.error?.description || rzpError?.message || 'Razorpay refund request failed';
+        logger.error(`[adminProcessRefund] Razorpay refund failed for order ${orderId}: ${desc}`);
+        return next(new AppError(`Razorpay refund failed: ${desc}`, 502));
+      }
+    } else {
+      logger.warn(`[adminProcessRefund] Razorpay not configured; marking order ${orderId} refunded without a gateway call`);
+      order.refundStatus = 'COMPLETED';
+    }
+
+    // Mark order as refunded
     order.status = 'REFUNDED';
-    order.refundStatus = 'COMPLETED';
     order.payment_status = 'Refunded';
+    order.refundAmount = refundAmountRupees;
     order.refundedAt = new Date();
     await order.save();
 
