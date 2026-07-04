@@ -96,11 +96,14 @@ export class OrderAcceptanceService {
     // Only PRIME vendors see pending Prime orders
     logger.info(`[getPendingOrders] PRIME vendor - showing pending Prime orders`);
 
-    // Get all PENDING Prime orders that are either:
+    // Get all awaiting-acceptance Prime orders that are either:
     // 1. Not yet assigned (broadcast orders), OR
     // 2. Assigned to this specific vendor
+    // Prime orders are created with status 'ASSIGNED' (pre-assigned to the owning
+    // vendor) and become 'ACCEPTED' once accepted, so "pending" = PENDING or ASSIGNED.
+    // This matches the web's pending-orders rule so both platforms show the same list.
     const allPendingOrders = await Order.find({
-      status: 'PENDING',
+      status: { $in: ['PENDING', 'ASSIGNED'] },
       payment_status: 'Paid',
       isPrime: true,
       $or: [
@@ -204,8 +207,10 @@ export class OrderAcceptanceService {
       throw new AppError('Order is not available for acceptance', 400);
     }
     
-    // Check if order is already accepted by another vendor
-    if (order.assignedVendorId) {
+    // Reject only if the order is already assigned to a DIFFERENT vendor.
+    // Prime orders are pre-assigned to their owning vendor (status ASSIGNED),
+    // so that vendor must still be allowed to accept their own order.
+    if (order.assignedVendorId && order.assignedVendorId.toString() !== vendor_id.toString()) {
       throw new AppError('Order was already accepted by another vendor', 409);
     }
 
@@ -362,6 +367,7 @@ export class OrderAcceptanceService {
         $or: [
           { assignedVendorId: null }, // Competitive order - must be unassigned
           { assignedVendorId: { $exists: false } }, // Legacy order without assignedVendorId field
+          { assignedVendorId: vendor_id }, // Pre-assigned Prime order - the owning vendor may accept it
         ],
       },
       {

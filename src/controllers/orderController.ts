@@ -545,7 +545,10 @@ export const getVendorOrders = async (req: AuthRequest, res: Response, next: Nex
     const orders = await Order.find({
       assignedVendorId: vendorObjectId,
       payment_status: 'Paid',
-      status: { $ne: 'PENDING' }, // Exclude pending orders (those are in pending orders page)
+      // Exclude orders still awaiting acceptance (PENDING/ASSIGNED) — those belong on
+      // the pending-orders page. Prime orders are ASSIGNED until accepted, so both
+      // must be excluded here to match the web's accepted-orders list.
+      status: { $nin: ['PENDING', 'ASSIGNED'] },
     })
       .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images')
@@ -627,8 +630,13 @@ export const updateOrderStatus = async (
       return next(new AppError('Order not found', 404));
     }
 
-    // Check if vendor owns this order
-    if (order.assignedVendorId?.toString() !== vendorId) {
+    // Check if vendor owns this order.
+    // assignedVendorId is populated above, so extract its _id before comparing
+    // (a populated document's toString() is "[object Object]", never the id).
+    const assignedVendorId =
+      (order.assignedVendorId as any)?._id?.toString() ??
+      (order.assignedVendorId as any)?.toString();
+    if (assignedVendorId !== vendorId) {
       return next(new AppError('You are not assigned to this order', 403));
     }
 
