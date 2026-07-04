@@ -222,7 +222,7 @@ export const getAdminStats = async (req: AuthRequest, res: Response, next: NextF
 
     // ── Recent orders ────────────────────────────────────────────────────────
     const recentOrders = await Order.find()
-      .populate('customer_id', 'name email')
+      .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images')
       .sort({ createdAt: -1 })
       .limit(5);
@@ -341,7 +341,7 @@ export const getAllOrders = async (req: AuthRequest, res: Response, next: NextFu
     const skip = (Number(page) - 1) * Number(limit);
 
     const orders = await Order.find(query)
-      .populate('customer_id', 'name email')
+      .populate('customer_id', 'name email phone')
       .populate('assignedVendorId', 'name email')
       .populate('items.product_id', 'name images')
       .skip(skip)
@@ -926,7 +926,7 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
 
     const orders = await Order.find(orderFilter)
       .populate('assignedVendorId', 'name email phone vendorType')
-      .populate('customer_id', 'name email')
+      .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images')
       .populate('items.primeProduct_id', 'name images')
       .sort({ createdAt: -1 })
@@ -1168,7 +1168,7 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
 
     const orders = await Order.find(orderFilter)
       .populate('assignedVendorId', 'name email vendorType')
-      .populate('customer_id', 'name email')
+      .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name category brand')
       .populate('items.primeProduct_id', 'name brand')
       .sort({ createdAt: -1 })

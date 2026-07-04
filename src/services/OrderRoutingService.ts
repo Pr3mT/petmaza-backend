@@ -80,6 +80,7 @@ export class OrderRoutingService {
       city: string;
       state: string;
       pincode: string;
+      phone?: string;
     };
   }): Promise<RouteOrderResult> {
     const { customer_id, items, customerPincode, customerAddress } = data;

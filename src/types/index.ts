@@ -187,6 +187,7 @@ export interface IOrder extends Document {
     city: string;
     state: string;
     pincode: string;
+    phone?: string;
   };
   deliveryCost?: number; // Extra delivery cost for split shipments
   shippingCharges?: number; // Shipping charges applied to order

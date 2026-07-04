@@ -187,7 +187,7 @@ export const getAllInvoices = async (req: Request, res: Response) => {
     }
 
     const invoices = await Invoice.find(filter)
-      .populate('customer_id', 'name email')
+      .populate('customer_id', 'name email phone')
       .sort('-invoiceDate')
       .limit(Number(limit))
       .skip((Number(page) - 1) * Number(limit));
@@ -214,7 +214,7 @@ export const sendInvoiceEmail = async (req: Request, res: Response) => {
     const { invoiceId } = req.params;
 
     const invoice = await Invoice.findById(invoiceId)
-      .populate('customer_id', 'name email');
+      .populate('customer_id', 'name email phone');
 
     if (!invoice) {
       return res.status(404).json({ message: 'Invoice not found' });

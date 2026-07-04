@@ -214,7 +214,7 @@ export const refundOrder = async (req: AuthRequest, res: Response, next: NextFun
       return next(new AppError('Access denied. Only MY_SHOP vendors can refund orders.', 403));
     }
 
-    const order = await Order.findById(orderId).populate('customer_id', 'name email');
+    const order = await Order.findById(orderId).populate('customer_id', 'name email phone');
 
     if (!order) {
       return next(new AppError('Order not found', 404));

@@ -524,7 +524,7 @@ export const getPrimeWalletStats = async (
       ...baseQuery,
       status: { $nin: ['CANCELLED', 'REJECTED'] },
     })
-      .populate('customer_id', 'name email')
+      .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images')
       .sort({ createdAt: -1 })
       .lean();

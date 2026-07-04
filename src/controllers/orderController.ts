@@ -35,6 +35,19 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       return next(new AppError('Pincode and address are required', 400));
     }
 
+    // Every order must carry a contact number so vendors/admins can reach the
+    // customer (Google-signup accounts may have no phone on the profile).
+    let contactPhone = String(customerAddress.phone || req.user.phone || '').replace(/\D/g, '');
+    if (contactPhone.length > 10) contactPhone = contactPhone.slice(-10); // drop +91 / leading 0
+    if (contactPhone.length !== 10) {
+      return next(new AppError('A valid 10-digit contact number is required to place an order', 400));
+    }
+    customerAddress.phone = contactPhone;
+    if (!req.user.phone) {
+      // Backfill the profile so future orders and admin views have it too
+      await User.findByIdAndUpdate(req.user._id, { phone: contactPhone });
+    }
+
     // ── Route order: creates DB documents, returns notification/sales metadata ─
     const { orders, notifications, salesRecords } = await OrderRoutingService.routeOrder({
       customer_id: req.user._id.toString(),
@@ -397,7 +410,7 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
     const order = await Order.findById(req.params.id)
       .populate('items.product_id', 'name images')
       .populate('assignedVendorId', 'name email phone vendorType')
-      .populate('customer_id', 'name email');
+      .populate('customer_id', 'name email phone');
 
     if (!order) {
       return next(new AppError('Order not found', 404));
@@ -623,7 +636,7 @@ export const updateOrderStatus = async (
     }
 
     const order = await Order.findById(orderId)
-      .populate('customer_id', 'email name')
+      .populate('customer_id', 'email name phone')
       .populate('assignedVendorId', 'name');
     
     if (!order) {
@@ -830,7 +843,7 @@ export const adminProcessRefund = async (
       return next(new AppError('Invalid order ID format', 400));
     }
 
-    const order = await Order.findById(orderId).populate('customer_id', 'name email');
+    const order = await Order.findById(orderId).populate('customer_id', 'name email phone');
     if (!order) {
       return next(new AppError('Order not found', 404));
     }
@@ -958,6 +971,17 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
 
     if (!customerPincode || !customerAddress) {
       return next(new AppError('Pincode and address are required', 400));
+    }
+
+    // Same contact-number rule as createOrder
+    let contactPhone = String(customerAddress.phone || req.user.phone || '').replace(/\D/g, '');
+    if (contactPhone.length > 10) contactPhone = contactPhone.slice(-10); // drop +91 / leading 0
+    if (contactPhone.length !== 10) {
+      return next(new AppError('A valid 10-digit contact number is required to place an order', 400));
+    }
+    customerAddress.phone = contactPhone;
+    if (!req.user.phone) {
+      await User.findByIdAndUpdate(req.user._id, { phone: contactPhone });
     }
 
     // After unification, the Product IS the prime listing

@@ -257,7 +257,7 @@ export const rejectPrimeOrder = async (
       assignedVendorId: vendor_id,
       isPrime: true,
       status: { $in: ['PENDING', 'ASSIGNED', 'ACCEPTED'] }, // Allow rejection of PENDING, ASSIGNED, and ACCEPTED orders
-    }).populate('customer_id', 'name email');
+    }).populate('customer_id', 'name email phone');
 
     if (!order) {
       return next(new AppError('Order not found or already processed', 404));
@@ -401,7 +401,7 @@ export const markNotAvailable = async (
       isPrime: true,
       status: { $in: ['PENDING', 'ASSIGNED'] },
       payment_status: 'Paid',
-    }).populate('customer_id', 'name email');
+    }).populate('customer_id', 'name email phone');
 
     if (!order) {
       return next(new AppError('Order not found or cannot be marked as not available', 404));
@@ -449,7 +449,7 @@ export const initiateRefund = async (
       assignedVendorId: vendor_id,
       isPrime: true,
       status: { $in: ['PENDING', 'ASSIGNED', 'NOT_AVAILABLE'] },
-    }).populate('customer_id', 'name email');
+    }).populate('customer_id', 'name email phone');
 
     if (!order) {
       return next(new AppError('Order not found or not eligible for refund.', 404));

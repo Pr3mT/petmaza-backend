@@ -196,6 +196,12 @@ const orderSchema = new Schema<IOrder>(
         type: String,
         required: true,
       },
+      // Contact number for this delivery. Not schema-required because orders
+      // created before this field existed must still pass validation on save;
+      // createOrder enforces it for all new orders.
+      phone: {
+        type: String,
+      },
     },
     deliveryCost: {
       type: Number,
