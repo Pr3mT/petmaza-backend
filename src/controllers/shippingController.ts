@@ -3,6 +3,7 @@ import ShippingSettings from '../models/ShippingSettings';
 import { ShippingService } from '../services/ShippingService';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
+import { clearCache } from '../middlewares/cache';
 
 // Get shipping settings
 export const getShippingSettings = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -73,8 +74,10 @@ export const updateShippingSettings = async (req: AuthRequest, res: Response, ne
       await settings.save();
     }
 
-    // Clear cache
+    // Clear cache — both the service-level settings cache and the cached
+    // public /shipping/info response, so new fees apply immediately.
     ShippingService.clearCache();
+    clearCache('/shipping/info');
 
     res.status(200).json({
       success: true,
