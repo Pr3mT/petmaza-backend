@@ -153,6 +153,10 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response, next: 
 
     res.status(200).json({
       success: true,
+      // Return the PUBLIC key that created this order so the client always opens
+      // Razorpay checkout with the matching key (prevents key/account mismatch,
+      // which otherwise makes the checkout hang without opening).
+      key_id: process.env.RAZORPAY_KEY_ID,
       data: razorpayOrder,
     });
   } catch (error: any) {
