@@ -64,10 +64,10 @@ router.delete('/vendors/:id/products/:productId', removeVendorProductAssignment)
 router.post('/cleanup-variants', cleanupVariantProducts);
 router.post('/reseed-product', reseedVariantProduct);
 
-// Analytics routes — admin only (billing/finance)
-router.get('/analytics', checkRole('admin'), getAnalytics);
-router.get('/analytics/summary', checkRole('admin'), getSummary);
-router.get('/analytics/orders', checkRole('admin'), getOrderReport);
+// Analytics routes — admin + sub_admin (revenue/orders trends)
+router.get('/analytics', checkRole('admin', 'sub_admin'), getAnalytics);
+router.get('/analytics/summary', checkRole('admin', 'sub_admin'), getSummary);
+router.get('/analytics/orders', checkRole('admin', 'sub_admin'), getOrderReport);
 
 // Shipping settings routes
 router.get('/shipping-settings', getShippingSettings);
