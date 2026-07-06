@@ -161,6 +161,7 @@ const orderSchema = new Schema<IOrder>(
     courier: {
       name: String,
       tracking_id: String,
+      tracking_link: String,
       status: String,
     },
     assignedVendorId: {

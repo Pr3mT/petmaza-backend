@@ -363,7 +363,14 @@ export const updatePrimeOrderStatus = async (
             customer.name,
             orderId,
             order.status,
-            undefined // Don't show vendor name in email
+            undefined, // Don't show vendor name in email
+            order.courier?.tracking_id || order.courier?.tracking_link
+              ? {
+                  company: order.courier?.name,
+                  trackingId: order.courier?.tracking_id,
+                  trackingLink: order.courier?.tracking_link,
+                }
+              : undefined
           );
         }
       } catch (emailError) {
@@ -522,6 +529,8 @@ export const addShippingDetails = async (
     const {
       shipping_company,
       tracking_id,
+      tracking_link,
+      shipping_cost,
       total_weight,
       weight_unit,
       delivery_type,
@@ -534,17 +543,27 @@ export const addShippingDetails = async (
     if (!tracking_id || !String(tracking_id).trim()) {
       return next(new AppError('Tracking ID is required', 400));
     }
-    if (!total_weight || isNaN(Number(total_weight)) || Number(total_weight) <= 0) {
+    if (!tracking_link || !String(tracking_link).trim()) {
+      return next(new AppError('Tracking link is required', 400));
+    }
+    if (!/^https?:\/\/\S+$/i.test(String(tracking_link).trim())) {
+      return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
+    }
+    // ── Optional fields — validate only when provided ─────────────────────────
+    if (shipping_cost !== undefined && String(shipping_cost).trim() !== '') {
+      if (isNaN(Number(shipping_cost)) || Number(shipping_cost) < 0) {
+        return next(new AppError('Shipping cost must be a non-negative number', 400));
+      }
+    }
+    const hasWeight = total_weight !== undefined && String(total_weight).trim() !== '';
+    if (hasWeight && (isNaN(Number(total_weight)) || Number(total_weight) <= 0)) {
       return next(new AppError('Total weight must be a positive number', 400));
     }
-    if (!weight_unit || !['kg', 'g'].includes(weight_unit)) {
+    if (hasWeight && !['kg', 'g'].includes(weight_unit)) {
       return next(new AppError('Weight unit must be kg or g', 400));
     }
-    if (!delivery_type || !['inter_state', 'out_of_state'].includes(delivery_type)) {
+    if (delivery_type && !['inter_state', 'out_of_state'].includes(delivery_type)) {
       return next(new AppError('Delivery type must be inter_state or out_of_state', 400));
-    }
-    if (!req.file) {
-      return next(new AppError('Shipping receipt file is required', 400));
     }
 
     // ── Verify order belongs to this prime vendor and is in PACKED status ────
@@ -565,40 +584,48 @@ export const addShippingDetails = async (
       return next(new AppError('Shipping details already submitted for this order', 409));
     }
 
-    // ── Upload receipt to Cloudinary ─────────────────────────────────────────
-    const isPdf = req.file.mimetype === 'application/pdf';
-    const uploadResult: any = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'petmaza/shipping-receipts',
-          resource_type: isPdf ? 'raw' : 'image',
-          ...(isPdf ? { format: 'pdf' } : {}),
-        },
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
-      streamifier.createReadStream(req.file!.buffer).pipe(stream);
-    });
+    // ── Upload receipt to Cloudinary (optional) ──────────────────────────────
+    let uploadResult: any = null;
+    if (req.file) {
+      const isPdf = req.file.mimetype === 'application/pdf';
+      uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'petmaza/shipping-receipts',
+            resource_type: isPdf ? 'raw' : 'image',
+            ...(isPdf ? { format: 'pdf' } : {}),
+          },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        streamifier.createReadStream(req.file!.buffer).pipe(stream);
+      });
+    }
 
     // ── Save shipping details ────────────────────────────────────────────────
     const shippingDetails = await ShippingDetails.create({
       order_id: id,
       vendor_id,
       shipping_company: String(shipping_company).trim(),
-      receipt_file_url: uploadResult.secure_url,
-      receipt_file_public_id: uploadResult.public_id,
+      ...(uploadResult
+        ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }
+        : {}),
       tracking_id: String(tracking_id).trim(),
-      total_weight: Number(total_weight),
-      weight_unit,
-      delivery_type,
+      tracking_link: String(tracking_link).trim(),
+      ...(shipping_cost !== undefined && String(shipping_cost).trim() !== ''
+        ? { shipping_cost: Number(shipping_cost) }
+        : {}),
+      ...(hasWeight ? { total_weight: Number(total_weight), weight_unit } : {}),
+      ...(delivery_type ? { delivery_type } : {}),
     });
 
     // ── Update order status to READY_TO_SHIP ─────────────────────────────────
     order.status = 'READY_TO_SHIP';
     if (!order.courier) order.courier = {};
     order.courier.tracking_id = String(tracking_id).trim();
+    order.courier.tracking_link = String(tracking_link).trim();
     order.courier.name = String(shipping_company).trim();
     await order.save();
 

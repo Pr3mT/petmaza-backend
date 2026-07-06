@@ -716,7 +716,14 @@ export const updateOrderStatus = async (
           customerName || 'Customer',
           orderId,
           statusMap[status] || status.toLowerCase(),
-          vendorName
+          vendorName,
+          order.courier?.tracking_id || order.courier?.tracking_link
+            ? {
+                company: order.courier?.name,
+                trackingId: order.courier?.tracking_id,
+                trackingLink: order.courier?.tracking_link,
+              }
+            : undefined
         ).then(() => logger.info('[updateOrderStatus] ✅ Status update email sent'))
          .catch((e: any) => logger.error('[updateOrderStatus] ❌ Status update email failed:', e.message));
       }

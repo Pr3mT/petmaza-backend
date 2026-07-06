@@ -176,6 +176,7 @@ export interface IOrder extends Document {
   courier?: {
     name?: string;
     tracking_id?: string;
+    tracking_link?: string;
     status?: string;
   };
   assignedVendorId?: Types.ObjectId | string; // For single vendor orders

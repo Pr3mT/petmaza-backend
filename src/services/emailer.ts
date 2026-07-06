@@ -276,7 +276,8 @@ export async function sendOrderStatusUpdateEmail(
   customerName: string,
   orderId: string,
   status: string,
-  vendorName?: string
+  vendorName?: string,
+  tracking?: { company?: string; trackingId?: string; trackingLink?: string }
 ) {
   const statusMessages: Record<string, { title: string; icon: string; description: string }> = {
     confirmed: {
@@ -328,6 +329,25 @@ export async function sendOrderStatusUpdateEmail(
 
   const statusInfo = statusMessages[status.toLowerCase()] || statusMessages.processing;
 
+  const trackingHtml = tracking && (tracking.trackingId || tracking.trackingLink)
+    ? `
+        <div style="background-color: #fff8e1; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+          <p style="margin: 0 0 8px 0;"><strong>📦 Tracking Details</strong></p>
+          ${tracking.company ? `<p style="margin: 4px 0;"><strong>Courier:</strong> ${tracking.company}</p>` : ''}
+          ${tracking.trackingId ? `<p style="margin: 4px 0;"><strong>Tracking ID:</strong> <span style="font-family: monospace;">${tracking.trackingId}</span></p>` : ''}
+          ${tracking.trackingLink ? `
+          <div style="text-align: center; margin-top: 12px;">
+            <a href="${tracking.trackingLink}" target="_blank"
+               style="display: inline-block; background-color: #1976d2; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 5px; font-weight: bold;">
+              🔍 Track Your Order
+            </a>
+          </div>
+          <p style="margin: 10px 0 0 0; font-size: 12px; color: #666; word-break: break-all;">
+            Or copy this link: <a href="${tracking.trackingLink}" target="_blank">${tracking.trackingLink}</a>
+          </p>` : ''}
+        </div>`
+    : '';
+
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <div style="background-color: #ffd700; padding: 20px; text-align: center;">
@@ -348,7 +368,8 @@ export async function sendOrderStatusUpdateEmail(
           <p><strong>Status:</strong> <span style="color: #1976d2; font-weight: bold;">${status.toUpperCase()}</span></p>
           <p><strong>Last Updated:</strong> ${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</p>
         </div>
-        
+        ${trackingHtml}
+
         <p style="color: #666; font-size: 12px;">
           Track your order anytime on our website. If you have any questions, please contact our support team at support@petmaza.com
         </p>
@@ -1150,7 +1171,8 @@ export async function sendOrderShippedEmail(
   customerName: string,
   orderId: string,
   trackingInfo?: string,
-  estimatedDelivery?: string
+  estimatedDelivery?: string,
+  trackingLink?: string
 ) {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -1173,6 +1195,16 @@ export async function sendOrderShippedEmail(
           <p><strong>Status:</strong> <span style="color: #1976d2; font-weight: bold;">IN TRANSIT</span></p>
           ${trackingInfo ? `<p><strong>Tracking Info:</strong> ${trackingInfo}</p>` : ''}
           ${estimatedDelivery ? `<p><strong>Estimated Delivery:</strong> ${estimatedDelivery}</p>` : ''}
+          ${trackingLink ? `
+          <div style="text-align: center; margin-top: 12px;">
+            <a href="${trackingLink}" target="_blank"
+               style="display: inline-block; background-color: #1976d2; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 5px; font-weight: bold;">
+              🔍 Track Your Package
+            </a>
+          </div>
+          <p style="margin: 10px 0 0 0; font-size: 12px; color: #666; word-break: break-all;">
+            Or copy this link: <a href="${trackingLink}" target="_blank">${trackingLink}</a>
+          </p>` : ''}
         </div>
         
         <div style="background-color: #c8e6c9; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2e7d32;">

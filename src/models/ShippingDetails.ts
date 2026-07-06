@@ -4,12 +4,14 @@ export interface IShippingDetails extends Document {
   order_id: Types.ObjectId;
   vendor_id: Types.ObjectId;
   shipping_company: string;
-  receipt_file_url: string;
+  receipt_file_url?: string;
   receipt_file_public_id?: string;
   tracking_id: string;
-  total_weight: number;
-  weight_unit: 'kg' | 'g';
-  delivery_type: 'inter_state' | 'out_of_state';
+  tracking_link?: string;
+  shipping_cost?: number;
+  total_weight?: number;
+  weight_unit?: 'kg' | 'g';
+  delivery_type?: 'inter_state' | 'out_of_state';
   created_at: Date;
 }
 
@@ -33,7 +35,6 @@ const shippingDetailsSchema = new Schema<IShippingDetails>(
     },
     receipt_file_url: {
       type: String,
-      required: true,
     },
     receipt_file_public_id: {
       type: String,
@@ -43,20 +44,25 @@ const shippingDetailsSchema = new Schema<IShippingDetails>(
       required: true,
       trim: true,
     },
+    tracking_link: {
+      type: String,
+      trim: true,
+    },
+    shipping_cost: {
+      type: Number,
+      min: 0,
+    },
     total_weight: {
       type: Number,
-      required: true,
       min: 0.001,
     },
     weight_unit: {
       type: String,
       enum: ['kg', 'g'],
-      required: true,
     },
     delivery_type: {
       type: String,
       enum: ['inter_state', 'out_of_state'],
-      required: true,
     },
   },
   {

@@ -532,25 +532,33 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
       req.body.shipping_company || req.body.courier_name || req.body.courier || ''
     ).trim();
     const trackingId = String(req.body.tracking_id || req.body.trackingNumber || '').trim();
-    const { total_weight, weight_unit, delivery_type } = req.body;
+    const trackingLink = String(req.body.tracking_link || '').trim();
+    const { shipping_cost, total_weight, weight_unit, delivery_type } = req.body;
 
+    if (trackingLink && !/^https?:\/\/\S+$/i.test(trackingLink)) {
+      return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
+    }
     if (!courierName) {
       return next(new AppError('Courier / shipping company name is required to mark the order in transit.', 400));
     }
     if (!trackingId) {
       return next(new AppError('Tracking ID is required to mark the order in transit.', 400));
     }
-    if (!total_weight || isNaN(Number(total_weight)) || Number(total_weight) <= 0) {
+    // ── Optional fields — validate only when provided ──────────────────────────
+    if (shipping_cost !== undefined && String(shipping_cost).trim() !== '') {
+      if (isNaN(Number(shipping_cost)) || Number(shipping_cost) < 0) {
+        return next(new AppError('Shipping cost must be a non-negative number', 400));
+      }
+    }
+    const hasWeight = total_weight !== undefined && String(total_weight).trim() !== '';
+    if (hasWeight && (isNaN(Number(total_weight)) || Number(total_weight) <= 0)) {
       return next(new AppError('Total weight must be a positive number', 400));
     }
-    if (!weight_unit || !['kg', 'g'].includes(weight_unit)) {
+    if (hasWeight && !['kg', 'g'].includes(weight_unit)) {
       return next(new AppError('Weight unit must be kg or g', 400));
     }
-    if (!delivery_type || !['inter_state', 'out_of_state'].includes(delivery_type)) {
+    if (delivery_type && !['inter_state', 'out_of_state'].includes(delivery_type)) {
       return next(new AppError('Delivery type must be inter_state or out_of_state', 400));
-    }
-    if (!req.file) {
-      return next(new AppError('Shipping receipt file is required', 400));
     }
 
     // ── Prevent duplicate shipping details for this order ──────────────────────
@@ -559,39 +567,47 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
       return next(new AppError('Shipping details already submitted for this order', 409));
     }
 
-    // ── Upload receipt to Cloudinary ───────────────────────────────────────────
-    const isPdf = req.file.mimetype === 'application/pdf';
-    const uploadResult: any = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'petmaza/shipping-receipts',
-          resource_type: isPdf ? 'raw' : 'image',
-          ...(isPdf ? { format: 'pdf' } : {}),
-        },
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
-      streamifier.createReadStream(req.file!.buffer).pipe(stream);
-    });
+    // ── Upload receipt to Cloudinary (optional) ─────────────────────────────────
+    let uploadResult: any = null;
+    if (req.file) {
+      const isPdf = req.file.mimetype === 'application/pdf';
+      uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'petmaza/shipping-receipts',
+            resource_type: isPdf ? 'raw' : 'image',
+            ...(isPdf ? { format: 'pdf' } : {}),
+          },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        streamifier.createReadStream(req.file!.buffer).pipe(stream);
+      });
+    }
 
     // ── Save shipping details ──────────────────────────────────────────────────
     await ShippingDetails.create({
       order_id: orderId,
       vendor_id: fulfiller._id,
       shipping_company: courierName,
-      receipt_file_url: uploadResult.secure_url,
-      receipt_file_public_id: uploadResult.public_id,
+      ...(uploadResult
+        ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }
+        : {}),
       tracking_id: trackingId,
-      total_weight: Number(total_weight),
-      weight_unit,
-      delivery_type,
+      ...(trackingLink ? { tracking_link: trackingLink } : {}),
+      ...(shipping_cost !== undefined && String(shipping_cost).trim() !== ''
+        ? { shipping_cost: Number(shipping_cost) }
+        : {}),
+      ...(hasWeight ? { total_weight: Number(total_weight), weight_unit } : {}),
+      ...(delivery_type ? { delivery_type } : {}),
     });
 
     if (!order.courier) order.courier = {};
     order.courier.name = courierName;
     order.courier.tracking_id = trackingId;
+    if (trackingLink) order.courier.tracking_link = trackingLink;
 
     order.status = 'IN_TRANSIT';
     await order.save();
@@ -608,7 +624,8 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
           customer.name || 'Customer',
           `#${order._id.toString().slice(-8)}`,
           `${courierName} - ${trackingId}`,
-          '1-3 business days'
+          '1-3 business days',
+          trackingLink || undefined
         );
       }
     } catch (emailError: any) {
