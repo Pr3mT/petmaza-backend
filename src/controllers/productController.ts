@@ -270,8 +270,9 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
       return next(new AppError('Only Admin and vendors can update products', 403));
     }
     
-    // If vendor, verify they own this product
-    if (user.role === 'vendor') {
+    // If vendor, verify they own this product.
+    // MY_SHOP managers have admin-level catalog control and can update any product.
+    if (user.role === 'vendor' && user.vendorType !== 'MY_SHOP') {
       const existingProduct = await Product.findById(req.params.id);
       if (!existingProduct) {
         return next(new AppError('Product not found', 404));
@@ -284,7 +285,7 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
           return next(new AppError('You can only update products you have listed', 403));
         }
       } else {
-        // MY_SHOP / WAREHOUSE_FULFILLER: must be addedBy
+        // WAREHOUSE_FULFILLER: must be addedBy
         if (existingProduct.addedBy?.toString() !== user._id.toString()) {
           return next(new AppError('You can only update products you created', 403));
         }
@@ -376,8 +377,9 @@ export const updateProduct = async (req: AuthRequest, res: Response, next: NextF
 
 export const deleteProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    // Vendors can only delete products they created
-    if (req.user.role === 'vendor') {
+    // MY_SHOP managers have admin-level catalog control and can delete any product.
+    // Other vendor types can only delete products they created.
+    if (req.user.role === 'vendor' && req.user.vendorType !== 'MY_SHOP') {
       const existingProduct = await Product.findById(req.params.id);
       if (!existingProduct) {
         return res.status(404).json({ success: false, message: 'Product not found' });
