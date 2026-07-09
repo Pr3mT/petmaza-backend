@@ -663,37 +663,18 @@ export class OrderAcceptanceService {
       }
     }
 
-    // Calculate earnings (purchase price vendor will receive)
-    let totalPurchasePrice = 0;
-
-    if (order.isPrime) {
-      // After unification, Product IS the prime listing — read purchasePrice directly
-      const ProductModel = (await import('../models/Product')).default;
-      for (const item of order.items) {
-        const product = await ProductModel.findOne({
-          _id: item.product_id,
-          primeVendor_id: vendorObjectId,
-          isPrime: true,
-        });
-        if (product) {
-          totalPurchasePrice += (product.purchasePrice || 0) * item.quantity;
-        }
-      }
-    } else {
-      // Non-prime orders: use VendorProductPricing
-      const VendorProductPricing = (await import('../models/VendorProductPricing')).default;
-      for (const item of order.items) {
-        const pricing = await VendorProductPricing.findOne({
-          vendor_id: vendorObjectId,
-          product_id: item.product_id,
-        });
-        if (pricing) {
-          totalPurchasePrice += pricing.purchasePrice * item.quantity;
-        }
-      }
-    }
-
-    const earnings = totalPurchasePrice; // Purchase price vendor will receive
+    // Earnings = the purchase price the vendor agreed to receive, snapshotted on
+    // each order item (purchaseSubtotal) at order/accept time. We deliberately do
+    // NOT recompute from the current Product / VendorProductPricing docs: product
+    // prices get edited after an order is placed, which would retroactively
+    // distort the earnings of past orders. That was the bug where an order whose
+    // stored totalPurchasePrice was ₹346 displayed ₹296 because two of its
+    // products had their prices changed afterwards.
+    const earnings = order.items.reduce(
+      (sum: number, item: any) =>
+        sum + (item.purchaseSubtotal ?? (item.purchasePrice || 0) * item.quantity),
+      0
+    );
 
     // Strip customer-facing financial fields before returning to vendor
     return sanitizeOrderForVendor({
