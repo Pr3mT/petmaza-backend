@@ -67,22 +67,32 @@ export class WalletService {
 
     const orders = await Order.find(query);
 
-    // Earnings = accepted purchase prices + the courier costs the vendor
-    // submitted in shipping details (reimbursed like the order screens show).
+    // Earnings = accepted purchase prices + delivery charge per order: the
+    // vendor-submitted courier cost wins; otherwise the delivery charge the
+    // customer paid — same rule as the order screens and wallet stats.
     const shippingDocs = await ShippingDetails.find({
       order_id: { $in: orders.map((o) => o._id) },
       vendor_id,
     })
-      .select('shipping_cost')
+      .select('order_id shipping_cost')
       .lean();
-    const deliveryTotal = shippingDocs.reduce((s, sd) => s + (Number(sd.shipping_cost) || 0), 0);
+    const shippingByOrder: Record<string, number> = {};
+    shippingDocs.forEach((sd) => {
+      shippingByOrder[sd.order_id.toString()] = Number(sd.shipping_cost) || 0;
+    });
 
     const totalEarnings = orders.reduce((sum, order) => {
       const vendorItems = order.items.filter(
         (item) => item.vendor_id?.toString() === vendor_id
       );
-      return sum + vendorItems.reduce((s, item) => s + item.purchaseSubtotal, 0);
-    }, 0) + deliveryTotal;
+      const deliveryCharge =
+        shippingByOrder[order._id.toString()] || Number((order as any).shippingCharges) || 0;
+      return (
+        sum +
+        vendorItems.reduce((s, item) => s + item.purchaseSubtotal, 0) +
+        deliveryCharge
+      );
+    }, 0);
 
     return {
       orders: orders.length,

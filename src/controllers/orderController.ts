@@ -715,7 +715,10 @@ export const updateOrderStatus = async (
         const shippingDoc = await ShippingDetails.findOne({ order_id: order._id, vendor_id: vendorId })
           .select('shipping_cost')
           .lean();
-        const deliveryCharge = Number(shippingDoc?.shipping_cost) || 0;
+        // Vendor-submitted courier cost wins; otherwise the delivery charge the
+        // customer paid — same rule as the order screens and wallet stats.
+        const deliveryCharge =
+          Number(shippingDoc?.shipping_cost) || Number(order.shippingCharges) || 0;
         const vendorEarning = vendorItems.reduce(
           (sum: number, item: any) => sum + (item.purchaseSubtotal || 0),
           0

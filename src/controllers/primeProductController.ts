@@ -529,14 +529,33 @@ export const getPrimeWalletStats = async (
       .sort({ createdAt: -1 })
       .lean();
 
-    // Vendor earning = totalPurchasePrice (purchase price × qty for each item).
+    // Vendor earning = totalPurchasePrice (purchase price × qty for each item)
+    // + the courier cost the vendor submitted in shipping details (reimbursed).
     // This is what Petmaza pays the prime vendor per order — not a % of the customer price.
+    const ShippingDetails = (await import('../models/ShippingDetails')).default;
+    const shippingDocs = await ShippingDetails.find({
+      order_id: { $in: allOrders.map((o: any) => o._id) },
+      vendor_id,
+    })
+      .select('order_id shipping_cost')
+      .lean();
+    const shippingByOrder: Record<string, number> = {};
+    shippingDocs.forEach((sd: any) => {
+      shippingByOrder[sd.order_id.toString()] = Number(sd.shipping_cost) || 0;
+    });
+
     let totalRevenue = 0;
     let completedCount = 0;
     let pendingSettlement = 0;
 
+    // Vendor-submitted courier cost wins; otherwise the delivery charge the
+    // customer paid — the vendor delivers, so it's part of their cut (same
+    // rule as getVendorOrders / OrderAcceptanceService).
+    const orderDeliveryCharge = (order: any) =>
+      shippingByOrder[order._id.toString()] || Number(order.shippingCharges) || 0;
+
     const orderList = allOrders.map((order: any) => {
-      const vendorShare = order.totalPurchasePrice || 0;
+      const vendorShare = (order.totalPurchasePrice || 0) + orderDeliveryCharge(order);
       const isDelivered = order.status === 'DELIVERED';
       if (isDelivered) {
         totalRevenue += vendorShare;
@@ -571,7 +590,7 @@ export const getPrimeWalletStats = async (
       const label = d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
       if (!monthlyMap[key]) monthlyMap[key] = { month: label, orders: 0, earnings: 0 };
       monthlyMap[key].orders += 1;
-      monthlyMap[key].earnings += order.totalPurchasePrice || 0;
+      monthlyMap[key].earnings += (order.totalPurchasePrice || 0) + orderDeliveryCharge(order);
     });
 
     const monthlyBreakdown = Object.values(monthlyMap).sort((a, b) =>

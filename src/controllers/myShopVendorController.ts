@@ -62,7 +62,10 @@ export const getMyShopOrders = async (req: AuthRequest, res: Response, next: Nex
     const sanitized = orders.map(o => {
       const plain = o.toObject();
       const sanitizedOrder = sanitizeOrderForVendor(plain);
-      sanitizedOrder.deliveryCharge = deliveryChargeByOrder[plain._id.toString()] || 0;
+      // Vendor-submitted courier cost wins; otherwise the delivery charge the
+      // customer paid — same rule as the vendor's order screens and wallet.
+      sanitizedOrder.deliveryCharge =
+        deliveryChargeByOrder[plain._id.toString()] || Number(plain.shippingCharges) || 0;
       // Use grandTotal if properly set; otherwise reconstruct: total + platformFee + shippingCharges - discountAmount
       const grandTotal = (plain.grandTotal ?? 0);
       const reconstructed =
