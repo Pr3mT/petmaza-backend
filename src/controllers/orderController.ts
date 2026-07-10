@@ -568,10 +568,28 @@ export const getVendorOrders = async (req: AuthRequest, res: Response, next: Nex
       .sort({ createdAt: -1 });
 
     logger.info(`[getVendorOrders] Found ${orders.length} orders for vendor ${vendorId}`);
-    
+
+    // Vendor earnings include the shipping cost they entered on the shipping
+    // details form, so surface it on each order for the list cards.
+    const shippingDocs = await ShippingDetails.find({
+      order_id: { $in: orders.map(o => o._id) },
+    })
+      .select('order_id shipping_cost')
+      .lean();
+    const shippingCostByOrder = new Map(
+      shippingDocs.map(d => [d.order_id.toString(), d.shipping_cost || 0])
+    );
+
     res.status(200).json({
       success: true,
-      data: { orders: sanitizeOrdersForVendor(orders.map(o => o.toObject())) },
+      data: {
+        orders: sanitizeOrdersForVendor(
+          orders.map(o => ({
+            ...o.toObject(),
+            shippingCost: shippingCostByOrder.get(o._id.toString()) || 0,
+          }))
+        ),
+      },
     });
   } catch (error: any) {
     logger.error('[getVendorOrders] Error:', error);
