@@ -586,7 +586,9 @@ export const getVendorOrders = async (req: AuthRequest, res: Response, next: Nex
         orders: sanitizeOrdersForVendor(
           orders.map(o => ({
             ...o.toObject(),
-            shippingCost: shippingCostByOrder.get(o._id.toString()) || 0,
+            // Vendor-submitted courier cost wins; otherwise the delivery charge
+            // the customer paid — the vendor delivers, so it's part of their cut.
+            shippingCost: shippingCostByOrder.get(o._id.toString()) || o.shippingCharges || 0,
           }))
         ),
       },

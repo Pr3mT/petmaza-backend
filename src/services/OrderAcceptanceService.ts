@@ -682,6 +682,9 @@ export class OrderAcceptanceService {
       earnings,
       // Expose total vendor earnings clearly
       totalVendorEarnings: earnings,
+      // Delivery charge the customer paid on this order — the vendor delivers,
+      // so it counts toward their collection (sanitizer strips raw shippingCharges).
+      deliveryCharge: order.shippingCharges || 0,
     });
   }
 }
