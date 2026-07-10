@@ -937,6 +937,41 @@ export const adminProcessRefund = async (
   }
 };
 
+// Vendor: Get shipping details for own order (company, tracking, cost, weight, receipt)
+export const getVendorOrderShippingDetails = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { id } = req.params;
+
+    const mongoose = await import('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new AppError('Invalid order ID', 400));
+    }
+
+    const vendorId = req.user._id.toString();
+    const shippingDetails = await ShippingDetails.findOne({ order_id: id }).lean();
+
+    // Only the submitting vendor or the vendor assigned to the order may read it.
+    if (shippingDetails && shippingDetails.vendor_id?.toString() !== vendorId) {
+      const order = await Order.findById(id).select('assignedVendorId').lean();
+      if (order?.assignedVendorId?.toString() !== vendorId) {
+        return next(new AppError('You are not assigned to this order', 403));
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: { shippingDetails: shippingDetails || null },
+    });
+  } catch (error: any) {
+    logger.error('[getVendorOrderShippingDetails] Error:', error);
+    next(error);
+  }
+};
+
 // Admin: Get shipping details for an order (courier, tracking, address)
 export const getOrderShippingDetails = async (
   req: AuthRequest,

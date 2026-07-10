@@ -14,6 +14,7 @@ import {
   adminUpdateOrderStatus,
   adminAssignOrderToVendor,
   getOrderShippingDetails,
+  getVendorOrderShippingDetails,
   adminProcessRefund,
 } from '../controllers/orderController';
 import { verifyToken, checkRole } from '../middlewares/auth';
@@ -37,6 +38,7 @@ router.get('/vendor/my', verifyToken, checkRole('vendor'), getVendorOrders);
 router.post('/vendor/:id/accept', verifyToken, checkRole('vendor'), acceptOrder);
 router.post('/vendor/:id/reject', verifyToken, checkRole('vendor'), rejectOrder);
 router.put('/vendor/:id/status', verifyToken, checkRole('vendor'), updateOrderStatus);
+router.get('/vendor/:id/shipping-details', verifyToken, checkRole('vendor'), getVendorOrderShippingDetails);
 // This route must come LAST - validation in controller will handle invalid IDs
 router.get('/vendor/:id', verifyToken, checkRole('vendor'), getVendorOrderDetails);
 
