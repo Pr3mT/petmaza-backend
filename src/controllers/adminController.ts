@@ -1321,6 +1321,7 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
       detailedOrders.push({
         orderId: (order as any).order_id || order._id,
         orderDate: order.createdAt,
+        vendorId: vendorId,
         vendorName: vendor.name,
         vendorEmail: vendor.email,
         vendorType: vendorType,
