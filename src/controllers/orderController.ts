@@ -700,18 +700,24 @@ export const updateOrderStatus = async (
     order.status = status as any;
     await order.save();
 
-    // When order is delivered, credit vendor's wallet with their earnings (purchase price total)
+    // When order is delivered, credit vendor's wallet with their earnings
+    // (purchase price total + the courier cost they submitted in shipping details)
     if (status === 'DELIVERED') {
       try {
         const { WalletService } = await import('../services/WalletService');
+        const { default: ShippingDetails } = await import('../models/ShippingDetails');
         // Sum up purchaseSubtotal for items belonging to this vendor
         const vendorItems = order.items.filter(
           (item: any) => item.vendor_id?.toString() === vendorId
         );
+        const shippingDoc = await ShippingDetails.findOne({ order_id: order._id, vendor_id: vendorId })
+          .select('shipping_cost')
+          .lean();
+        const deliveryCharge = Number(shippingDoc?.shipping_cost) || 0;
         const vendorEarning = vendorItems.reduce(
           (sum: number, item: any) => sum + (item.purchaseSubtotal || 0),
           0
-        );
+        ) + deliveryCharge;
         if (vendorEarning > 0) {
           await WalletService.addEarnings(vendorId, orderId, vendorEarning);
           logger.info(`[updateOrderStatus] Wallet credited ₹${vendorEarning} for vendor ${vendorId}`);

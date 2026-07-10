@@ -6,6 +6,7 @@ import Order from '../models/Order';
 import Coupon from '../models/Coupon';
 import Transaction from '../models/Transaction';
 import ShippingSettings from '../models/ShippingSettings';
+import ShippingDetails from '../models/ShippingDetails';
 import Settlement from '../models/Settlement';
 import CategoryFulfillerMapping from '../models/CategoryFulfillerMapping';
 // Registers the PrimeProduct schema so `.populate('items.primeProduct_id')` in
@@ -946,6 +947,17 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
       .sort({ createdAt: -1 })
       .lean();
 
+    // The vendor's order screens count their submitted courier cost
+    // (ShippingDetails.shipping_cost) as part of earnings, so the weekly
+    // payout must reimburse it too: payout = purchase prices + delivery charge.
+    const shippingDocs = await ShippingDetails.find({ order_id: { $in: orders.map((o) => o._id) } })
+      .select('order_id shipping_cost')
+      .lean();
+    const deliveryChargeByOrder: Record<string, number> = {};
+    for (const sd of shippingDocs) {
+      deliveryChargeByOrder[sd.order_id.toString()] = Number(sd.shipping_cost) || 0;
+    }
+
     // Group by vendor + week key
     const groupMap: Record<string, any> = {};
 
@@ -991,11 +1003,14 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
       }
 
       // What we OWE the vendor for this order = sum of the accepted purchase
-      // prices (purchaseSubtotal), NOT the customer's selling total.
-      const orderPayout = (order.items || []).reduce(
+      // prices (purchaseSubtotal), NOT the customer's selling total — plus the
+      // courier cost the vendor paid out of pocket (shipping details).
+      const itemsPayout = (order.items || []).reduce(
         (s: number, it: any) => s + (Number(it.purchaseSubtotal) || 0),
         0
       );
+      const deliveryCharge = deliveryChargeByOrder[order._id.toString()] || 0;
+      const orderPayout = itemsPayout + deliveryCharge;
 
       const entry = groupMap[weekKey];
       entry.totalAmount += orderPayout;
@@ -1004,6 +1019,7 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
         orderDate: order.createdAt,
         deliveredAt: (order as any).deliveredAt || (order as any).updatedAt || null,
         orderStatus: order.status,
+        deliveryCharge,
         items: (order.items || []).map((item: any) => {
           const product = item.product_id || item.primeProduct_id;
           const qty = item.quantity || 1;

@@ -1,5 +1,6 @@
 import Wallet from '../models/Wallet';
 import Order from '../models/Order';
+import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
 
 export class WalletService {
@@ -66,12 +67,22 @@ export class WalletService {
 
     const orders = await Order.find(query);
 
+    // Earnings = accepted purchase prices + the courier costs the vendor
+    // submitted in shipping details (reimbursed like the order screens show).
+    const shippingDocs = await ShippingDetails.find({
+      order_id: { $in: orders.map((o) => o._id) },
+      vendor_id,
+    })
+      .select('shipping_cost')
+      .lean();
+    const deliveryTotal = shippingDocs.reduce((s, sd) => s + (Number(sd.shipping_cost) || 0), 0);
+
     const totalEarnings = orders.reduce((sum, order) => {
       const vendorItems = order.items.filter(
         (item) => item.vendor_id?.toString() === vendor_id
       );
       return sum + vendorItems.reduce((s, item) => s + item.purchaseSubtotal, 0);
-    }, 0);
+    }, 0) + deliveryTotal;
 
     return {
       orders: orders.length,

@@ -44,6 +44,16 @@ export const getMyShopOrders = async (req: AuthRequest, res: Response, next: Nex
       .populate('items.product_id', 'name images')
       .sort({ createdAt: -1 });
 
+    // Vendor-submitted courier costs count toward the vendor's earnings
+    // (same as the vendor's own order screens), so expose them per order.
+    const shippingDocs = await ShippingDetails.find({ order_id: { $in: orders.map((o) => o._id) } })
+      .select('order_id shipping_cost')
+      .lean();
+    const deliveryChargeByOrder: Record<string, number> = {};
+    for (const sd of shippingDocs) {
+      deliveryChargeByOrder[sd.order_id.toString()] = Number(sd.shipping_cost) || 0;
+    }
+
     // Sanitize vendor-sensitive pricing but preserve customerPaidTotal
     // grandTotal = full customer payment (item subtotal + fees - discount)
     // For createPrimeOrder: total = item subtotal, grandTotal = item + fees
@@ -52,6 +62,7 @@ export const getMyShopOrders = async (req: AuthRequest, res: Response, next: Nex
     const sanitized = orders.map(o => {
       const plain = o.toObject();
       const sanitizedOrder = sanitizeOrderForVendor(plain);
+      sanitizedOrder.deliveryCharge = deliveryChargeByOrder[plain._id.toString()] || 0;
       // Use grandTotal if properly set; otherwise reconstruct: total + platformFee + shippingCharges - discountAmount
       const grandTotal = (plain.grandTotal ?? 0);
       const reconstructed =
