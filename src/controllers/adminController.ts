@@ -917,6 +917,20 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
       return { start: mon, end: sun, label };
     };
 
+    // Settlement weekStart values may have been saved under a different server
+    // timezone (e.g. UTC on the live host vs IST locally), which shifts the raw
+    // timestamp a few hours across midnight and breaks exact date matching.
+    // Snap any timestamp to the Monday of its week (with a 12h buffer so
+    // near-midnight offsets land on the correct week) and key by that date.
+    const weekKeyDate = (date: Date): string => {
+      const d = new Date(date.getTime() + 12 * 60 * 60 * 1000);
+      const day = d.getDay();
+      const diffToMon = day === 0 ? -6 : 1 - day;
+      d.setDate(d.getDate() + diffToMon);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    };
+
     // Settlement is per completed work: only DELIVERED orders are billed to a vendor.
     const orderFilter: any = {
       assignedVendorId: { $exists: true, $ne: null },
@@ -1017,16 +1031,17 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
     const settlements = await Settlement.find({ vendorId: { $in: vendorIds } }).lean();
     logger.info(`[getVendorWeeklyBilling] Found ${settlements.length} settlement(s) for ${vendorIds.length} vendor(s)`);
 
-    // Build lookup map: "vendorId_weekStart(YYYY-MM-DD)" -> settlement
+    // Build lookup map: "vendorId_mondayOfWeek(YYYY-MM-DD)" -> settlement.
+    // Prefer a 'paid' record if duplicates exist for the same vendor + week.
     const settlementMap: Record<string, any> = {};
     for (const s of settlements) {
-      const key = `${s.vendorId.toString()}_${new Date(s.weekStart).toISOString().slice(0, 10)}`;
-      settlementMap[key] = s;
+      const key = `${s.vendorId.toString()}_${weekKeyDate(new Date(s.weekStart))}`;
+      if (!settlementMap[key] || s.status === 'paid') settlementMap[key] = s;
     }
 
     // Merge settlement status into each invoice group
     for (const inv of invoices) {
-      const key = `${inv.vendorId.toString()}_${inv.weekStart.slice(0, 10)}`;
+      const key = `${inv.vendorId.toString()}_${weekKeyDate(new Date(inv.weekStart))}`;
       const settlement = settlementMap[key];
       if (settlement && settlement.status === 'paid') {
         inv.status = 'Paid';
@@ -1073,8 +1088,18 @@ export const markWeeklyInvoicePaid = async (req: AuthRequest, res: Response, nex
       (id: any) => typeof id === 'string' && /^[a-f\d]{24}$/i.test(id)
     );
 
-    // Find existing settlement or create new one — avoids $setOnInsert path-conflict errors
-    const existing = await Settlement.findOne({ vendorId, weekStart: weekStartDate });
+    // Find existing settlement or create new one — avoids $setOnInsert path-conflict errors.
+    // Match weekStart within ±1 day: the same week's timestamp can differ by a few
+    // hours if it was saved while the server ran in another timezone (UTC vs IST),
+    // and an exact match would create a duplicate settlement instead of updating.
+    const dayMs = 24 * 60 * 60 * 1000;
+    const existing = await Settlement.findOne({
+      vendorId,
+      weekStart: {
+        $gte: new Date(weekStartDate.getTime() - dayMs),
+        $lte: new Date(weekStartDate.getTime() + dayMs),
+      },
+    });
 
     if (existing) {
       existing.status = 'paid';
