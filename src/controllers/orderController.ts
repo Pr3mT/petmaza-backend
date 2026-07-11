@@ -475,6 +475,19 @@ export const getOrderById = async (req: AuthRequest, res: Response, next: NextFu
       delete orderResponse.assignedVendorId.phone;
     }
 
+    // Attach shipment info so the customer can track their parcel. Only the
+    // customer-safe fields — never the vendor's receipt or shipping cost.
+    const shippingDoc = await ShippingDetails.findOne({ order_id: order._id })
+      .select('shipping_company tracking_id tracking_link')
+      .lean();
+    if (shippingDoc) {
+      orderResponse.shippingDetails = {
+        shipping_company: shippingDoc.shipping_company,
+        tracking_id: shippingDoc.tracking_id,
+        tracking_link: shippingDoc.tracking_link,
+      };
+    }
+
     res.status(200).json({
       success: true,
       data: { order: orderResponse },
