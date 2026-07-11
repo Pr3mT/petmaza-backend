@@ -36,8 +36,8 @@ router.post('/orders/:orderId/delivered', warehouseFulfillerController.markDeliv
 // Get reviews for fulfilled products
 router.get('/reviews', async (req: any, res) => {
   try {
-    const fulfillerId = req.user.id;
-    
+    const fulfillerId = req.user._id;
+
     // Find all delivered orders fulfilled by this warehouse
     const orders = await Order.find({ 
       assigned_to: fulfillerId,

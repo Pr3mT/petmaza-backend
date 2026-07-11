@@ -255,7 +255,7 @@ export const getProductReviews = async (req: Request, res: Response) => {
 // Get customer's reviews
 export const getCustomerReviews = async (req: Request, res: Response) => {
   try {
-    const customer_id = (req as any).user.id;
+    const customer_id = (req as any).user._id;
     const { page = 1, limit = 10 } = req.query;
 
     const reviews = await Review.find({ customer_id })
@@ -284,7 +284,7 @@ export const getCustomerReviews = async (req: Request, res: Response) => {
 export const updateReview = async (req: Request, res: Response) => {
   try {
     const { reviewId } = req.params;
-    const customer_id = (req as any).user.id;
+    const customer_id = (req as any).user._id;
     const { rating, title, comment, images } = req.body;
 
     const review = await Review.findOne({ _id: reviewId, customer_id });
@@ -313,7 +313,7 @@ export const updateReview = async (req: Request, res: Response) => {
 export const deleteReview = async (req: Request, res: Response) => {
   try {
     const { reviewId } = req.params;
-    const customer_id = (req as any).user.id;
+    const customer_id = (req as any).user._id;
 
     const review = await Review.findOneAndDelete({ _id: reviewId, customer_id });
     if (!review) {
@@ -359,7 +359,7 @@ export const respondToReview = async (req: Request, res: Response) => {
   try {
     const { reviewId } = req.params;
     const { comment } = req.body;
-    const vendor_id = (req as any).user.id;
+    const vendor_id = (req as any).user._id.toString();
 
     const review = await Review.findById(reviewId).populate('product_id');
     if (!review) {
@@ -393,7 +393,7 @@ export const respondToReview = async (req: Request, res: Response) => {
 // Get reviewable products for customer
 export const getReviewableProducts = async (req: Request, res: Response) => {
   try {
-    const customer_id = (req as any).user.id;
+    const customer_id = (req as any).user._id;
 
     // Get delivered orders
     const orders = await Order.find({ customer_id, status: 'DELIVERED' })

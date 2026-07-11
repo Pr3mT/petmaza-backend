@@ -28,8 +28,8 @@ router.post('/orders/:orderId/delivered', myShopVendorController.markDelivered);
 // Get reviews for vendor's products
 router.get('/reviews', async (req: any, res) => {
   try {
-    const vendorId = req.user.id;
-    
+    const vendorId = req.user._id;
+
     // Find all products owned by this vendor
     const products = await Product.find({ myShopVendor_id: vendorId }).select('_id');
     const productIds = products.map(p => p._id);
