@@ -1009,10 +1009,9 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
         (s: number, it: any) => s + (Number(it.purchaseSubtotal) || 0),
         0
       );
-      // Vendor-submitted courier cost wins; otherwise the delivery charge the
-      // customer paid — same rule as the vendor's order screens and wallet.
-      const deliveryCharge =
-        deliveryChargeByOrder[order._id.toString()] || Number((order as any).shippingCharges) || 0;
+      // Only the courier cost the vendor submitted counts toward their payout.
+      // The customer's delivery charge is platform revenue — never the vendor's.
+      const deliveryCharge = deliveryChargeByOrder[order._id.toString()] || 0;
       const orderPayout = itemsPayout + deliveryCharge;
 
       const entry = groupMap[weekKey];

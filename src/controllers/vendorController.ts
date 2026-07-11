@@ -5,6 +5,7 @@ import Product from '../models/Product';
 import Order from '../models/Order';
 import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
+import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import { notifyWaitingCustomers } from './productNotificationController';
@@ -734,13 +735,27 @@ export const getVendorStats = async (req: AuthRequest, res: Response, next: Next
       payment_status: 'Paid',
     });
 
+    // Revenue = purchase prices + the courier cost the vendor submitted per
+    // order (the customer's delivery charge is platform revenue, never the
+    // vendor's — same payout rule as orders/wallet/billing).
+    const statShippingDocs = await ShippingDetails.find({
+      order_id: { $in: deliveredOrders.map(o => o._id) },
+      vendor_id: vendorId,
+    })
+      .select('order_id shipping_cost')
+      .lean();
+    const statShippingByOrder: Record<string, number> = {};
+    statShippingDocs.forEach(sd => {
+      statShippingByOrder[sd.order_id.toString()] = Number(sd.shipping_cost) || 0;
+    });
+    const orderEarnings = (order: any) =>
+      order.items.reduce((s: number, item: any) => s + (item.purchaseSubtotal || 0), 0) +
+      (statShippingByOrder[order._id.toString()] || 0);
+
     let totalSales = 0;
     let totalProfit = 0;
     deliveredOrders.forEach(order => {
-      order.items.forEach(item => {
-        // Vendor gets the purchaseSubtotal (their selling price to platform)
-        totalSales += item.purchaseSubtotal || 0;
-      });
+      totalSales += orderEarnings(order);
     });
 
     // Time-series data (last 7 days, 4 weeks, 12 months)
@@ -763,9 +778,7 @@ export const getVendorStats = async (req: AuthRequest, res: Response, next: Next
 
       let daySales = 0;
       dayOrders.forEach(order => {
-        order.items.forEach(item => {
-          daySales += item.purchaseSubtotal || 0;
-        });
+        daySales += orderEarnings(order);
       });
 
       dailySales.push({
@@ -787,9 +800,7 @@ export const getVendorStats = async (req: AuthRequest, res: Response, next: Next
 
       let weekSales = 0;
       weekOrders.forEach(order => {
-        order.items.forEach(item => {
-          weekSales += item.purchaseSubtotal || 0;
-        });
+        weekSales += orderEarnings(order);
       });
 
       weeklySales.push({
@@ -816,9 +827,7 @@ export const getVendorStats = async (req: AuthRequest, res: Response, next: Next
 
       let monthSales = 0;
       monthOrders.forEach(order => {
-        order.items.forEach(item => {
-          monthSales += item.purchaseSubtotal || 0;
-        });
+        monthSales += orderEarnings(order);
       });
 
       monthlySales.push({
