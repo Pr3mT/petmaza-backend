@@ -25,10 +25,12 @@ router.post('/orders/:orderId/accept', warehouseFulfillerController.acceptOrder)
 // Reject and reassign to MY_SHOP
 router.post('/orders/:orderId/reject', warehouseFulfillerController.rejectAndReassign);
 
-// Update order status stages
+// Update order status stages — same process as Prime Vendor:
+// PACKED → shipping details (READY_TO_SHIP) → picked up → in transit → delivered
 router.post('/orders/:orderId/packed', warehouseFulfillerController.markPacked);
+router.post('/orders/:orderId/shipping-details', uploadReceipt.single('receipt'), warehouseFulfillerController.addShippingDetails);
 router.post('/orders/:orderId/picked-up', warehouseFulfillerController.markPickedUp);
-router.post('/orders/:orderId/in-transit', uploadReceipt.single('receipt'), warehouseFulfillerController.markInTransit);
+router.post('/orders/:orderId/in-transit', warehouseFulfillerController.markInTransit);
 router.post('/orders/:orderId/delivered', warehouseFulfillerController.markDelivered);
 
 // Get reviews for fulfilled products

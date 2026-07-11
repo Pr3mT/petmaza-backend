@@ -263,20 +263,19 @@ export const rejectPrimeOrder = async (
       return next(new AppError('Order not found or already processed', 404));
     }
 
-    // Reassign to the MY_SHOP vendor instead of cancelling/refunding. No stock
-    // changes (the store doesn't track per-order stock) and no refund — the shop
-    // takes over fulfilment. It lands in MY_SHOP as PENDING (they must accept it).
-    const myShopVendor = await User.findOne({
-      role: 'vendor',
-      vendorType: 'MY_SHOP',
+    // Reassign to the sub-admin instead of cancelling/refunding. No stock
+    // changes (the store doesn't track per-order stock) and no refund — the
+    // sub-admin takes over fulfilment/manual reassignment from here.
+    const subAdmin = await User.findOne({
+      role: 'sub_admin',
       isApproved: true,
     });
 
-    if (!myShopVendor) {
-      return next(new AppError('No shop vendor available to take over this order. Please contact admin.', 404));
+    if (!subAdmin) {
+      return next(new AppError('No sub-admin available to take over this order. Please contact admin.', 404));
     }
 
-    order.assignedVendorId = myShopVendor._id as any;
+    order.assignedVendorId = subAdmin._id as any;
     order.status = 'PENDING';
     order.rejectionReason = reason || 'Prime vendor rejected the order';
     order.rejectedByName = (req.user as any).name || 'Prime Vendor';
@@ -284,11 +283,11 @@ export const rejectPrimeOrder = async (
     order.acceptanceDeadline = undefined;
     await order.save();
 
-    logger.info(`[PrimeVendor] Order ${id} rejected by ${(req.user as any).name} → reassigned to MY_SHOP ${myShopVendor._id} as PENDING`);
+    logger.info(`[PrimeVendor] Order ${id} rejected by ${(req.user as any).name} → reassigned to Sub Admin ${subAdmin._id} as PENDING`);
 
     res.status(200).json({
       success: true,
-      message: 'Order reassigned to shop vendor successfully',
+      message: 'Order reassigned to sub-admin successfully',
       data: { order },
     });
   } catch (error: any) {

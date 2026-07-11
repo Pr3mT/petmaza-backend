@@ -339,6 +339,12 @@ export const getAllOrders = async (req: AuthRequest, res: Response, next: NextFu
     else if (orderType === 'NORMAL') query.isPrime = { $ne: true };
     if (paymentStatus) query.payment_status = paymentStatus;
 
+    // Sub-admins only manage orders that vendors rejected and reassigned to
+    // them (mirrors the old MY_SHOP hand-off) — full admins still see everything.
+    if (req.user.role === 'sub_admin') {
+      query.assignedVendorId = req.user._id;
+    }
+
     const skip = (Number(page) - 1) * Number(limit);
 
     const orders = await Order.find(query)

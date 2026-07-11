@@ -103,7 +103,7 @@ export const getWarehouseFulfillerOrders = async (
           assignedVendorId: fulfiller._id,
           payment_status: 'Paid',
           status: {
-            $in: ['PENDING', 'ACCEPTED', 'PACKED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED'],
+            $in: ['PENDING', 'ACCEPTED', 'PACKED', 'READY_TO_SHIP', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED'],
           },
         },
         // Case 2: Broadcast orders (assignedVendorId MUST be null, status MUST be PENDING)
@@ -349,19 +349,18 @@ export const rejectAndReassign = async (req: AuthRequest, res: Response, next: N
       );
     }
 
-    // Find MY_SHOP vendor
-    const myShopVendor = await User.findOne({
-      role: 'vendor',
-      vendorType: 'MY_SHOP',
+    // Find sub-admin
+    const subAdmin = await User.findOne({
+      role: 'sub_admin',
       isApproved: true,
     });
 
-    if (!myShopVendor) {
-      return next(new AppError('MY_SHOP vendor not available', 404));
+    if (!subAdmin) {
+      return next(new AppError('Sub-admin not available', 404));
     }
 
-    // Reassign to MY_SHOP vendor (status: PENDING - they need to accept it)
-    order.assignedVendorId = myShopVendor._id;
+    // Reassign to sub-admin (status: PENDING - they take over from here)
+    order.assignedVendorId = subAdmin._id;
     order.status = 'PENDING';
     order.rejectionReason = reason || 'Not available at warehouse';
     order.rejectedByName = (fulfiller as any).name || 'Warehouse Fulfiller';
@@ -369,12 +368,12 @@ export const rejectAndReassign = async (req: AuthRequest, res: Response, next: N
     await order.save();
 
     logger.info(
-      `Order ${orderId} rejected by warehouse fulfiller and reassigned to MY_SHOP ${myShopVendor._id} as PENDING. Reason: ${reason || 'None provided'}`
+      `Order ${orderId} rejected by warehouse fulfiller and reassigned to Sub Admin ${subAdmin._id} as PENDING. Reason: ${reason || 'None provided'}`
     );
 
     res.status(200).json({
       success: true,
-      message: 'Order reassigned to shop vendor successfully',
+      message: 'Order reassigned to sub-admin successfully',
       data: { order },
     });
   } catch (error: any) {
@@ -447,9 +446,11 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
 };
 
 /**
- * Update order status to PICKED_UP (delivery picked up from warehouse)
+ * Add shipping details (PACKED → READY_TO_SHIP) — same process as the Prime
+ * Vendor flow: full shipping details are collected right after packing, before
+ * pickup, instead of later at the in-transit step.
  */
-export const markPickedUp = async (req: AuthRequest, res: Response, next: NextFunction) => {
+export const addShippingDetails = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { orderId } = req.params;
     const fulfiller = req.user;
@@ -473,61 +474,12 @@ export const markPickedUp = async (req: AuthRequest, res: Response, next: NextFu
     if (order.status !== 'PACKED') {
       return next(
         new AppError(
-          `Cannot mark as picked up. Order must be PACKED first. Current status: ${order.status}`,
+          `Cannot add shipping details. Order must be PACKED first. Current status: ${order.status}`,
           400
         )
       );
     }
 
-    order.status = 'PICKED_UP';
-    await order.save();
-
-    logger.info(`Order ${orderId} marked as PICKED_UP by ${fulfiller._id}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Order marked as picked up by delivery',
-      data: { order },
-    });
-  } catch (error: any) {
-    next(error);
-  }
-};
-
-/**
- * Update order status to IN_TRANSIT
- */
-export const markInTransit = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const { orderId } = req.params;
-    const fulfiller = req.user;
-
-    if (fulfiller.vendorType !== 'WAREHOUSE_FULFILLER') {
-      return next(
-        new AppError('Access denied. Only warehouse fulfillers can update order status.', 403)
-      );
-    }
-
-    const order = await Order.findById(orderId);
-
-    if (!order) {
-      return next(new AppError('Order not found', 404));
-    }
-
-    if (order.assignedVendorId?.toString() !== fulfiller._id.toString()) {
-      return next(new AppError('This order is not assigned to you', 403));
-    }
-
-    if (order.status !== 'PICKED_UP') {
-      return next(
-        new AppError(
-          `Cannot mark as in transit. Order must be PICKED_UP first. Current status: ${order.status}`,
-          400
-        )
-      );
-    }
-
-    // ── Full shipping details are REQUIRED to ship (same as Prime Vendor flow) ──
     const courierName = String(
       req.body.shipping_company || req.body.courier_name || req.body.courier || ''
     ).trim();
@@ -535,14 +487,17 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
     const trackingLink = String(req.body.tracking_link || '').trim();
     const { shipping_cost, total_weight, weight_unit, delivery_type } = req.body;
 
-    if (trackingLink && !/^https?:\/\/\S+$/i.test(trackingLink)) {
-      return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
-    }
     if (!courierName) {
-      return next(new AppError('Courier / shipping company name is required to mark the order in transit.', 400));
+      return next(new AppError('Shipping company name is required', 400));
     }
     if (!trackingId) {
-      return next(new AppError('Tracking ID is required to mark the order in transit.', 400));
+      return next(new AppError('Tracking ID is required', 400));
+    }
+    if (!trackingLink) {
+      return next(new AppError('Tracking link is required', 400));
+    }
+    if (!/^https?:\/\/\S+$/i.test(trackingLink)) {
+      return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
     }
     // ── Optional fields — validate only when provided ──────────────────────────
     if (shipping_cost !== undefined && String(shipping_cost).trim() !== '') {
@@ -596,7 +551,7 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
         ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }
         : {}),
       tracking_id: trackingId,
-      ...(trackingLink ? { tracking_link: trackingLink } : {}),
+      tracking_link: trackingLink,
       ...(shipping_cost !== undefined && String(shipping_cost).trim() !== ''
         ? { shipping_cost: Number(shipping_cost) }
         : {}),
@@ -607,12 +562,12 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
     if (!order.courier) order.courier = {};
     order.courier.name = courierName;
     order.courier.tracking_id = trackingId;
-    if (trackingLink) order.courier.tracking_link = trackingLink;
+    order.courier.tracking_link = trackingLink;
 
-    order.status = 'IN_TRANSIT';
+    order.status = 'READY_TO_SHIP';
     await order.save();
 
-    logger.info(`Order ${orderId} marked as IN_TRANSIT by ${fulfiller._id} (courier ${courierName}, tracking ${trackingId})`);
+    logger.info(`[addShippingDetails] Order ${orderId} → READY_TO_SHIP by ${fulfiller._id} (courier ${courierName}, tracking ${trackingId})`);
 
     // Send order shipped email to customer
     try {
@@ -625,12 +580,109 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
           `#${order._id.toString().slice(-8)}`,
           `${courierName} - ${trackingId}`,
           '1-3 business days',
-          trackingLink || undefined
+          trackingLink
         );
       }
     } catch (emailError: any) {
       logger.error('Failed to send order shipped email:', emailError.message);
     }
+
+    res.status(201).json({
+      success: true,
+      message: 'Shipping details saved. Order marked as Ready to Ship.',
+      data: { order },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Update order status to PICKED_UP (delivery picked up from warehouse)
+ */
+export const markPickedUp = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { orderId } = req.params;
+    const fulfiller = req.user;
+
+    if (fulfiller.vendorType !== 'WAREHOUSE_FULFILLER') {
+      return next(
+        new AppError('Access denied. Only warehouse fulfillers can update order status.', 403)
+      );
+    }
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return next(new AppError('Order not found', 404));
+    }
+
+    if (order.assignedVendorId?.toString() !== fulfiller._id.toString()) {
+      return next(new AppError('This order is not assigned to you', 403));
+    }
+
+    if (order.status !== 'READY_TO_SHIP') {
+      return next(
+        new AppError(
+          `Cannot mark as picked up. Order must be READY_TO_SHIP first. Current status: ${order.status}`,
+          400
+        )
+      );
+    }
+
+    order.status = 'PICKED_UP';
+    await order.save();
+
+    logger.info(`Order ${orderId} marked as PICKED_UP by ${fulfiller._id}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Order marked as picked up by delivery',
+      data: { order },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+/**
+ * Update order status to IN_TRANSIT — simple transition, no form (shipping
+ * details were already collected earlier at the Add Shipping Details step).
+ */
+export const markInTransit = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { orderId } = req.params;
+    const fulfiller = req.user;
+
+    if (fulfiller.vendorType !== 'WAREHOUSE_FULFILLER') {
+      return next(
+        new AppError('Access denied. Only warehouse fulfillers can update order status.', 403)
+      );
+    }
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return next(new AppError('Order not found', 404));
+    }
+
+    if (order.assignedVendorId?.toString() !== fulfiller._id.toString()) {
+      return next(new AppError('This order is not assigned to you', 403));
+    }
+
+    if (order.status !== 'PICKED_UP') {
+      return next(
+        new AppError(
+          `Cannot mark as in transit. Order must be PICKED_UP first. Current status: ${order.status}`,
+          400
+        )
+      );
+    }
+
+    order.status = 'IN_TRANSIT';
+    await order.save();
+
+    logger.info(`Order ${orderId} marked as IN_TRANSIT by ${fulfiller._id}`);
 
     res.status(200).json({
       success: true,
