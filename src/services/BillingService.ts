@@ -1,6 +1,7 @@
 import Billing from '../models/Billing';
 import Wallet from '../models/Wallet';
 import Order from '../models/Order';
+import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
 
 export class BillingService {
@@ -35,12 +36,29 @@ export class BillingService {
       },
     });
 
-    // Calculate total amount (sum of purchase prices)
+    // Bill = purchase prices + the courier cost the vendor submitted per order
+    // (what the platform actually owes them). The customer's delivery charge is
+    // platform revenue and is never billed to the vendor's account.
+    const shippingDocs = await ShippingDetails.find({
+      order_id: { $in: orders.map((o) => o._id) },
+      vendor_id,
+    })
+      .select('order_id shipping_cost')
+      .lean();
+    const shippingByOrder: Record<string, number> = {};
+    shippingDocs.forEach((sd) => {
+      shippingByOrder[sd.order_id.toString()] = Number(sd.shipping_cost) || 0;
+    });
+
     const totalAmount = orders.reduce((sum, order) => {
       const vendorItems = order.items.filter(
         (item) => item.vendor_id?.toString() === vendor_id
       );
-      return sum + vendorItems.reduce((s, item) => s + item.purchaseSubtotal, 0);
+      return (
+        sum +
+        vendorItems.reduce((s, item) => s + item.purchaseSubtotal, 0) +
+        (shippingByOrder[order._id.toString()] || 0)
+      );
     }, 0);
 
     // Create bill

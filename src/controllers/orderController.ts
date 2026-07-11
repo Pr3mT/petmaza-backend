@@ -599,9 +599,10 @@ export const getVendorOrders = async (req: AuthRequest, res: Response, next: Nex
         orders: sanitizeOrdersForVendor(
           orders.map(o => ({
             ...o.toObject(),
-            // Vendor-submitted courier cost wins; otherwise the delivery charge
-            // the customer paid — the vendor delivers, so it's part of their cut.
-            shippingCost: shippingCostByOrder.get(o._id.toString()) || o.shippingCharges || 0,
+            // Vendor payout = purchase price + the courier cost THEY submitted on
+            // the shipping-details form. The delivery charge the customer paid is
+            // platform revenue, never part of the vendor's cut.
+            shippingCost: shippingCostByOrder.get(o._id.toString()) || 0,
           }))
         ),
       },
@@ -728,10 +729,9 @@ export const updateOrderStatus = async (
         const shippingDoc = await ShippingDetails.findOne({ order_id: order._id, vendor_id: vendorId })
           .select('shipping_cost')
           .lean();
-        // Vendor-submitted courier cost wins; otherwise the delivery charge the
-        // customer paid — same rule as the order screens and wallet stats.
-        const deliveryCharge =
-          Number(shippingDoc?.shipping_cost) || Number(order.shippingCharges) || 0;
+        // Only the courier cost the vendor submitted counts toward their payout.
+        // The customer's delivery charge is platform revenue — never the vendor's.
+        const deliveryCharge = Number(shippingDoc?.shipping_cost) || 0;
         const vendorEarning = vendorItems.reduce(
           (sum: number, item: any) => sum + (item.purchaseSubtotal || 0),
           0

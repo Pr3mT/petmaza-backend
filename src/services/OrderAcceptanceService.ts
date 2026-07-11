@@ -283,8 +283,34 @@ export class OrderAcceptanceService {
           throw new AppError(`Product ${item.product_id} not available from vendor`, 404);
         }
 
-        const sellingPrice = product.sellingPrice ?? 0;
-        const purchasePrice = product.purchasePrice || 0;
+        // The creation snapshot (OrderRoutingService) is variant-aware and is
+        // what the customer actually paid — recomputing from the base product
+        // zeroed variant products, whose prices live on product.variants (the
+        // base doc's sellingPrice/purchasePrice are empty). Keep the snapshot;
+        // only resolve from the product for legacy items stored without prices.
+        let sellingPrice = Number(item.sellingPrice) || 0;
+        let purchasePrice = Number(item.purchasePrice) || 0;
+        if (!sellingPrice || !purchasePrice) {
+          const sv: any = (item as any).selectedVariant;
+          const variant =
+            sv && product.hasVariants && Array.isArray(product.variants)
+              ? product.variants.find(
+                  (v: any) =>
+                    (sv._id && v?._id?.toString() === sv._id?.toString()) ||
+                    (sv.size && v?.size === sv.size) ||
+                    (sv.weight !== undefined && sv.unit && v?.weight === sv.weight && v?.unit === sv.unit)
+                )
+              : null;
+          const src: any = variant || product;
+          const resolvedSelling =
+            src.sellingPrice ||
+            (src.mrp && src.sellingPercentage
+              ? Math.round(src.mrp * (src.sellingPercentage / 100) * 100) / 100
+              : 0);
+          if (!sellingPrice) sellingPrice = resolvedSelling || 0;
+          // Prime vendors without an explicit cost earn the selling price.
+          if (!purchasePrice) purchasePrice = src.purchasePrice > 0 ? src.purchasePrice : sellingPrice;
+        }
         const subtotal = sellingPrice * item.quantity;
         const purchaseSubtotal = purchasePrice * item.quantity;
         const profit = subtotal - purchaseSubtotal;
@@ -300,6 +326,9 @@ export class OrderAcceptanceService {
           purchaseSubtotal,
           profit,
           profitPercentage,
+          // Preserve the customer's variant choice — dropping it broke the
+          // vendor's item display and sales-history variant tracking.
+          selectedVariant: (item as any).selectedVariant,
         });
 
         newTotalPurchasePrice += purchaseSubtotal;
@@ -324,22 +353,28 @@ export class OrderAcceptanceService {
           throw new AppError(`Product ${item.product_id} not available from vendor`, 404);
         }
 
-        // Recalculate with accepting vendor's pricing
-        const subtotal = product.sellingPrice * item.quantity;
+        // Selling side: keep the creation snapshot (variant-aware — the base
+        // product's sellingPrice is empty for variant products, and the
+        // customer already paid this amount). Purchase side: the accepting
+        // vendor's configured price — that's the point of this recalc.
+        const sellingPrice = Number(item.sellingPrice) || product.sellingPrice || 0;
+        const subtotal = sellingPrice * item.quantity;
         const purchaseSubtotal = pricing.purchasePrice * item.quantity;
         const profit = subtotal - purchaseSubtotal;
-        const profitPercentage = (profit / subtotal) * 100;
+        const profitPercentage = subtotal > 0 ? (profit / subtotal) * 100 : 0;
 
         updatedItems.push({
           product_id: item.product_id,
           vendor_id: vendor_id,
           quantity: item.quantity,
-          sellingPrice: product.sellingPrice,
+          sellingPrice,
           purchasePrice: pricing.purchasePrice,
           subtotal,
           purchaseSubtotal,
           profit,
           profitPercentage,
+          // Preserve the customer's variant choice.
+          selectedVariant: (item as any).selectedVariant,
         });
 
         newTotalPurchasePrice += purchaseSubtotal;
@@ -676,15 +711,16 @@ export class OrderAcceptanceService {
       0
     );
 
-    // Strip customer-facing financial fields before returning to vendor
+    // Strip customer-facing financial fields before returning to vendor.
+    // Note: the customer's delivery charge is deliberately NOT exposed — the
+    // vendor's payout is purchase price + the courier cost they themselves
+    // submit on the shipping-details form; customer delivery fees are platform
+    // revenue and only confuse the vendor's earnings math.
     return sanitizeOrderForVendor({
       ...order.toObject(),
       earnings,
       // Expose total vendor earnings clearly
       totalVendorEarnings: earnings,
-      // Delivery charge the customer paid on this order — the vendor delivers,
-      // so it counts toward their collection (sanitizer strips raw shippingCharges).
-      deliveryCharge: order.shippingCharges || 0,
     });
   }
 }
