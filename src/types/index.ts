@@ -65,6 +65,7 @@ export interface IProduct extends Document {
   purchasePercentage?: number; // e.g., 60 means 60% of MRP (your cost)
   purchasePrice?: number; // auto-calculated: MRP * (purchasePercentage / 100)
   isPrime: boolean; // Prime products: Buy Now only, no cart
+  isPromotional?: boolean; // Promo/giveaway product: free delivery + no platform fee when the whole order is promotional items
   primeVendor_id?: Types.ObjectId | string; // Prime vendor who handles this product
   images: string[];
   isActive: boolean;
