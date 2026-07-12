@@ -28,17 +28,16 @@ export const getMyShopOrders = async (req: AuthRequest, res: Response, next: Nex
       return next(new AppError('Access denied. Only MY_SHOP vendors can access this.', 403));
     }
 
-    // MY_SHOP manager sees ALL orders:
-    // 1. Orders directly assigned to them
-    // 2. Prime product orders (isPrime: true)
-    // 3. Broadcast warehouse fulfiller orders not yet claimed (assignedVendorId: null)
+    // MY_SHOP is being decommissioned: it must ONLY show orders explicitly
+    // assigned to it. Prime orders (isPrime: true) and unclaimed broadcast
+    // orders (assignedVendorId: null) are no longer routed here — when a prime
+    // vendor (or warehouse fulfiller) rejects an order it is reassigned to the
+    // sub-admin, which owns those hand-offs now. Grabbing every isPrime order
+    // here made rejected prime orders show up in MY_SHOP instead of only on the
+    // sub-admin page.
     const orders = await Order.find({
       payment_status: 'Paid',
-      $or: [
-        { assignedVendorId: vendor._id },
-        { isPrime: true },
-        { assignedVendorId: null },
-      ],
+      assignedVendorId: vendor._id,
     })
       .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images')
