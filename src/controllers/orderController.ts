@@ -17,10 +17,13 @@ import {
   sendVendorOrderNotificationEmail,
   sendPaymentSuccessEmail,
   sendRefundCompletedEmail,
+  sendShippingTrackingEmail,
 } from '../services/emailer';
 import { orderQueue } from '../services/OrderQueue';
 import { assertCapturedPaymentForOrder } from '../services/paymentGuard';
 import { getRazorpayInstance } from '../config/razorpay';
+import cloudinary from '../config/cloudinary';
+import streamifier from 'streamifier';
 
 // Create order (customer)
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -1036,6 +1039,160 @@ export const getOrderShippingDetails = async (
     });
   } catch (error: any) {
     logger.error('[getOrderShippingDetails] Error:', error);
+    next(error);
+  }
+};
+
+// Admin/Sub-admin: add courier & tracking on the vendor's behalf.
+// Mirrors the warehouse-fulfiller addShippingDetails flow (PACKED → READY_TO_SHIP)
+// so the admin process matches Prime Vendor / Warehouse Fulfiller exactly.
+export const adminAddShippingDetails = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const orderId = req.params.id;
+
+    const mongoose = await import('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return next(new AppError('Invalid order ID format', 400));
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return next(new AppError('Order not found', 404));
+    }
+
+    if (order.status !== 'PACKED') {
+      return next(
+        new AppError(
+          `Cannot add shipping details. Order must be PACKED first. Current status: ${order.status}`,
+          400
+        )
+      );
+    }
+
+    const courierName = String(
+      req.body.shipping_company || req.body.courier_name || req.body.courier || ''
+    ).trim();
+    const trackingId = String(req.body.tracking_id || req.body.trackingNumber || '').trim();
+    const trackingLink = String(req.body.tracking_link || '').trim();
+    const { shipping_cost, total_weight, weight_unit, delivery_type } = req.body;
+
+    if (!courierName) {
+      return next(new AppError('Shipping company name is required', 400));
+    }
+    if (!trackingId) {
+      return next(new AppError('Tracking ID is required', 400));
+    }
+    if (!trackingLink) {
+      return next(new AppError('Tracking link is required', 400));
+    }
+    if (!/^https?:\/\/\S+$/i.test(trackingLink)) {
+      return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
+    }
+    if (shipping_cost !== undefined && String(shipping_cost).trim() !== '') {
+      if (isNaN(Number(shipping_cost)) || Number(shipping_cost) < 0) {
+        return next(new AppError('Shipping cost must be a non-negative number', 400));
+      }
+    }
+    const hasWeight = total_weight !== undefined && String(total_weight).trim() !== '';
+    if (hasWeight && (isNaN(Number(total_weight)) || Number(total_weight) <= 0)) {
+      return next(new AppError('Total weight must be a positive number', 400));
+    }
+    if (hasWeight && !['kg', 'g'].includes(weight_unit)) {
+      return next(new AppError('Weight unit must be kg or g', 400));
+    }
+    if (delivery_type && !['inter_state', 'out_of_state'].includes(delivery_type)) {
+      return next(new AppError('Delivery type must be inter_state or out_of_state', 400));
+    }
+
+    const existing = await ShippingDetails.findOne({ order_id: orderId });
+    if (existing) {
+      return next(new AppError('Shipping details already submitted for this order', 409));
+    }
+
+    // ── Upload receipt to Cloudinary (optional) ──
+    let uploadResult: any = null;
+    if (req.file) {
+      const isPdf = req.file.mimetype === 'application/pdf';
+      uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'petmaza/shipping-receipts',
+            resource_type: isPdf ? 'raw' : 'image',
+            ...(isPdf ? { format: 'pdf' } : {}),
+          },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        streamifier.createReadStream(req.file!.buffer).pipe(stream);
+      });
+    }
+
+    // Attribute the record to the assigned vendor when there is one, else the acting admin.
+    const attributedVendorId = order.assignedVendorId || req.user._id;
+
+    await ShippingDetails.create({
+      order_id: orderId,
+      vendor_id: attributedVendorId,
+      shipping_company: courierName,
+      ...(uploadResult
+        ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }
+        : {}),
+      tracking_id: trackingId,
+      tracking_link: trackingLink,
+      ...(shipping_cost !== undefined && String(shipping_cost).trim() !== ''
+        ? { shipping_cost: Number(shipping_cost) }
+        : {}),
+      ...(hasWeight ? { total_weight: Number(total_weight), weight_unit } : {}),
+      ...(delivery_type ? { delivery_type } : {}),
+    });
+
+    if (!order.courier) order.courier = {};
+    order.courier.name = courierName;
+    order.courier.tracking_id = trackingId;
+    order.courier.tracking_link = trackingLink;
+
+    order.status = 'READY_TO_SHIP';
+    await order.save();
+
+    logger.info(`[adminAddShippingDetails] Order ${orderId} → READY_TO_SHIP by admin ${req.user._id} (courier ${courierName}, tracking ${trackingId})`);
+
+    // Send tracking details email to customer (shipping cost is NOT included)
+    try {
+      const populatedOrder = await order.populate('customer_id');
+      const customer = populatedOrder.customer_id as any;
+      if (customer?.email) {
+        await sendShippingTrackingEmail(
+          customer.email,
+          customer.name || 'Customer',
+          order._id.toString().slice(-8),
+          {
+            company: courierName,
+            trackingId,
+            trackingLink,
+            deliveryType: delivery_type,
+            totalWeight: hasWeight ? Number(total_weight) : undefined,
+            weightUnit: hasWeight ? weight_unit : undefined,
+            estimatedDelivery: '1-3 business days',
+          }
+        );
+      }
+    } catch (emailError: any) {
+      logger.error('Failed to send shipping tracking email:', emailError.message);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Shipping details saved. Order marked as Ready to Ship.',
+      data: { order },
+    });
+  } catch (error: any) {
+    logger.error('[adminAddShippingDetails] Error:', error);
     next(error);
   }
 };

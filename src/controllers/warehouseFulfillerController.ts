@@ -9,9 +9,9 @@ import { sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
 import { applyVendorPriceAdjustments } from '../utils/applyVendorPriceAdjustments';
-import { 
+import {
   sendOrderAcceptedEmail,
-  sendOrderShippedEmail,
+  sendShippingTrackingEmail,
   sendDeliveryCompletedEmail,
   sendAdminDeliveryNotificationEmail
 } from '../services/emailer';
@@ -569,22 +569,28 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
 
     logger.info(`[addShippingDetails] Order ${orderId} → READY_TO_SHIP by ${fulfiller._id} (courier ${courierName}, tracking ${trackingId})`);
 
-    // Send order shipped email to customer
+    // Send tracking details email to customer (shipping cost is NOT included)
     try {
       const populatedOrder = await order.populate('customer_id');
       const customer = populatedOrder.customer_id as any;
       if (customer?.email) {
-        await sendOrderShippedEmail(
+        await sendShippingTrackingEmail(
           customer.email,
           customer.name || 'Customer',
-          `#${order._id.toString().slice(-8)}`,
-          `${courierName} - ${trackingId}`,
-          '1-3 business days',
-          trackingLink
+          order._id.toString().slice(-8),
+          {
+            company: courierName,
+            trackingId,
+            trackingLink,
+            deliveryType: delivery_type,
+            totalWeight: hasWeight ? Number(total_weight) : undefined,
+            weightUnit: hasWeight ? weight_unit : undefined,
+            estimatedDelivery: '1-3 business days',
+          }
         );
       }
     } catch (emailError: any) {
-      logger.error('Failed to send order shipped email:', emailError.message);
+      logger.error('Failed to send shipping tracking email:', emailError.message);
     }
 
     res.status(201).json({

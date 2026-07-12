@@ -14,11 +14,13 @@ import {
   adminUpdateOrderStatus,
   adminAssignOrderToVendor,
   getOrderShippingDetails,
+  adminAddShippingDetails,
   getVendorOrderShippingDetails,
   adminProcessRefund,
 } from '../controllers/orderController';
 import { verifyToken, checkRole } from '../middlewares/auth';
 import { validateCartPrices } from '../middlewares/validateCartPrices';
+import { uploadReceipt } from '../config/cloudinary';
 
 const router = express.Router();
 
@@ -47,5 +49,7 @@ router.put('/admin/:id/status', verifyToken, checkRole('admin', 'sub_admin'), ad
 router.put('/admin/:id/assign', verifyToken, checkRole('admin', 'sub_admin'), adminAssignOrderToVendor);
 router.post('/admin/:id/process-refund', verifyToken, checkRole('admin', 'sub_admin'), adminProcessRefund);
 router.get('/admin/:id/shipping-details', verifyToken, checkRole('admin', 'sub_admin'), getOrderShippingDetails);
+// Admin/sub-admin adds courier & tracking on the vendor's behalf (PACKED → READY_TO_SHIP).
+router.post('/admin/:id/shipping-details', verifyToken, checkRole('admin', 'sub_admin'), uploadReceipt.single('receipt'), adminAddShippingDetails);
 
 export default router;

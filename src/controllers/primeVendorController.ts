@@ -7,7 +7,7 @@ import VendorDetails from '../models/VendorDetails';
 import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
 import logger from '../config/logger';
-import { sendOrderStatusUpdateEmail, sendOrderRejectionEmail, sendRefundInitiatedEmail } from '../services/emailer';
+import { sendOrderStatusUpdateEmail, sendOrderRejectionEmail, sendRefundInitiatedEmail, sendShippingTrackingEmail } from '../services/emailer';
 import { sanitizeOrderForVendor, sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
@@ -629,6 +629,30 @@ export const addShippingDetails = async (
     await order.save();
 
     logger.info(`[PrimeVendor] Shipping details added for order ${id} by vendor ${vendor_id}`);
+
+    // ── Send tracking details email to customer (cost is NOT included) ──────────
+    try {
+      const populatedOrder = await order.populate('customer_id');
+      const customer = populatedOrder.customer_id as any;
+      if (customer?.email) {
+        await sendShippingTrackingEmail(
+          customer.email,
+          customer.name || 'Customer',
+          order._id.toString().slice(-8).toUpperCase(),
+          {
+            company: shippingDetails.shipping_company,
+            trackingId: shippingDetails.tracking_id,
+            trackingLink: shippingDetails.tracking_link,
+            deliveryType: shippingDetails.delivery_type,
+            totalWeight: shippingDetails.total_weight,
+            weightUnit: shippingDetails.weight_unit,
+            estimatedDelivery: '2-5 business days',
+          }
+        );
+      }
+    } catch (emailError: any) {
+      logger.error('[PrimeVendor] Failed to send shipping tracking email:', emailError.message);
+    }
 
     res.status(201).json({
       success: true,

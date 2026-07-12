@@ -148,6 +148,114 @@ export async function sendEmail(options: EmailOptions) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared email design system
+//
+// A small set of reusable building blocks so every customer-facing email shares
+// one consistent, modern look (header, hero banner, cards, detail rows, button,
+// footer). Change these in one place to restyle the whole email system.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const EMAIL_SUPPORT = 'support@petmaza.com';
+
+/** Colour palette used across all emails. */
+const EMAIL_THEME = {
+  brand: '#FFD400',
+  ink: '#1f2937',
+  muted: '#6b7280',
+  faint: '#9ca3af',
+  line: '#eceef1',
+  cardBg: '#f9fafb',
+  // semantic accents: [text, background]
+  success: ['#15803d', '#dcfce7'],
+  info: ['#1e40af', '#dbeafe'],
+  warn: ['#b45309', '#fef3c7'],
+  danger: ['#b91c1c', '#fee2e2'],
+} as const;
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+/** Wraps inner content in the standard Petmaza email shell (header + footer). */
+function emailShell(content: string, preheader = ''): string {
+  return `
+  <div style="margin:0; padding:24px 12px; background-color:#eef0f3;">
+    ${preheader ? `<div style="display:none; max-height:0; overflow:hidden; opacity:0; color:#eef0f3; font-size:1px; line-height:1px;">${preheader}</div>` : ''}
+    <div style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; max-width:600px; margin:0 auto; background-color:#ffffff; border-radius:14px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+      <div style="background-color:${EMAIL_THEME.brand}; padding:22px 24px; text-align:center;">
+        <span style="font-size:22px; font-weight:800; letter-spacing:1px; color:${EMAIL_THEME.ink};">🐾 PETMAZA</span>
+      </div>
+      <div style="padding:28px 28px 14px 28px; color:${EMAIL_THEME.ink}; font-size:15px; line-height:1.6;">
+        ${content}
+      </div>
+      <div style="padding:22px 24px; text-align:center; background-color:#fafbfc; border-top:1px solid ${EMAIL_THEME.line};">
+        <p style="margin:0 0 6px 0; color:${EMAIL_THEME.muted}; font-size:13px;">Need help? <a href="mailto:${EMAIL_SUPPORT}" style="color:#2563eb; text-decoration:none;">${EMAIL_SUPPORT}</a></p>
+        <p style="margin:0; color:${EMAIL_THEME.faint}; font-size:12px;">© ${new Date().getFullYear()} Petmaza. All rights reserved.</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+/** Coloured hero banner with a big icon, title and optional subtitle. */
+function emailHero(
+  icon: string,
+  title: string,
+  subtitle = '',
+  accent: readonly [string, string] = EMAIL_THEME.info
+): string {
+  const [fg, bg] = accent;
+  return `
+    <div style="background-color:${bg}; border-radius:12px; padding:26px 20px; text-align:center; margin:0 0 22px 0;">
+      <div style="font-size:40px; line-height:1;">${icon}</div>
+      <div style="margin:12px 0 0 0; color:${fg}; font-size:21px; font-weight:700;">${title}</div>
+      ${subtitle ? `<div style="margin:6px 0 0 0; color:${fg}; font-size:14px; opacity:0.9;">${subtitle}</div>` : ''}
+    </div>`;
+}
+
+/** A light rounded card, optionally with a coloured left accent bar. */
+function emailCard(inner: string, accentColor?: string): string {
+  return `<div style="background-color:${EMAIL_THEME.cardBg}; border:1px solid ${EMAIL_THEME.line}; border-radius:10px; padding:18px 20px; margin:18px 0;${accentColor ? ` border-left:4px solid ${accentColor};` : ''}">${inner}</div>`;
+}
+
+/** Key/value rows for order details. Values may contain inline HTML. */
+function detailRows(rows: Array<[string, string]>): string {
+  return `
+    <table style="width:100%; border-collapse:collapse;">
+      ${rows
+        .map(
+          ([k, v]) => `
+      <tr>
+        <td style="padding:7px 0; color:${EMAIL_THEME.muted}; font-size:14px; vertical-align:top; width:42%;">${k}</td>
+        <td style="padding:7px 0; color:${EMAIL_THEME.ink}; font-size:14px; font-weight:600; text-align:right; vertical-align:top;">${v}</td>
+      </tr>`
+        )
+        .join('')}
+    </table>`;
+}
+
+/** A pill-shaped status badge. */
+function statusPill(label: string, accent: readonly [string, string] = EMAIL_THEME.info): string {
+  const [fg, bg] = accent;
+  return `<span style="display:inline-block; background-color:${bg}; color:${fg}; padding:3px 12px; border-radius:999px; font-size:12px; font-weight:700; letter-spacing:0.3px;">${label}</span>`;
+}
+
+/** A centred call-to-action button. */
+function emailButton(label: string, href: string, color = '#2563eb'): string {
+  return `
+    <div style="text-align:center; margin:26px 0 10px 0;">
+      <a href="${href}" style="display:inline-block; background-color:${color}; color:#ffffff; text-decoration:none; padding:13px 30px; border-radius:9px; font-weight:700; font-size:15px;">${label}</a>
+    </div>`;
+}
+
+/** A bulleted "what's next" style list inside a soft card. */
+function emailChecklist(title: string, items: string[], accent: readonly [string, string] = EMAIL_THEME.info): string {
+  const [fg, bg] = accent;
+  return `
+    <div style="background-color:${bg}; border-radius:10px; padding:18px 20px; margin:18px 0;">
+      <div style="margin:0 0 10px 0; color:${fg}; font-size:15px; font-weight:700;">${title}</div>
+      ${items.map((i) => `<div style="margin:6px 0; color:${EMAIL_THEME.ink}; font-size:14px;">✓ ${i}</div>`).join('')}
+    </div>`;
+}
+
 /**
  * Send order confirmation email to customer
  */
@@ -171,93 +279,86 @@ export async function sendOrderConfirmationEmail(
   const splitCount = orderData.splitOrderCount || 1;
   const splitIds = orderData.splitOrderIds || [orderId];
 
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
-        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
-      </div>
-      
-      <div style="padding: 20px;">
-        <h2>Order Confirmation</h2>
-        <p>Hi ${customerName},</p>
-        
-        <p>Thank you for your order! We're excited to help you find the perfect pet products.</p>
-        
-        ${isSplit ? `
-        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
-          <h4 style="margin-top: 0; color: #856404;">📦 Split Shipment Notice</h4>
-          <p style="margin: 0; color: #856404;">
-            Your order will arrive in <strong>${splitCount} separate shipments</strong> from different warehouses for faster delivery!
-          </p>
-          <p style="margin: 10px 0 0 0; font-size: 13px; color: #856404;">
-            <strong>Order IDs:</strong> ${splitIds.join(', ')}
-          </p>
-        </div>
-        ` : ''}
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <h3>Order Details</h3>
-          <p><strong>Order ID:</strong> ${orderId}</p>
-          <p><strong>Order Date:</strong> ${new Date().toLocaleDateString('en-IN')}</p>
-          <p><strong>Total Amount:</strong> ₹${(orderData.totalAmount || 0).toFixed(2)}</p>
-          <p><strong>Status:</strong> <span style="color: #ff9800; font-weight: bold;">Pending</span></p>
-        </div>
-        
-        <h3>Items Ordered (${orderData.items.length}):</h3>
-        <ul>
-          ${orderData.items.map((item: any) => `<li><strong>${item.product_id?.name || 'Product'}</strong> - Qty: ${item.quantity} - ₹${(item.subtotal || item.price * item.quantity).toFixed(2)}</li>`).join('')}
-        </ul>
-        
-        <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <table style="width: 100%; border-collapse: collapse;">
+  const itemsList = orderData.items
+    .map(
+      (item: any) => `
+      <tr>
+        <td style="padding:8px 0; border-bottom:1px solid ${EMAIL_THEME.line}; font-size:14px; color:${EMAIL_THEME.ink};">${item.product_id?.name || 'Product'} <span style="color:${EMAIL_THEME.muted};">× ${item.quantity}</span></td>
+        <td style="padding:8px 0; border-bottom:1px solid ${EMAIL_THEME.line}; font-size:14px; color:${EMAIL_THEME.ink}; font-weight:600; text-align:right;">₹${(item.subtotal || item.price * item.quantity).toFixed(2)}</td>
+      </tr>`
+    )
+    .join('');
+
+  const summaryRows: Array<[string, string]> = [
+    ['Subtotal', `₹${(orderData.subtotalBeforeCharges || orderData.subtotal || 0).toFixed(2)}`],
+  ];
+  if (orderData.discountAmount > 0) {
+    summaryRows.push([
+      `Discount${orderData.couponCode ? ` (${orderData.couponCode})` : ''}`,
+      `<span style="color:#15803d;">-₹${(orderData.discountAmount || 0).toFixed(2)}</span>`,
+    ]);
+  }
+  summaryRows.push(['Shipping Charges', `₹${(orderData.shippingCharges || 0).toFixed(2)}`]);
+  summaryRows.push(['Platform Fee', `₹${(orderData.platformFee || 0).toFixed(2)}`]);
+
+  const html = emailShell(
+    `
+      ${emailHero('🐾', 'Order Confirmed', 'Thank you for shopping with us!', EMAIL_THEME.success)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">Thank you for your order! We're excited to help you find the perfect pet products.</p>
+
+      ${
+        isSplit
+          ? emailCard(
+              `<div style="color:${EMAIL_THEME.warn[0]}; font-weight:700; margin-bottom:6px;">📦 Split Shipment</div>
+        <div style="font-size:14px;">Your order will arrive in <strong>${splitCount} separate shipments</strong> for faster delivery.</div>
+        <div style="font-size:13px; color:${EMAIL_THEME.muted}; margin-top:8px;"><strong>Order IDs:</strong> ${splitIds.join(', ')}</div>`,
+              '#ffc107'
+            )
+          : ''
+      }
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Order Date', new Date().toLocaleDateString('en-IN')],
+          ['Status', statusPill('PENDING', EMAIL_THEME.warn)],
+        ])
+      )}
+
+      <div style="margin:18px 0 6px 0; font-weight:700; font-size:15px;">Items Ordered (${orderData.items.length})</div>
+      ${emailCard(
+        `<table style="width:100%; border-collapse:collapse;">
+          ${itemsList}
+          ${detailRows(summaryRows)}
+          <table style="width:100%; border-collapse:collapse; margin-top:6px; border-top:2px solid ${EMAIL_THEME.line};">
             <tr>
-              <td style="padding: 5px 0;"><strong>Subtotal:</strong></td>
-              <td style="padding: 5px 0; text-align: right;">₹${(orderData.subtotalBeforeCharges || orderData.subtotal || 0).toFixed(2)}</td>
-            </tr>
-            ${orderData.discountAmount > 0 ? `
-            <tr>
-              <td style="padding: 5px 0; color: #4caf50;"><strong>Discount ${orderData.couponCode ? `(${orderData.couponCode})` : ''}:</strong></td>
-              <td style="padding: 5px 0; text-align: right; color: #4caf50;">-₹${(orderData.discountAmount || 0).toFixed(2)}</td>
-            </tr>
-            ` : ''}
-            <tr>
-              <td style="padding: 5px 0;"><strong>Shipping Charges:</strong></td>
-              <td style="padding: 5px 0; text-align: right;">₹${(orderData.shippingCharges || 0).toFixed(2)}</td>
-            </tr>
-            <tr>
-              <td style="padding: 5px 0;"><strong>Platform Fee:</strong></td>
-              <td style="padding: 5px 0; text-align: right;">₹${(orderData.platformFee || 0).toFixed(2)}</td>
-            </tr>
-            <tr style="border-top: 2px solid #ddd;">
-              <td style="padding: 10px 0 0 0;"><strong>Total Amount:</strong></td>
-              <td style="padding: 10px 0 0 0; text-align: right;"><strong>₹${(orderData.totalAmount || 0).toFixed(2)}</strong></td>
+              <td style="padding:12px 0 0 0; font-size:15px; font-weight:800; color:${EMAIL_THEME.ink};">Total Amount</td>
+              <td style="padding:12px 0 0 0; font-size:16px; font-weight:800; color:#15803d; text-align:right;">₹${(orderData.totalAmount || 0).toFixed(2)}</td>
             </tr>
           </table>
-        </div>
-        
-        <p><strong>Delivery Address:</strong><br>
-        ${orderData.customerAddress?.street || 'N/A'}<br>
-        ${orderData.customerAddress?.city || 'N/A'}, ${orderData.customerAddress?.state || 'N/A'}<br>
-        Pincode: ${orderData.customerAddress?.pincode || 'N/A'}</p>
-        
-        <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <h4 style="margin-top: 0;">What's Next?</h4>
-          <p>✓ Payment will be verified</p>
-          <p>✓ ${isSplit ? 'Each item will be processed by its assigned warehouse' : 'Order will be assigned to nearest vendor'}</p>
-          <p>✓ You'll receive updates via email for each shipment</p>
-          ${isSplit ? '<p>✓ Track each shipment separately in your order history</p>' : ''}
-        </div>
-        
-        <p style="color: #666; font-size: 12px;">
-          If you have any questions, please contact our support team at support@petmaza.com
-        </p>
-      </div>
-      
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+        </table>`
+      )}
+
+      ${emailCard(
+        `<div style="font-weight:700; margin-bottom:6px;">Delivery Address</div>
+        <div style="font-size:14px; color:${EMAIL_THEME.muted}; line-height:1.6;">
+          ${orderData.customerAddress?.street || 'N/A'}<br>
+          ${orderData.customerAddress?.city || 'N/A'}, ${orderData.customerAddress?.state || 'N/A'}<br>
+          Pincode: ${orderData.customerAddress?.pincode || 'N/A'}
+        </div>`
+      )}
+
+      ${emailChecklist('What’s next?', [
+        'Payment will be verified',
+        isSplit ? 'Each item is processed by its assigned warehouse' : 'Order will be assigned to the nearest vendor',
+        "You'll receive email updates for each shipment",
+        ...(isSplit ? ['Track each shipment separately in your order history'] : []),
+      ])}
+    `,
+    `Order confirmed — #${orderId}`
+  );
 
   return sendEmail({
     to: customerEmail,
@@ -327,59 +428,58 @@ export async function sendOrderStatusUpdateEmail(
     },
   };
 
-  const statusInfo = statusMessages[status.toLowerCase()] || statusMessages.processing;
+  const statusInfo = statusMessages[status.toLowerCase()] || statusMessages.confirmed;
 
-  const trackingHtml = tracking && (tracking.trackingId || tracking.trackingLink)
-    ? `
-        <div style="background-color: #fff8e1; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
-          <p style="margin: 0 0 8px 0;"><strong>📦 Tracking Details</strong></p>
-          ${tracking.company ? `<p style="margin: 4px 0;"><strong>Courier:</strong> ${tracking.company}</p>` : ''}
-          ${tracking.trackingId ? `<p style="margin: 4px 0;"><strong>Tracking ID:</strong> <span style="font-family: monospace;">${tracking.trackingId}</span></p>` : ''}
-          ${tracking.trackingLink ? `
-          <div style="text-align: center; margin-top: 12px;">
-            <a href="${tracking.trackingLink}" target="_blank"
-               style="display: inline-block; background-color: #1976d2; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 5px; font-weight: bold;">
-              🔍 Track Your Order
-            </a>
-          </div>
-          <p style="margin: 10px 0 0 0; font-size: 12px; color: #666; word-break: break-all;">
-            Or copy this link: <a href="${tracking.trackingLink}" target="_blank">${tracking.trackingLink}</a>
-          </p>` : ''}
-        </div>`
-    : '';
+  // Positive states get a green banner, problem states red, everything else blue.
+  const s = status.toLowerCase();
+  const accent =
+    ['delivered', 'accepted', 'confirmed'].includes(s)
+      ? EMAIL_THEME.success
+      : ['cancelled', 'rejected'].includes(s)
+      ? EMAIL_THEME.danger
+      : EMAIL_THEME.info;
 
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
-        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
-      </div>
-      
-      <div style="padding: 20px;">
-        <div style="background-color: #e3f2fd; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
-          <h2 style="margin: 0; font-size: 36px;">${statusInfo.icon}</h2>
-          <h2 style="margin: 10px 0 0 0; color: #1976d2;">${statusInfo.title}</h2>
-        </div>
-        
-        <p>Hi ${customerName},</p>
-        <p>${statusInfo.description}</p>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Order ID:</strong> #${orderId}</p>
-          <p><strong>Status:</strong> <span style="color: #1976d2; font-weight: bold;">${status.toUpperCase()}</span></p>
-          <p><strong>Last Updated:</strong> ${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</p>
-        </div>
-        ${trackingHtml}
+  const trackingHtml =
+    tracking && (tracking.trackingId || tracking.trackingLink)
+      ? emailCard(
+          `
+        <div style="margin:0 0 12px 0; color:${EMAIL_THEME.ink}; font-size:15px; font-weight:700;">📦 Tracking Details</div>
+        ${detailRows([
+          ...(tracking.company ? [['Courier', tracking.company] as [string, string]] : []),
+          ...(tracking.trackingId
+            ? [['Tracking ID', `<span style="font-family:monospace;">${tracking.trackingId}</span>`] as [string, string]]
+            : []),
+        ])}
+        ${
+          tracking.trackingLink
+            ? `${emailButton('🔍 Track Your Order', tracking.trackingLink, '#2563eb')}
+        <p style="margin:8px 0 0 0; font-size:12px; color:${EMAIL_THEME.muted}; word-break:break-all; text-align:center;">
+          Or copy this link: <a href="${tracking.trackingLink}" target="_blank" style="color:#2563eb;">${tracking.trackingLink}</a>
+        </p>`
+            : ''
+        }`,
+          '#ffc107'
+        )
+      : '';
 
-        <p style="color: #666; font-size: 12px;">
-          Track your order anytime on our website. If you have any questions, please contact our support team at support@petmaza.com
-        </p>
-      </div>
-      
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+  const html = emailShell(
+    `
+      ${emailHero(statusInfo.icon, statusInfo.title, '', accent)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">${statusInfo.description}</p>
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Status', statusPill(status.toUpperCase(), accent)],
+          ['Last Updated', new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })],
+        ])
+      )}
+      ${trackingHtml}
+    `,
+    `${statusInfo.title} — order #${orderId}`
+  );
 
   return sendEmail({
     to: customerEmail,
@@ -402,53 +502,34 @@ export async function sendOrderRejectionEmail(
 ) {
   logger.info(`[sendOrderRejectionEmail] Starting to send rejection email to ${customerEmail} for order ${orderId}`);
   
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
-        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
-      </div>
-      
-      <div style="padding: 20px;">
-        <div style="background-color: #fff3cd; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0; border-left: 4px solid #ff9800;">
-          <h2 style="margin: 0; font-size: 36px;">⚠️</h2>
-          <h2 style="margin: 10px 0 0 0; color: #e65100;">Order Rejected - Refund Initiated</h2>
-        </div>
-        
-        <p>Hi ${customerName},</p>
-        <p>We regret to inform you that your order has been rejected by the vendor due to the following reason:</p>
-        
-        <div style="background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #f44336;">
-          <p style="margin: 0; color: #c62828;"><strong>Reason:</strong> ${reason}</p>
-        </div>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <p style="margin: 5px 0;"><strong>Order ID:</strong> #${orderId}</p>
-          <p style="margin: 5px 0;"><strong>Order Amount:</strong> ₹${amount.toFixed(2)}</p>
-          <p style="margin: 5px 0;"><strong>Refund Status:</strong> <span style="color: #2e7d32; font-weight: bold;">Initiated</span></p>
-        </div>
-        
-        <div style="background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #4caf50;">
-          <p style="margin: 5px 0; color: #2e7d32;"><strong>💰 Refund Information:</strong></p>
-          <p style="margin: 5px 0;">Your payment of <strong>₹${amount.toFixed(2)}</strong> will be refunded to your original payment method within <strong>3-4 business days</strong>.</p>
-          <p style="margin: 5px 0; font-size: 12px; color: #666;">Please note that the exact time may vary depending on your bank or payment provider.</p>
-        </div>
-        
-        <p style="margin-top: 20px;">We apologize for the inconvenience caused. You can browse similar products and place a new order anytime.</p>
-        
-        <p style="text-align: center; margin: 30px 0;">
-          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/products" style="display: inline-block; background-color: #ffd700; color: #333; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">Browse Products</a>
-        </p>
-        
-        <p style="color: #666; font-size: 12px;">
-          If you have any questions about your refund, please contact our support team at <a href="mailto:support@petmaza.com" style="color: #1976d2;">support@petmaza.com</a>
-        </p>
-      </div>
-      
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+  const html = emailShell(
+    `
+      ${emailHero('⚠️', 'Order Rejected', 'A refund has been initiated', EMAIL_THEME.warn)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">We regret to inform you that your order has been rejected by the vendor for the reason below.</p>
+
+      ${emailCard(`<div style="color:${EMAIL_THEME.danger[0]};"><strong>Reason:</strong> ${reason}</div>`, '#dc2626')}
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Order Amount', `₹${amount.toFixed(2)}`],
+          ['Refund Status', statusPill('INITIATED', EMAIL_THEME.success)],
+        ])
+      )}
+
+      ${emailCard(
+        `<div style="color:${EMAIL_THEME.success[0]}; font-weight:700; margin-bottom:6px;">💰 Refund Information</div>
+        <div style="font-size:14px;">Your payment of <strong>₹${amount.toFixed(2)}</strong> will be refunded to your original payment method within <strong>3-4 business days</strong>.</div>
+        <div style="font-size:12px; color:${EMAIL_THEME.muted}; margin-top:6px;">Exact time may vary depending on your bank or payment provider.</div>`,
+        '#16a34a'
+      )}
+
+      ${emailButton('Browse Products', `${FRONTEND_URL}/products`, '#2563eb')}
+    `,
+    `Order #${orderId} rejected — refund initiated`
+  );
 
   try {
     const result = await sendEmail({
@@ -531,114 +612,52 @@ export async function sendPaymentSuccessEmail(
     `
     : '';
 
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #ddd;">
-      <!-- Header -->
-      <div style="background-color: #ffd700; padding: 25px; text-align: center;">
-        <h1 style="margin: 0; color: #0051a5; font-size: 36px; font-weight: bold;">PETMAZA</h1>
-        <p style="margin: 5px 0 0 0; color: #555; font-size: 14px;">Payment Receipt</p>
-      </div>
-      
-      <!-- Success Banner -->
-      <div style="background-color: #c8e6c9; padding: 30px; text-align: center;">
-        <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+  const html = emailShell(
+    `
+      ${emailHero('✓', 'Payment Successful', 'Your order has been confirmed', EMAIL_THEME.success)}
+
+      <p style="margin:0 0 12px 0;">Hi <strong>${customerName}</strong>,</p>
+      <p style="margin:0 0 4px 0;">Thank you for your payment! Your transaction has been completed successfully and your order is now confirmed. We'll keep you updated via email.</p>
+
+      ${emailCard(
+        `<div style="margin:0 0 12px 0; font-weight:700; font-size:15px;">Payment Receipt</div>
+        ${detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Transaction ID', `<span style="font-family:monospace; font-size:12px;">${paymentId}</span>`],
+          [
+            'Payment Gateway',
+            `${orderData?.paymentGateway || 'Razorpay'}${orderData?.paymentMethod ? ` - ${orderData.paymentMethod}` : ''}`,
+          ],
+          ['Transaction Date', new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })],
+          ['Payment Status', statusPill('PAID', EMAIL_THEME.success)],
+        ])}
+        <table style="width:100%; border-collapse:collapse; margin-top:6px; border-top:2px solid ${EMAIL_THEME.line};">
           <tr>
-            <td align="center">
-              <div style="background-color: #2e7d32; color: white; width: 60px; height: 60px; border-radius: 50%; line-height: 60px; font-size: 40px; margin: 0 auto 10px;">&#10003;</div>
-            </td>
+            <td style="padding:12px 0 0 0; font-size:15px; font-weight:800; color:${EMAIL_THEME.ink};">Amount Paid</td>
+            <td style="padding:12px 0 0 0; font-size:16px; font-weight:800; color:#15803d; text-align:right;">₹${amount.toFixed(2)}</td>
           </tr>
-        </table>
-        <h2 style="margin: 10px 0 5px 0; color: #2e7d32; font-size: 28px;">Payment Successful!</h2>
-        <p style="margin: 0; color: #555;">Your order has been confirmed</p>
-      </div>
-      
-      <div style="padding: 30px;">
-        <p style="font-size: 16px; margin-bottom: 20px;">Hi <strong>${customerName}</strong>,</p>
-        <p style="color: #555; line-height: 1.6;">
-          Thank you for your payment! Your transaction has been completed successfully and your order is now confirmed. 
-          We'll process your order shortly and keep you updated via email.
-        </p>
-        
-        <!-- Payment Receipt -->
-        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 25px 0; border: 1px solid #e0e0e0;">
-          <h3 style="margin-top: 0; color: #333; border-bottom: 2px solid #ffd700; padding-bottom: 10px;">Payment Receipt</h3>
-          
-          <table style="width: 100%; margin-top: 15px;">
-            <tr>
-              <td style="padding: 8px 0; color: #666; width: 40%;">Order ID:</td>
-              <td style="padding: 8px 0; font-weight: bold; color: #333;">#${orderId}</td>
-            </tr>
-            <tr>
-              <td style="padding: 8px 0; color: #666;">Transaction ID:</td>
-              <td style="padding: 8px 0; font-family: monospace; color: #333; font-size: 12px;">${paymentId}</td>
-            </tr>
-            <tr>
-              <td style="padding: 8px 0; color: #666;">Payment Gateway:</td>
-              <td style="padding: 8px 0; color: #333;">
-                <strong>${orderData?.paymentGateway || 'Razorpay'}</strong>
-                ${orderData?.paymentMethod ? ` - ${orderData.paymentMethod}` : ''}
-              </td>
-            </tr>
-            <tr>
-              <td style="padding: 8px 0; color: #666;">Transaction Date:</td>
-              <td style="padding: 8px 0; color: #333;">${new Date().toLocaleString('en-IN', {
-                dateStyle: 'full',
-                timeStyle: 'short',
-              })}</td>
-            </tr>
-            <tr>
-              <td style="padding: 8px 0; color: #666;">Payment Status:</td>
-              <td style="padding: 8px 0;">
-                <span style="background-color: #c8e6c9; color: #2e7d32; padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 12px;">PAID</span>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding: 12px 0; color: #666; font-size: 14px; border-top: 2px solid #ddd; padding-top: 15px;">Amount Paid:</td>
-              <td style="padding: 12px 0; font-size: 18px; font-weight: bold; color: #2e7d32; border-top: 2px solid #ddd; padding-top: 15px;">&#8377;${amount.toFixed(2)}</td>
-            </tr>
-          </table>
-        </div>
-        
-        ${itemsHtml}
-        ${addressHtml}
-        
-        <!-- What's Next -->
-        <div style="background-color: #e3f2fd; padding: 20px; border-radius: 8px; margin: 25px 0; border-left: 4px solid #2196f3;">
-          <h4 style="margin-top: 0; color: #1976d2;">📦 What's Next?</h4>
-          <ul style="margin: 10px 0; padding-left: 20px; color: #555; line-height: 1.8;">
-            <li>Your order will be assigned to nearest vendor</li>
-            <li>Vendor will confirm product availability</li>
-            <li>You'll receive shipping updates via email</li>
-            <li>Expected delivery: 2-5 business days</li>
-          </ul>
-          <p style="margin: 15px 0 0 0;">
-            <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/orders" style="display: inline-block; background-color: #2196f3; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Track Your Order</a>
-          </p>
-        </div>
-        
-        <!-- Important Note -->
-        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
-          <p style="margin: 0; color: #856404; font-size: 14px;">
-            <strong>📄 Note:</strong> Please save this receipt for your records. You can also view and download your invoice from your account dashboard.
-          </p>
-        </div>
-        
-        <!-- Support -->
-        <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
-          <p style="color: #666; font-size: 14px; margin: 0;">Need help? Contact us:</p>
-          <p style="margin: 5px 0;">
-            <a href="mailto:support@petmaza.com" style="color: #2196f3; text-decoration: none;">support@petmaza.com</a>
-          </p>
-        </div>
-      </div>
-      
-      <!-- Footer -->
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px; margin: 5px 0;">This is an automated receipt. Please do not reply to this email.</p>
-        <p style="color: #999; font-size: 12px; margin: 5px 0;">© ${new Date().getFullYear()} Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+        </table>`
+      )}
+
+      ${itemsHtml}
+      ${addressHtml}
+
+      ${emailChecklist('📦 What’s next?', [
+        'Your order will be assigned to the nearest vendor',
+        'Vendor will confirm product availability',
+        "You'll receive shipping updates via email",
+        'Expected delivery: 2-5 business days',
+      ])}
+
+      ${emailButton('Track Your Order', `${FRONTEND_URL}/orders`, '#2563eb')}
+
+      ${emailCard(
+        `<div style="font-size:14px; color:${EMAIL_THEME.muted};"><strong style="color:${EMAIL_THEME.ink};">📄 Note:</strong> Please save this receipt. You can also download your invoice from your account dashboard.</div>`,
+        '#ffc107'
+      )}
+    `,
+    `Payment received for order #${orderId}`
+  );
 
   // Generate PDF attachment
   let pdfBuffer: Buffer | undefined;
@@ -692,55 +711,42 @@ export async function sendPaymentFailureEmail(
   amount: number,
   reason: string
 ) {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
-        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
-      </div>
-      
-      <div style="padding: 20px;">
-        <div style="background-color: #ffebee; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
-          <h2 style="margin: 0; font-size: 36px;">⚠️</h2>
-          <h2 style="margin: 10px 0 0 0; color: #c62828;">Payment Failed</h2>
-        </div>
-        
-        <p>Hi ${customerName},</p>
-        <p>Unfortunately, your payment could not be processed. Please review the details below and try again.</p>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <h3 style="margin-top: 0;">Payment Details</h3>
-          <p><strong>Order ID:</strong> ${orderId}</p>
-          <p><strong>Amount:</strong> ₹${amount.toFixed(2)}</p>
-          <p><strong>Reason:</strong> <span style="color: #c62828;">${reason}</span></p>
-          <p><strong>Date & Time:</strong> ${new Date().toLocaleString('en-IN')}</p>
-        </div>
-        
-        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <h4 style="margin-top: 0;">What should you do?</h4>
-          <p>1. Check your payment details</p>
-          <p>2. Ensure you have sufficient funds</p>
-          <p>3. Try a different payment method</p>
-          <p>4. Contact your bank if the issue persists</p>
-        </div>
-        
-        <p>
-          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/checkout" style="display: inline-block; background-color: #1976d2; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Retry Payment</a>
-        </p>
-        
-        <p style="color: #666; font-size: 12px; margin-top: 20px;">
-          If you need assistance, please contact our support team at support@petmaza.com
-        </p>
-      </div>
-      
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+  const html = emailShell(
+    `
+      ${emailHero('⚠️', 'Payment Failed', 'Your payment could not be processed', EMAIL_THEME.danger)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">Unfortunately, your payment could not be processed. Please review the details below and try again.</p>
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Amount', `₹${amount.toFixed(2)}`],
+          ['Reason', `<span style="color:${EMAIL_THEME.danger[0]};">${reason}</span>`],
+          ['Date & Time', new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })],
+        ]),
+        '#dc2626'
+      )}
+
+      ${emailChecklist(
+        'What should you do?',
+        [
+          'Check your payment details',
+          'Ensure you have sufficient funds',
+          'Try a different payment method',
+          'Contact your bank if the issue persists',
+        ],
+        EMAIL_THEME.warn
+      )}
+
+      ${emailButton('Retry Payment', `${FRONTEND_URL}/checkout`, '#2563eb')}
+    `,
+    `Payment failed for order #${orderId}`
+  );
 
   return sendEmail({
     to: customerEmail,
-    subject: `Payment Failed - Order ${orderId}`,
+    subject: `Payment Failed - Order #${orderId}`,
     html,
     trigger: 'payment_failure',
     orderId,
@@ -984,52 +990,35 @@ export async function sendDeliveryCompletedEmail(
   orderId: string,
   deliveryDate: string
 ) {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
-        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
-      </div>
-      
-      <div style="padding: 20px;">
-        <div style="background-color: #c8e6c9; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
-          <h2 style="margin: 0; font-size: 36px;">📦</h2>
-          <h2 style="margin: 10px 0 0 0; color: #2e7d32;">Delivery Complete!</h2>
-        </div>
-        
-        <p>Hi ${customerName},</p>
-        <p>Your order has been successfully delivered! Thank you for shopping with Petmaza.</p>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Order ID:</strong> ${orderId}</p>
-          <p><strong>Delivered On:</strong> ${deliveryDate}</p>
-          <p><strong>Status:</strong> <span style="color: #2e7d32; font-weight: bold;">DELIVERED</span></p>
-        </div>
-        
-        <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <h4 style="margin-top: 0;">What's Next?</h4>
-          <p>✓ You can review products in your account</p>
-          <p>✓ Submit ratings and feedback</p>
-          <p>✓ Continue shopping for more pet products</p>
-        </div>
-        
-        <p>
-          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/orders/${orderId}" style="display: inline-block; background-color: #2e7d32; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Order Details</a>
-        </p>
-        
-        <p style="color: #666; font-size: 12px; margin-top: 20px;">
-          If you have any issues with your delivery, please contact support@petmaza.com
-        </p>
-      </div>
-      
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+  const html = emailShell(
+    `
+      ${emailHero('🎉', 'Delivered!', 'Your order has arrived', EMAIL_THEME.success)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">Your order has been successfully delivered. Thank you for shopping with Petmaza!</p>
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Delivered On', deliveryDate],
+          ['Status', statusPill('DELIVERED', EMAIL_THEME.success)],
+        ])
+      )}
+
+      ${emailChecklist('What’s next?', [
+        'Review the products in your account',
+        'Submit ratings and feedback',
+        'Continue shopping for more pet products',
+      ])}
+
+      ${emailButton('View Order Details', `${FRONTEND_URL}/orders/${orderId}`, '#16a34a')}
+    `,
+    `Your order #${orderId} has been delivered`
+  );
 
   return sendEmail({
     to: customerEmail,
-    subject: `Order Delivered - ${orderId}`,
+    subject: `Order Delivered - #${orderId} 🎉`,
     html,
     trigger: 'delivery_completed',
     orderId,
@@ -1046,54 +1035,34 @@ export async function sendOrderAcceptedEmail(
   vendorName: string,
   estimatedDelivery?: string
 ) {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
-        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
-      </div>
-      
-      <div style="padding: 20px;">
-        <div style="background-color: #c8e6c9; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
-          <h2 style="margin: 0; font-size: 36px;">✓</h2>
-          <h2 style="margin: 10px 0 0 0; color: #2e7d32;">Products Available!</h2>
-          <p style="margin: 10px 0 0 0; font-size: 14px;">Your order has been accepted</p>
-        </div>
-        
-        <p>Hi ${customerName},</p>
-        <p>Great news! Your order has been accepted by our vendor. All products are available and your order is being prepared for delivery.</p>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Order ID:</strong> ${orderId}</p>
-          <p><strong>Status:</strong> <span style="color: #2e7d32; font-weight: bold;">ACCEPTED</span></p>
-          ${estimatedDelivery ? `<p><strong>Estimated Delivery:</strong> ${estimatedDelivery}</p>` : ''}
-        </div>
-        
-        <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <h4 style="margin-top: 0;">What happens next?</h4>
-          <p>✓ Your order is being prepared</p>
-          <p>✓ Products will be packed carefully</p>
-          <p>✓ You'll receive tracking updates via email</p>
-          <p>✓ Expected delivery within 2-5 business days</p>
-        </div>
-        
-        <p>
-          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/orders/${orderId}" style="display: inline-block; background-color: #2e7d32; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Track Your Order</a>
-        </p>
-        
-        <p style="color: #666; font-size: 12px; margin-top: 20px;">
-          If you have any questions, please contact support@petmaza.com
-        </p>
-      </div>
-      
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+  const html = emailShell(
+    `
+      ${emailHero('✓', 'Order Accepted', 'All products are available', EMAIL_THEME.success)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">Great news! Your order has been accepted and is now being prepared for delivery. We'll email you the tracking details as soon as it ships.</p>
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Status', statusPill('ACCEPTED', EMAIL_THEME.success)],
+          ...(estimatedDelivery ? [['Estimated Delivery', estimatedDelivery] as [string, string]] : []),
+        ])
+      )}
+
+      ${emailChecklist('What happens next?', [
+        'Your order is being prepared',
+        'Products will be packed carefully',
+        "You'll receive tracking details by email once shipped",
+        'Expected delivery within 2-5 business days',
+      ])}
+    `,
+    `Your order #${orderId} has been accepted`
+  );
 
   return sendEmail({
     to: customerEmail,
-    subject: `Order Accepted - ${orderId} ✓`,
+    subject: `Order Accepted - #${orderId} ✓`,
     html,
     trigger: 'order_accepted',
     orderId,
@@ -1109,54 +1078,41 @@ export async function sendOrderRejectedEmail(
   orderId: string,
   reason: string
 ) {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
-        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
-      </div>
-      
-      <div style="padding: 20px;">
-        <div style="background-color: #ffebee; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
-          <h2 style="margin: 0; font-size: 36px;">⚠️</h2>
-          <h2 style="margin: 10px 0 0 0; color: #c62828;">Products Not Available</h2>
-          <p style="margin: 10px 0 0 0; font-size: 14px;">Order could not be fulfilled</p>
-        </div>
-        
-        <p>Hi ${customerName},</p>
-        <p>We're sorry to inform you that your order could not be processed at this time.</p>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Order ID:</strong> ${orderId}</p>
-          <p><strong>Status:</strong> <span style="color: #c62828; font-weight: bold;">UNABLE TO FULFILL</span></p>
-          <p><strong>Reason:</strong> ${reason}</p>
-        </div>
-        
-        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <h4 style="margin-top: 0;">What should you do?</h4>
-          <p>✓ No payment has been charged</p>
-          <p>✓ Try placing a new order with alternative products</p>
-          <p>✓ Check product availability on our website</p>
-          <p>✓ Contact us for product recommendations</p>
-        </div>
-        
-        <p>
-          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/products" style="display: inline-block; background-color: #1976d2; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Browse Products</a>
-        </p>
-        
-        <p style="color: #666; font-size: 12px; margin-top: 20px;">
-          We apologize for the inconvenience. If you have questions, please contact support@petmaza.com
-        </p>
-      </div>
-      
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px;">© 2026 Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+  const html = emailShell(
+    `
+      ${emailHero('⚠️', 'Products Not Available', 'Your order could not be fulfilled', EMAIL_THEME.danger)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">We're sorry to inform you that your order could not be processed at this time.</p>
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Status', statusPill('UNABLE TO FULFILL', EMAIL_THEME.danger)],
+          ['Reason', reason],
+        ]),
+        '#dc2626'
+      )}
+
+      ${emailChecklist(
+        'What should you do?',
+        [
+          'No payment has been charged',
+          'Try placing a new order with alternative products',
+          'Check product availability on our website',
+          'Contact us for product recommendations',
+        ],
+        EMAIL_THEME.warn
+      )}
+
+      ${emailButton('Browse Products', `${FRONTEND_URL}/products`, '#2563eb')}
+    `,
+    `Update on your order #${orderId}`
+  );
 
   return sendEmail({
     to: customerEmail,
-    subject: `Order Update - ${orderId}`,
+    subject: `Order Update - #${orderId}`,
     html,
     trigger: 'order_rejected',
     orderId,
@@ -1245,6 +1201,90 @@ export async function sendOrderShippedEmail(
 }
 
 /**
+ * Send shipping tracking details to customer.
+ *
+ * Sent when a vendor submits shipping details for an order. Shows the courier
+ * company, tracking ID, tracking link, delivery type and package weight so the
+ * customer can follow their shipment.
+ *
+ * IMPORTANT: the shipping cost the vendor pays is intentionally NOT included —
+ * it must never be exposed to the customer.
+ */
+export async function sendShippingTrackingEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  details: {
+    company?: string;
+    trackingId?: string;
+    trackingLink?: string;
+    deliveryType?: 'inter_state' | 'out_of_state';
+    totalWeight?: number;
+    weightUnit?: 'kg' | 'g';
+    estimatedDelivery?: string;
+  }
+) {
+  const deliveryTypeLabel =
+    details.deliveryType === 'inter_state'
+      ? 'Inter-State'
+      : details.deliveryType === 'out_of_state'
+      ? 'Out of State'
+      : '';
+
+  const weightLabel =
+    details.totalWeight !== undefined && details.totalWeight !== null
+      ? `${details.totalWeight} ${details.weightUnit || ''}`.trim()
+      : '';
+
+  const trackingInner = `
+      <div style="margin:0 0 12px 0; color:${EMAIL_THEME.ink}; font-size:15px; font-weight:700;">📦 Tracking Details</div>
+      ${detailRows([
+        ...(details.company ? [['Courier / Company', details.company] as [string, string]] : []),
+        ...(details.trackingId
+          ? [['Tracking ID', `<span style="font-family:monospace;">${details.trackingId}</span>`] as [string, string]]
+          : []),
+        ...(deliveryTypeLabel ? [['Delivery Type', deliveryTypeLabel] as [string, string]] : []),
+        ...(weightLabel ? [['Package Weight', weightLabel] as [string, string]] : []),
+      ])}
+      ${
+        details.trackingLink
+          ? `${emailButton('🔍 Track Your Order', details.trackingLink, '#2563eb')}
+      <p style="margin:8px 0 0 0; font-size:12px; color:${EMAIL_THEME.muted}; word-break:break-all; text-align:center;">
+        Or copy this link: <a href="${details.trackingLink}" target="_blank" style="color:#2563eb;">${details.trackingLink}</a>
+      </p>`
+          : ''
+      }`;
+
+  const html = emailShell(
+    `
+      ${emailHero('🚚', 'Order Shipped', 'Your order is on its way — track it below', EMAIL_THEME.info)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">Good news! Your order has been shipped. Use the tracking details below to follow your shipment.</p>
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Status', statusPill('SHIPPED', EMAIL_THEME.info)],
+          ...(details.estimatedDelivery ? [['Estimated Delivery', details.estimatedDelivery] as [string, string]] : []),
+        ])
+      )}
+
+      ${emailCard(trackingInner, '#ffc107')}
+    `,
+    `Your order #${orderId} has shipped — tracking inside`
+  );
+
+  return sendEmail({
+    to: customerEmail,
+    subject: `Order Shipped & Tracking - #${orderId} 🚚`,
+    html,
+    trigger: 'shipping_tracking',
+    orderId,
+  });
+}
+
+/**
  * Send refund initiated notification to customer
  */
 export async function sendRefundInitiatedEmail(
@@ -1254,64 +1294,40 @@ export async function sendRefundInitiatedEmail(
   refundAmount: number,
   reason: string
 ) {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
-        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
-      </div>
-      
-      <div style="padding: 20px;">
-        <div style="background-color: #fff3e0; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
-          <h2 style="margin: 0; font-size: 36px;">💰</h2>
-          <h2 style="margin: 10px 0 0 0; color: #f57c00;">Refund Initiated</h2>
-          <p style="margin: 10px 0 0 0; font-size: 14px;">Your refund is being processed</p>
-        </div>
-        
-        <p>Hi ${customerName},</p>
-        <p>We're sorry that your order couldn't be fulfilled. We've initiated a refund for your order.</p>
-        
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Order ID:</strong> ${orderId}</p>
-          <p><strong>Refund Amount:</strong> <span style="color: #2e7d32; font-size: 18px; font-weight: bold;">₹${refundAmount.toFixed(2)}</span></p>
-          <p><strong>Reason:</strong> ${reason}</p>
-          <p><strong>Status:</strong> <span style="color: #f57c00; font-weight: bold;">REFUND INITIATED</span></p>
-        </div>
-        
-        <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #1976d2;">
-          <h4 style="margin-top: 0;">⏱️ Refund Timeline</h4>
-          <p style="margin: 5px 0;">Your refund has been <strong>initiated</strong> and will be credited to your account within <strong>4-5 working days</strong>.</p>
-          <p style="margin: 10px 0 5px 0; font-size: 14px;">The amount will be refunded to:</p>
-          <p style="margin: 5px 0;">✓ Original payment method used during purchase</p>
-          <p style="margin: 5px 0;">✓ Same account/card used for payment</p>
-        </div>
-        
-        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <h4 style="margin-top: 0;">📝 Important Information</h4>
-          <p style="margin: 5px 0;">• Refund processing time: 4-5 working days</p>
-          <p style="margin: 5px 0;">• You will receive a confirmation once the refund is credited</p>
-          <p style="margin: 5px 0;">• If you don't receive the refund within 7 working days, please contact us</p>
-          <p style="margin: 5px 0;">• We apologize for the inconvenience caused</p>
-        </div>
-        
-        <div style="text-align: center; margin: 25px 0;">
-          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/products" style="display: inline-block; background-color: #2e7d32; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-right: 10px;">Browse Products</a>
-          <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/orders" style="display: inline-block; background-color: #1976d2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">View Orders</a>
-        </div>
-        
-        <p style="color: #666; font-size: 12px; margin-top: 20px;">
-          We apologize for the inconvenience. If you have any questions about your refund, please contact support@petmaza.com or call our customer care.
-        </p>
-      </div>
-      
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px;">© ${new Date().getFullYear()} Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+  const html = emailShell(
+    `
+      ${emailHero('💰', 'Refund Initiated', 'Your refund is being processed', EMAIL_THEME.warn)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">We're sorry that your order couldn't be fulfilled. We've initiated a refund for your order.</p>
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Refund Amount', `<span style="color:#15803d; font-size:16px; font-weight:700;">₹${refundAmount.toFixed(2)}</span>`],
+          ['Reason', reason],
+          ['Status', statusPill('REFUND INITIATED', EMAIL_THEME.warn)],
+        ])
+      )}
+
+      ${emailChecklist(
+        '⏱️ Refund Timeline',
+        [
+          'Credited to your account within 4-5 working days',
+          'Refunded to your original payment method',
+          "You'll get a confirmation once it's credited",
+        ],
+        EMAIL_THEME.info
+      )}
+
+      ${emailButton('View Orders', `${FRONTEND_URL}/orders`, '#2563eb')}
+    `,
+    `Refund initiated for order #${orderId}`
+  );
 
   return sendEmail({
     to: customerEmail,
-    subject: `Refund Initiated - Order ${orderId}`,
+    subject: `Refund Initiated - Order #${orderId}`,
     html,
     trigger: 'refund_initiated',
     orderId,
@@ -1327,49 +1343,36 @@ export async function sendRefundCompletedEmail(
   orderId: string,
   refundAmount: number
 ) {
-  const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background-color: #ffd700; padding: 20px; text-align: center;">
-        <h1 style="margin: 0; color: #333;">🐾 PETMAZA</h1>
-      </div>
+  const html = emailShell(
+    `
+      ${emailHero('✅', 'Refund Processed', 'Your refund has been approved', EMAIL_THEME.success)}
 
-      <div style="padding: 20px;">
-        <div style="background-color: #e8f5e9; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
-          <h2 style="margin: 0; font-size: 36px;">✅</h2>
-          <h2 style="margin: 10px 0 0 0; color: #2e7d32;">Refund Processed Successfully</h2>
-          <p style="margin: 10px 0 0 0; font-size: 14px;">Your refund has been approved and processed by our team</p>
-        </div>
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">Great news! Your refund has been successfully processed and will be credited to your original payment method shortly.</p>
 
-        <p>Hi ${customerName},</p>
-        <p>Great news! Your refund has been successfully processed. The amount will be credited to your original payment method shortly.</p>
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Refund Amount', `<span style="color:#15803d; font-size:16px; font-weight:700;">₹${refundAmount.toFixed(2)}</span>`],
+          ['Status', statusPill('✓ REFUNDED', EMAIL_THEME.success)],
+        ])
+      )}
 
-        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Order ID:</strong> ${orderId}</p>
-          <p><strong>Refund Amount:</strong> <span style="color: #2e7d32; font-size: 20px; font-weight: bold;">₹${refundAmount.toFixed(2)}</span></p>
-          <p><strong>Status:</strong> <span style="color: #2e7d32; font-weight: bold;">✓ REFUNDED</span></p>
-        </div>
-
-        <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #1976d2;">
-          <h4 style="margin-top: 0;">⏱️ When Will I Receive the Money?</h4>
-          <p style="margin: 5px 0;">The refund has been <strong>approved</strong>. Depending on your bank or payment provider, the amount will appear in your account within <strong>3-5 working days</strong>.</p>
-          <p style="margin: 5px 0;">✓ Original payment method used during purchase</p>
-          <p style="margin: 5px 0;">✓ Same account/card used for payment</p>
-        </div>
-
-        <p style="color: #666; font-size: 12px; margin-top: 20px;">
-          If you have any questions, please contact support@petmaza.com.
-        </p>
-      </div>
-
-      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #ddd;">
-        <p style="color: #999; font-size: 12px;">© ${new Date().getFullYear()} Petmaza. All rights reserved.</p>
-      </div>
-    </div>
-  `;
+      ${emailChecklist(
+        '⏱️ When will I receive the money?',
+        [
+          'Appears in your account within 3-5 working days',
+          'Refunded to your original payment method',
+        ],
+        EMAIL_THEME.info
+      )}
+    `,
+    `Refund processed for order #${orderId}`
+  );
 
   return sendEmail({
     to: customerEmail,
-    subject: `Refund Processed - Order ${orderId}`,
+    subject: `Refund Processed - Order #${orderId}`,
     html,
     trigger: 'refund_completed',
     orderId,
