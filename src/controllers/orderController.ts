@@ -62,6 +62,23 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     const isSplitShipment = orders.length > 1;
     logger.info(`[createOrder] ${orders.length} order(s) created (split: ${isSplitShipment})`);
 
+    // Batch-fetch all products once (was an N+1: one findById per cart item) —
+    // used for coupon eligibility below and the promo-delivery check.
+    const productIds = items.map((item: any) => item.product_id);
+    const productDocs: any[] = await Product.find({ _id: { $in: productIds } })
+      .select('_id brand_id subCategory isPromotional')
+      .populate('brand_id', '_id')
+      .lean();
+    const productMap = new Map<string, any>(
+      productDocs.map((p: any) => [p._id.toString(), p])
+    );
+
+    // Delivery charge + platform fee are waived only when EVERY item in the
+    // cart is a promotional product — a mixed cart still pays normal charges.
+    const isAllPromotional = items.every(
+      (item: any) => productMap.get(item.product_id?.toString())?.isPromotional === true
+    );
+
     // ── Coupon validation (still synchronous – affects the response amount) ──
     const combinedSubtotal = orders.reduce((sum: number, order: any) => sum + order.total, 0);
     let discountAmount = 0;
@@ -70,15 +87,6 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     if (couponCode) {
       logger.info(`[createOrder] Validating coupon: ${couponCode}`);
 
-      // Batch-fetch all products in one query (was an N+1: one findById per cart item)
-      const productIds = items.map((item: any) => item.product_id);
-      const productDocs: any[] = await Product.find({ _id: { $in: productIds } })
-        .select('_id brand_id subCategory')
-        .populate('brand_id', '_id')
-        .lean();
-      const productMap = new Map<string, any>(
-        productDocs.map((p: any) => [p._id.toString(), p])
-      );
       const productsInOrder = items.map((item: any) => {
         const product: any = productMap.get(item.product_id?.toString());
         return {
@@ -147,9 +155,15 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     const shippingSettings = await ShippingService.getSettings();
     let charges = await ShippingService.calculateCharges(combinedSubtotal);
-    // Prime/mixed surcharges must still honor the admin kill-switches
-    if (hasPrimeProducts && shippingSettings.platformFeeEnabled) charges.platformFee = 10;
-    if (isMixedOrder && shippingSettings.shippingEnabled && charges.shippingCharges === 0) charges.shippingCharges = 50;
+    if (isAllPromotional) {
+      // Whole cart is promotional products — no delivery charge, no platform fee
+      charges.shippingCharges = 0;
+      charges.platformFee = 0;
+    } else {
+      // Prime/mixed surcharges must still honor the admin kill-switches
+      if (hasPrimeProducts && shippingSettings.platformFeeEnabled) charges.platformFee = 10;
+      if (isMixedOrder && shippingSettings.shippingEnabled && charges.shippingCharges === 0) charges.shippingCharges = 50;
+    }
 
     const subtotalAfterDiscount = combinedSubtotal - discountAmount;
     charges.total = subtotalAfterDiscount + charges.shippingCharges + charges.platformFee;
@@ -1264,7 +1278,8 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
     // Calculate order total — sellingPrice IS the vendor price after unification
     const itemTotal = (primeListing.sellingPrice ?? 0) * quantity;
     const primeSettings = await ShippingService.getSettings();
-    const platformFee = primeSettings.platformFeeEnabled ? 10 : 0; // ₹10 for prime, unless platform fee disabled in admin
+    // ₹10 for prime, unless platform fee disabled in admin OR this listing is a promotional product
+    const platformFee = (!primeListing.isPromotional && primeSettings.platformFeeEnabled) ? 10 : 0;
     const shippingCharges = 0; // Free shipping for prime
     const grandTotal = itemTotal + platformFee + shippingCharges;
 

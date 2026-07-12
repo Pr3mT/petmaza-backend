@@ -118,6 +118,10 @@ const productSchema = new Schema<IProduct>(
       type: Boolean,
       default: false,
     },
+    isPromotional: {
+      type: Boolean,
+      default: false,
+    },
     primeVendor_id: {
       type: Schema.Types.ObjectId,
       ref: 'User',
