@@ -10,6 +10,7 @@ import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 import { notifyWaitingCustomers } from './productNotificationController';
 import { clearCache } from '../middlewares/cache';
+import { ProductService } from '../services/ProductService';
 
 export const getVendorProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -579,128 +580,94 @@ export const updateVendorProductStatus = async (req: AuthRequest, res: Response,
       return next(new AppError('Please provide a valid status (true/false)', 400));
     }
 
-    // Check if this vendor is MY SHOP or WAREHOUSE_FULFILLER (both update Product directly)
-    const vendor = await User.findById(req.user._id);
-    const isMyShop = vendor && ['WAREHOUSE', 'MY_SHOP', 'WAREHOUSE_FULFILLER'].includes(vendor.vendorType);
-
-    if (isMyShop) {
-      // For MY_SHOP / WAREHOUSE_FULFILLER, directly update the product's inStock / variant status
-      const product = await Product.findById(id);
-      
-      if (!product) {
-        return next(new AppError('Product not found', 404));
-      }
-
-      // WAREHOUSE_FULFILLER can update status of any product visible in their assigned listings
-
-      // Check if this is a variant product
-      if ((size !== undefined) || (weight !== undefined && unit !== undefined)) {
-        // Update specific variant status in the product (match by size if provided, otherwise weight+unit)
-        const variantIndex = product.variants.findIndex((v: any) => {
-          if (size !== undefined && v.size !== undefined) return v.size === size;
-          if (weight !== undefined && unit !== undefined) return v.weight === Number(weight) && v.unit === unit;
-          return false;
-        });
-        
-        if (variantIndex === -1) {
-          return next(new AppError('Variant not found', 404));
-        }
-        
-        product.variants[variantIndex].isActive = isActive;
-        product.markModified('variants');
-        await product.save();
-      } else {
-        // Update product-level inStock status (keep isActive=true so product stays visible to customers)
-        // Check BOTH inStock and isActive for legacy docs (old out-of-stock products have isActive:false, inStock:undefined)
-        const wasOutOfStock = product.inStock === false || product.isActive === false;
-        logger.info(`📝 Updating product ${product._id} inStock: ${product.inStock} -> ${isActive}`);
-        product.inStock = isActive;
-        product.isActive = true; // always keep visible; inStock controls purchase availability
-        await product.save();
-        logger.info(`✅ Product saved. inStock: ${product.inStock}, isActive: ${product.isActive}`);
-
-        // If product was out-of-stock and is now back in stock, notify waiting customers
-        if (wasOutOfStock && isActive === true) {
-          logger.info('🔔 Product marked available - triggering notify-me emails');
-          notifyWaitingCustomers(
-            product._id.toString(),
-            product.name,
-            product.images && product.images.length > 0 ? product.images[0] : undefined
-          ).catch(err => logger.error('Error notifying customers:', err));
-        }
-
-        // Clear product cache so customers see updated stock status immediately
-        clearCache('/api/products');
-        clearCache('/products');
-
-        // Also sync VendorProductPricing.isActive so the vendor list badge reflects correctly
-        await VendorProductPricing.updateMany(
-          { product_id: id },
-          { isActive }
-        );
-      }
-
-      await product.populate('brand_id', 'name _id');
-      await product.populate('category_id', 'name _id');
-
-      logger.info(`📤 Returning updated product. inStock: ${product.inStock}`);
-
-      res.status(200).json({
-        success: true,
-        message: `Product marked as ${isActive ? 'Available' : 'Out of Stock'}`,
-        data: {
-          product,
-        },
-      });
-    } else {
-      // For other vendors, use VendorProductPricing (existing logic)
-      const vendorProductPricing = await VendorProductPricing.findOne({
-        vendor_id: req.user._id,
-        product_id: id,
-      });
-
-      if (!vendorProductPricing) {
-        return next(new AppError('Product not assigned to you', 404));
-      }
-
-      // Check if this is a variant product
-      if ((size !== undefined) || (weight !== undefined && unit !== undefined) && vendorProductPricing.variantStock) {
-        // Update specific variant status (match by size if provided, otherwise weight+unit)
-        const variantIndex = vendorProductPricing.variantStock.findIndex((v: any) => {
-          if (size !== undefined && v.size !== undefined) return v.size === size;
-          if (weight !== undefined && unit !== undefined) return v.weight === Number(weight) && v.unit === unit;
-          return false;
-        });
-        
-        if (variantIndex === -1) {
-          return next(new AppError('Variant not found', 404));
-        }
-        
-        vendorProductPricing.variantStock[variantIndex].isActive = isActive;
-        vendorProductPricing.markModified('variantStock');
-      } else {
-        // Update legacy single-weight product status
-        vendorProductPricing.isActive = isActive;
-      }
-
-      await vendorProductPricing.save();
-
-      await vendorProductPricing.populate({
-        path: 'product_id',
-        populate: {
-          path: 'brand_id',
-          select: 'name _id',
-        },
-      });
-
-      res.status(200).json({
-        success: true,
-        message: `Product marked as ${isActive ? 'Available' : 'Out of Stock'}`,
-        data: {
-          product: vendorProductPricing,
-        },
-      });
+    // The customer catalog is PRODUCT-CENTRIC: storefront/search read Product.inStock and
+    // Product.variants[].isActive — NOT per-vendor VendorProductPricing. So a mark-out must
+    // update the Product itself, and CRUCIALLY keep Product.isActive === true so the product
+    // STAYS VISIBLE to customers (with an "Out of Stock" badge + "Notify Me"); only `inStock`
+    // controls whether it can be purchased. This applies to every vendor type — previously
+    // non-MyShop/Prime vendors only touched VendorProductPricing, so their mark-out never
+    // reached the customer catalog at all.
+    const product = await Product.findById(id);
+    if (!product) {
+      return next(new AppError('Product not found', 404));
     }
+
+    const isVariantToggle = (size !== undefined) || (weight !== undefined && unit !== undefined);
+
+    if (isVariantToggle) {
+      // Update the specific variant on the Product (match by size if provided, else weight+unit)
+      const variantIndex = product.variants.findIndex((v: any) => {
+        if (size !== undefined && v.size !== undefined) return v.size === size;
+        if (weight !== undefined && unit !== undefined) return v.weight === Number(weight) && v.unit === unit;
+        return false;
+      });
+
+      if (variantIndex === -1) {
+        return next(new AppError('Variant not found', 404));
+      }
+
+      product.variants[variantIndex].isActive = isActive;
+      product.markModified('variants');
+      await product.save();
+
+      // Mirror onto the vendor's own pricing row (badge in the vendor list), if one exists.
+      await VendorProductPricing.updateOne(
+        { vendor_id: req.user._id, product_id: id },
+        { $set: { 'variantStock.$[el].isActive': isActive } },
+        {
+          arrayFilters: [
+            size !== undefined
+              ? { 'el.size': size }
+              : { 'el.weight': Number(weight), 'el.unit': unit },
+          ],
+        }
+      ).catch(() => {});
+    } else {
+      // Product-level toggle: keep the product VISIBLE (isActive stays true); inStock controls purchase.
+      // Check BOTH flags for legacy docs (old out-of-stock products have isActive:false, inStock:undefined).
+      const wasOutOfStock = product.inStock === false || product.isActive === false;
+      logger.info(`📝 Updating product ${product._id} inStock: ${product.inStock} -> ${isActive}`);
+      product.inStock = isActive;
+      product.isActive = true; // always keep visible; inStock controls purchase availability
+      // Prime products mirror stock via isAvailable too (used by prime routing / dashboards).
+      if ((product as any).isPrime) (product as any).isAvailable = isActive;
+      await product.save();
+      logger.info(`✅ Product saved. inStock: ${product.inStock}, isActive: ${product.isActive}`);
+
+      // If product was out-of-stock and is now back in stock, email waiting customers.
+      if (wasOutOfStock && isActive === true) {
+        logger.info('🔔 Product marked available - triggering notify-me emails');
+        notifyWaitingCustomers(
+          product._id.toString(),
+          product.name,
+          product.images && product.images.length > 0 ? product.images[0] : undefined
+        ).catch(err => logger.error('Error notifying customers:', err));
+      }
+
+      // Sync the vendor's own pricing row so the vendor list badge reflects correctly.
+      await VendorProductPricing.updateMany(
+        { vendor_id: req.user._id, product_id: id },
+        { isActive }
+      );
+    }
+
+    // Bust caches so customers see the updated stock status immediately.
+    clearCache('/api/products');
+    clearCache('/products');
+    ProductService.clearListingCache();
+
+    await product.populate('brand_id', 'name _id');
+    await product.populate('category_id', 'name _id');
+
+    logger.info(`📤 Returning updated product. inStock: ${product.inStock}`);
+
+    res.status(200).json({
+      success: true,
+      message: `Product marked as ${isActive ? 'Available' : 'Out of Stock'}`,
+      data: {
+        product,
+      },
+    });
   } catch (error: any) {
     next(error);
   }

@@ -13,6 +13,7 @@ import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
 import logger from '../config/logger';
 import { clearCache } from '../middlewares/cache';
+import { ProductService } from '../services/ProductService';
 
 // ─── Helper: Shape a Product document into the old listing response ───────────
 // Keeps the frontend reading listing.vendorPrice / listing.product_id.name unchanged.
@@ -321,6 +322,7 @@ export const toggleAvailability = async (
     // Clear product cache so customers immediately see the updated badge
     clearCache('/products');
     clearCache('/prime-products');
+    ProductService.clearListingCache(); // storefront shuffle cache (30-min) — must bust too
 
     logger.info(`[PrimeProduct] Listing ${id} availability toggled to ${newIsAvailable}`);
 

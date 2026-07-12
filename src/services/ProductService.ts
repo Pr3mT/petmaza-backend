@@ -267,16 +267,15 @@ export class ProductService {
 
     if (filters.seed !== undefined) {
       // ── Seeded shuffle path ────────────────────────────────────────────────
-      // Fetch all matching docs (lean, minimal fields) so we can:
-      //   1. Determine in-stock status for each product
-      //   2. Partition into inStock / outOfStock groups
-      //   3. Shuffle each group independently with the same seed
-      //   4. Concatenate (inStock first) and paginate
-      // This guarantees out-of-stock products always appear at the END of every
-      // page, while the order still varies freshly each browsing session.
-      // Compute effective in-stock status IN THE DATABASE so we never pull the
-      // (potentially large) per-product `variants` arrays across the wire just to
-      // partition. Only `{ _id, effectiveInStock }` is returned per matching doc.
+      // Fetch the _id of every matching product (lean, id-only) and shuffle them
+      // ALL TOGETHER with the session seed, then paginate.
+      //
+      // We intentionally do NOT segregate out-of-stock products to the end of the
+      // catalog. Doing so exiled a just-marked-out product to the very last page of
+      // a large multi-page list, so customers perceived it as "gone". Keeping it
+      // shuffled in place means it stays visible on its natural page with an
+      // "Out of Stock" badge + "Notify Me". The storefront still sinks out-of-stock
+      // cards to the bottom of each loaded page client-side, so pages read tidily.
       //
       // $match doesn't auto-cast like find(), so cast the ObjectId fields
       // (category_id / brand_id) that the query builder leaves as strings.
@@ -291,44 +290,13 @@ export class ProductService {
 
       const allStockDocs: any[] = await Product.aggregate([
         { $match: matchQuery },
-        {
-          $project: {
-            _id: 1,
-            effectiveInStock: {
-              $and: [
-                { $ne: ['$isActive', false] },
-                { $ne: ['$inStock', false] },
-                {
-                  $cond: [
-                    // variant product (has a non-empty variants array)?
-                    { $and: [{ $eq: ['$hasVariants', true] }, { $isArray: '$variants' }, { $gt: [{ $size: { $ifNull: ['$variants', []] } }, 0] }] },
-                    // in stock iff at least one variant is active
-                    { $anyElementTrue: { $map: { input: '$variants', as: 'v', in: { $ne: ['$$v.isActive', false] } } } },
-                    true,
-                  ],
-                },
-              ],
-            },
-          },
-        },
+        { $project: { _id: 1 } },
       ]);
 
       total = allStockDocs.length;
 
-      // Partition (tiny objects now — no variants payload)
-      const inStockDocs: any[] = [];
-      const outOfStockDocs: any[] = [];
-      for (const doc of allStockDocs) {
-        (doc.effectiveInStock ? inStockDocs : outOfStockDocs).push(doc);
-      }
-
-      // Shuffle each group with the same seed (use seed+1 for out-of-stock so
-      // the two groups don't produce the same sequence)
-      const shuffledInStock = shuffleWithSeed(inStockDocs, filters.seed);
-      const shuffledOutOfStock = shuffleWithSeed(outOfStockDocs, filters.seed + 1);
-
-      // Concatenate: in-stock first, out-of-stock at the end
-      const orderedDocs = [...shuffledInStock, ...shuffledOutOfStock];
+      // Single seeded shuffle of all matching products (in-stock + out-of-stock together)
+      const orderedDocs = shuffleWithSeed(allStockDocs, filters.seed);
 
       const pagedIds = orderedDocs.slice(skip, skip + limit).map((d: any) => d._id);
 
