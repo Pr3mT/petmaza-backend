@@ -51,6 +51,27 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
       await User.findByIdAndUpdate(req.user._id, { phone: contactPhone });
     }
 
+    // Batch-fetch all products once (was an N+1: one findById per cart item) —
+    // used for the promo-quantity check below, coupon eligibility, and the
+    // promo-delivery check.
+    const productIds = items.map((item: any) => item.product_id);
+    const productDocs: any[] = await Product.find({ _id: { $in: productIds } })
+      .select('_id brand_id subCategory isPromotional')
+      .populate('brand_id', '_id')
+      .lean();
+    const productMap = new Map<string, any>(
+      productDocs.map((p: any) => [p._id.toString(), p])
+    );
+
+    // Promo/giveaway products are capped at one unit per order.
+    const promoOverQty = items.find(
+      (item: any) =>
+        productMap.get(item.product_id?.toString())?.isPromotional === true && item.quantity > 1
+    );
+    if (promoOverQty) {
+      return next(new AppError('Only one unit of a promotional product can be ordered', 400));
+    }
+
     // ── Route order: creates DB documents, returns notification/sales metadata ─
     const { orders, notifications, salesRecords } = await OrderRoutingService.routeOrder({
       customer_id: req.user._id.toString(),
@@ -61,17 +82,6 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     const isSplitShipment = orders.length > 1;
     logger.info(`[createOrder] ${orders.length} order(s) created (split: ${isSplitShipment})`);
-
-    // Batch-fetch all products once (was an N+1: one findById per cart item) —
-    // used for coupon eligibility below and the promo-delivery check.
-    const productIds = items.map((item: any) => item.product_id);
-    const productDocs: any[] = await Product.find({ _id: { $in: productIds } })
-      .select('_id brand_id subCategory isPromotional')
-      .populate('brand_id', '_id')
-      .lean();
-    const productMap = new Map<string, any>(
-      productDocs.map((p: any) => [p._id.toString(), p])
-    );
 
     // Delivery charge + platform fee are waived only when EVERY item in the
     // cart is a promotional product — a mixed cart still pays normal charges.
@@ -1263,6 +1273,11 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
 
     if (quantity > primeListing.maxOrderQuantity) {
       return next(new AppError(`Maximum order quantity is ${primeListing.maxOrderQuantity}`, 400));
+    }
+
+    // Promo/giveaway products are capped at one unit per order.
+    if (primeListing.isPromotional && quantity > 1) {
+      return next(new AppError('Only one unit of a promotional product can be ordered', 400));
     }
 
     // Check if vendor serves this pincode
