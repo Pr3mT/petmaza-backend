@@ -25,6 +25,44 @@ import { getRazorpayInstance } from '../config/razorpay';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
 
+// ── Promotional-product one-per-account rule ────────────────────────────────
+// A promotional product may be ordered only ONCE per customer account (lifetime).
+// A prior order "claims" the product UNLESS it died before fulfilment — cancelled,
+// rejected, unavailable, refunded, or the payment failed/was refunded — in which
+// case the customer is free to order it again. Abandoned unpaid orders auto-cancel
+// via orderMaintenance (status → CANCELLED, payment → Failed), so a walked-away
+// checkout does not permanently consume the allowance.
+const PROMO_CLAIM_DEAD_STATUSES = ['CANCELLED', 'REJECTED', 'NOT_AVAILABLE', 'REFUNDED', 'REFUND_INITIATED'];
+
+/**
+ * Of the given product ids, return the ones this customer has already claimed
+ * (i.e. has a still-live prior order for). Used to enforce the once-per-account
+ * limit on promotional products, in both the cart (createOrder) and prime
+ * (createPrimeOrder) checkout paths.
+ */
+async function findClaimedPromoProductIds(customerId: any, productIds: any[]): Promise<Set<string>> {
+  const wanted = new Set(productIds.map((id: any) => id?.toString()).filter(Boolean));
+  if (wanted.size === 0) return new Set();
+
+  const liveOrders = await Order.find({
+    customer_id: customerId,
+    'items.product_id': { $in: productIds },
+    status: { $nin: PROMO_CLAIM_DEAD_STATUSES },
+    payment_status: { $nin: ['Failed', 'Refunded'] },
+  })
+    .select('items.product_id')
+    .lean();
+
+  const claimed = new Set<string>();
+  for (const order of liveOrders) {
+    for (const item of ((order as any).items || [])) {
+      const pid = item.product_id?.toString();
+      if (pid && wanted.has(pid)) claimed.add(pid);
+    }
+  }
+  return claimed;
+}
+
 // Create order (customer)
 export const createOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -56,7 +94,7 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     // promo-delivery check.
     const productIds = items.map((item: any) => item.product_id);
     const productDocs: any[] = await Product.find({ _id: { $in: productIds } })
-      .select('_id brand_id subCategory isPromotional')
+      .select('_id name brand_id subCategory isPromotional')
       .populate('brand_id', '_id')
       .lean();
     const productMap = new Map<string, any>(
@@ -70,6 +108,24 @@ export const createOrder = async (req: AuthRequest, res: Response, next: NextFun
     );
     if (promoOverQty) {
       return next(new AppError('Only one unit of a promotional product can be ordered', 400));
+    }
+
+    // Promotional products may be ordered only ONCE per customer account (lifetime).
+    const promoIdsInCart = items
+      .map((item: any) => item.product_id)
+      .filter((id: any) => productMap.get(id?.toString())?.isPromotional === true);
+    if (promoIdsInCart.length > 0) {
+      const claimed = await findClaimedPromoProductIds(req.user._id, promoIdsInCart);
+      if (claimed.size > 0) {
+        const names = [...claimed].map((id) => productMap.get(id)?.name).filter(Boolean);
+        const label = names.length ? `"${names.join('", "')}"` : 'this promotional product';
+        return next(
+          new AppError(
+            `You have already ordered ${label}. Promotional products can be ordered only once per account.`,
+            400
+          )
+        );
+      }
     }
 
     // ── Route order: creates DB documents, returns notification/sales metadata ─
@@ -1317,6 +1373,19 @@ export const createPrimeOrder = async (req: AuthRequest, res: Response, next: Ne
     // Promo/giveaway products are capped at one unit per order.
     if (primeListing.isPromotional && quantity > 1) {
       return next(new AppError('Only one unit of a promotional product can be ordered', 400));
+    }
+
+    // Promotional products may be ordered only ONCE per customer account (lifetime).
+    if (primeListing.isPromotional) {
+      const claimed = await findClaimedPromoProductIds(req.user._id, [primeListing._id]);
+      if (claimed.size > 0) {
+        return next(
+          new AppError(
+            `You have already ordered "${primeListing.name}". Promotional products can be ordered only once per account.`,
+            400
+          )
+        );
+      }
     }
 
     // Check if vendor serves this pincode
