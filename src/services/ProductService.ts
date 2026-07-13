@@ -477,20 +477,25 @@ export class ProductService {
     if (data.hasVariants || existingProduct.hasVariants) {
       // If updating variants, calculate prices for each variant
       if (data.variants && Array.isArray(data.variants)) {
-        // Calculate prices for all variants (including single variant)
+        // Calculate prices for all variants (including single variant).
+        // Price-first, same as the single-product path above: an explicit variant
+        // sellingPrice/purchasePrice wins; only derive from a percentage when no price
+        // was sent. (Percentage-first snapped the saved price to the nearest whole-percent
+        // value, reverting small variant price edits back to the old price.)
         data.variants = data.variants.map((variant: any) => {
           if (variant.mrp !== undefined) variant.mrp = Math.round(variant.mrp);
-          if (variant.mrp && variant.sellingPercentage !== undefined) {
-              const sp = variant.mrp * (variant.sellingPercentage / 100);
-              variant.sellingPrice = Math.round(sp);
-              variant.discount = Math.round(((variant.mrp - variant.sellingPrice) / variant.mrp) * 100);
-            }
-          if (variant.sellingPrice !== undefined) variant.sellingPrice = Math.round(variant.sellingPrice);
-            if (variant.mrp && variant.purchasePercentage !== undefined) {
-              const pp = variant.mrp * (variant.purchasePercentage / 100);
-              variant.purchasePrice = Math.round(pp);
-            }
-          if (variant.purchasePrice !== undefined) variant.purchasePrice = Math.round(variant.purchasePrice);
+          if (variant.sellingPrice !== undefined && variant.sellingPrice !== null) {
+            variant.sellingPrice = Math.round(variant.sellingPrice);
+            if (variant.mrp) variant.discount = Math.round(((variant.mrp - variant.sellingPrice) / variant.mrp) * 100);
+          } else if (variant.mrp && variant.sellingPercentage !== undefined) {
+            variant.sellingPrice = Math.round(variant.mrp * (variant.sellingPercentage / 100));
+            variant.discount = Math.round(((variant.mrp - variant.sellingPrice) / variant.mrp) * 100);
+          }
+          if (variant.purchasePrice !== undefined && variant.purchasePrice !== null) {
+            variant.purchasePrice = Math.round(variant.purchasePrice);
+          } else if (variant.mrp && variant.purchasePercentage !== undefined) {
+            variant.purchasePrice = Math.round(variant.mrp * (variant.purchasePercentage / 100));
+          }
           return variant;
         });
         
@@ -531,30 +536,35 @@ export class ProductService {
     const mrp = data.mrp ?? existingProduct.mrp;
     if (mrp) data.mrp = Math.round(mrp);
 
-    // sellingPrice: if a percentage was explicitly sent by the client, derive price from it.
-    // Otherwise use the direct sellingPrice value — do NOT fall back to the stored percentage,
-    // because that would silently overwrite a price the admin just corrected.
-    if (data.sellingPercentage !== undefined && mrp) {
-      const sp = mrp * (data.sellingPercentage / 100);
-      data.sellingPrice = Math.round(sp);
-      data.discount = Math.round(((mrp - data.sellingPrice) / mrp) * 100);
-    } else if (data.sellingPrice !== undefined) {
+    // Price-first: an explicitly-sent sellingPrice is authoritative — use it and derive the
+    // percentage from it. Only derive the price FROM a percentage when no explicit price was
+    // sent (percentage-entry mode).
+    // NOTE: clients (the mobile admin form) send BOTH a price and a rounded INTEGER
+    // percentage. Giving the percentage priority snapped the saved price to the nearest
+    // whole-percent value (mrp × round(%)/100), silently reverting small price edits back
+    // to the old price. Price-first matches the create-time pre('save') hook, the model's
+    // pre('findOneAndUpdate') hook, and the web admin form (which sends prices only).
+    if (data.sellingPrice !== undefined && data.sellingPrice !== null) {
       data.sellingPrice = Math.round(data.sellingPrice);
       if (mrp && data.sellingPrice > 0) {
         data.sellingPercentage = Math.round((data.sellingPrice / mrp) * 100 * 100) / 100;
         data.discount = Math.round(((mrp - data.sellingPrice) / mrp) * 100);
       }
+    } else if (data.sellingPercentage !== undefined && mrp) {
+      const sp = mrp * (data.sellingPercentage / 100);
+      data.sellingPrice = Math.round(sp);
+      data.discount = Math.round(((mrp - data.sellingPrice) / mrp) * 100);
     }
 
-    // purchasePrice: same logic — prefer explicit percentage if sent, otherwise use direct price.
-    if (data.purchasePercentage !== undefined && mrp) {
-      const pp = mrp * (data.purchasePercentage / 100);
-      data.purchasePrice = Math.round(pp);
-    } else if (data.purchasePrice !== undefined) {
+    // purchasePrice: same price-first logic.
+    if (data.purchasePrice !== undefined && data.purchasePrice !== null) {
       data.purchasePrice = Math.round(data.purchasePrice);
       if (mrp && data.purchasePrice > 0) {
         data.purchasePercentage = Math.round((data.purchasePrice / mrp) * 100 * 100) / 100;
       }
+    } else if (data.purchasePercentage !== undefined && mrp) {
+      const pp = mrp * (data.purchasePercentage / 100);
+      data.purchasePrice = Math.round(pp);
     }
 
     const product = await Product.findByIdAndUpdate(id, data, {
