@@ -340,18 +340,19 @@ export const getAllOrders = async (req: AuthRequest, res: Response, next: NextFu
     if (paymentStatus) query.payment_status = paymentStatus;
 
     // ── Role-based visibility ────────────────────────────────────────────────
-    // Full admins see EVERY order (needed to audit abandoned/unpaid ones that sit
-    // in the pre-cancel grace window). Sub-admins only ever see orders that were
-    // actually paid — never the unpaid/failed clutter — so their queue is only
-    // real, actionable work. Enforced server-side so no client filter can bypass it.
+    // Full admins see EVERY order (needed to audit abandoned unpaid ones that sit
+    // in the pre-cancel grace window). Sub-admins see Paid, Refunded AND Pending
+    // (awaiting payment) orders so pending work is visible to them too — only the
+    // Failed/abandoned clutter stays hidden. Enforced server-side so no client
+    // filter can bypass it.
     if (req.user.role !== 'admin') {
-      const paidOnly = ['Paid', 'Refunded'];
+      const subAdminVisible = ['Paid', 'Refunded', 'Pending'];
       if (paymentStatus) {
-        // Honour a within-paid filter (e.g. just Refunded); a disallowed filter
-        // (Pending/Failed) truthfully returns nothing rather than silently ignoring it.
-        query.payment_status = paidOnly.includes(String(paymentStatus)) ? paymentStatus : { $in: [] };
+        // Honour an allowed filter (e.g. just Pending); a disallowed filter (Failed)
+        // truthfully returns nothing rather than silently ignoring it.
+        query.payment_status = subAdminVisible.includes(String(paymentStatus)) ? paymentStatus : { $in: [] };
       } else {
-        query.payment_status = { $in: paidOnly };
+        query.payment_status = { $in: subAdminVisible };
       }
     }
 
