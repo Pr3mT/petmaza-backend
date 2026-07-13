@@ -339,6 +339,22 @@ export const getAllOrders = async (req: AuthRequest, res: Response, next: NextFu
     else if (orderType === 'NORMAL') query.isPrime = { $ne: true };
     if (paymentStatus) query.payment_status = paymentStatus;
 
+    // ── Role-based visibility ────────────────────────────────────────────────
+    // Full admins see EVERY order (needed to audit abandoned/unpaid ones that sit
+    // in the pre-cancel grace window). Sub-admins only ever see orders that were
+    // actually paid — never the unpaid/failed clutter — so their queue is only
+    // real, actionable work. Enforced server-side so no client filter can bypass it.
+    if (req.user.role !== 'admin') {
+      const paidOnly = ['Paid', 'Refunded'];
+      if (paymentStatus) {
+        // Honour a within-paid filter (e.g. just Refunded); a disallowed filter
+        // (Pending/Failed) truthfully returns nothing rather than silently ignoring it.
+        query.payment_status = paidOnly.includes(String(paymentStatus)) ? paymentStatus : { $in: [] };
+      } else {
+        query.payment_status = { $in: paidOnly };
+      }
+    }
+
     const skip = (Number(page) - 1) * Number(limit);
 
     const orders = await Order.find(query)

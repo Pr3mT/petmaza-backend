@@ -234,6 +234,32 @@ async function handlePaymentFailed(paymentEntity: any): Promise<void> {
   await order.save();
   logger.info(`[Webhook] ⚠️ Order ${order._id} marked as Failed via webhook`);
 
+  // ── Fan out Failed to split-shipment siblings ───────────────────────────
+  // Split orders share ONE razorpay_order_id, so a failed attempt failed for the
+  // whole group. Mark every non-paid sibling Failed too, otherwise the pair shows a
+  // confusing one-Failed / one-Pending split until the cron sweeps it. We do NOT
+  // cancel here (status left untouched) — the customer may still retry and succeed,
+  // in which case payment.captured re-marks them all Paid; the abandoned-order cron
+  // cancels them only after the grace window.
+  const sharedRazorpayOrderId = (order as any).razorpay_order_id || razorpayOrderId;
+  if (sharedRazorpayOrderId) {
+    try {
+      const failRes = await Order.updateMany(
+        {
+          razorpay_order_id: sharedRazorpayOrderId,
+          _id: { $ne: order._id },
+          payment_status: { $nin: ['Paid', 'Failed'] },
+        },
+        { $set: { payment_status: 'Failed', payment_id: paymentId } }
+      );
+      if ((failRes.modifiedCount ?? 0) > 0) {
+        logger.info(`[Webhook] ⚠️ Marked ${failRes.modifiedCount} split-shipment sibling(s) Failed (razorpay_order ${sharedRazorpayOrderId})`);
+      }
+    } catch (sibErr: any) {
+      logger.error(`[Webhook] ❌ Failed to fan out Failed to siblings: ${sibErr.message}`);
+    }
+  }
+
   // ── Create a failed Transaction record ─────────────────────────────────
   try {
     const customerId = (order.customer_id as any)?._id?.toString?.() ?? order.customer_id?.toString();
