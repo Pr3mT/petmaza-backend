@@ -101,33 +101,88 @@ async function handlePaymentCaptured(paymentEntity: any): Promise<void> {
   // Razorpay amounts are in paise — convert to rupees
   const amountRupees: number = (paymentEntity?.amount ?? 0) / 100;
 
-  const order = await findOrderFromPayment(paymentEntity);
-  if (!order) {
+  const primaryOrder = await findOrderFromPayment(paymentEntity);
+  if (!primaryOrder) {
     logger.warn(`[Webhook] payment.captured — could not find DB order for payment ${paymentId} / razorpay_order ${razorpayOrderId}`);
     return;
   }
 
-  // ── Idempotency guard — don't double-process ────────────────────────────
-  if (order.payment_status === 'Paid') {
-    logger.info(`[Webhook] payment.captured — order ${order._id} already Paid, skipping`);
-    return;
+  // ── Resolve EVERY order settled by this payment ─────────────────────────
+  // Split shipments share ONE razorpay_order_id across several DB orders, and the
+  // captured amount is their COMBINED total — so this single payment settles them
+  // all. Mark them ALL Paid, not just the first we happened to resolve; otherwise a
+  // split sibling is stranded Pending forever (the #6A4A26 bug this safety net exists
+  // to prevent).
+  const sharedRazorpayOrderId = (primaryOrder as any).razorpay_order_id || razorpayOrderId;
+  let orders = [primaryOrder];
+  if (sharedRazorpayOrderId) {
+    const siblings = await Order.find({ razorpay_order_id: sharedRazorpayOrderId })
+      .populate('customer_id', 'email name');
+    if (siblings.length > 0) orders = siblings;
   }
 
-  // ── Mark order as Paid ──────────────────────────────────────────────────
-  order.payment_status = 'Paid';
-  order.payment_id = paymentId;
-  order.payment_gateway = 'razorpay';
-  await order.save();
-  logger.info(`[Webhook] ✅ Order ${order._id} marked as Paid via webhook (payment: ${paymentId})`);
+  for (const order of orders) {
+    // ── Idempotency guard — don't double-process ──────────────────────────
+    if (order.payment_status === 'Paid') {
+      logger.info(`[Webhook] payment.captured — order ${order._id} already Paid, skipping`);
+      continue;
+    }
 
-  // ── Create Transaction record ───────────────────────────────────────────
+    // ── Mark order as Paid ────────────────────────────────────────────────
+    order.payment_status = 'Paid';
+    order.payment_id = paymentId;
+    order.payment_gateway = 'razorpay';
+    await order.save();
+    logger.info(`[Webhook] ✅ Order ${order._id} marked as Paid via webhook (payment: ${paymentId})`);
+
+    // ── Notify customer via WebSocket ───────────────────────────────────
+    try {
+      const customerId = (order.customer_id as any)?._id?.toString?.() ?? order.customer_id?.toString();
+      io.to(`customer:${customerId}`).emit('payment:success', {
+        orderId: order._id,
+        paymentId,
+        amount: amountRupees,
+      });
+    } catch (wsErr: any) {
+      logger.warn(`[Webhook] WebSocket emit failed: ${wsErr.message}`);
+    }
+
+    // ── Send payment receipt email ──────────────────────────────────────
+    try {
+      const customer = order.customer_id as any;
+      if (customer?.email) {
+        const shortId = order._id.toString().slice(-8).toUpperCase();
+        sendPaymentSuccessEmail(
+          customer.email,
+          customer.name || 'Customer',
+          shortId,
+          order.total ?? 0,
+          paymentId,
+          {
+            items: order.items,
+            customerAddress: order.customerAddress,
+            paymentGateway: 'Razorpay',
+            paymentMethod: paymentEntity?.method || 'Online Payment',
+          }
+        )
+          .then(() => logger.info(`[Webhook] ✅ Payment receipt email sent to ${customer.email}`))
+          .catch((e: any) => logger.error(`[Webhook] ❌ Receipt email failed: ${e.message}`));
+      }
+    } catch (emailErr: any) {
+      logger.warn(`[Webhook] Email send failed: ${emailErr.message}`);
+    }
+  }
+
+  // ── Create ONE Transaction record for the payment ───────────────────────
+  // transactionId is unique per Razorpay payment, so a single row represents the
+  // whole (possibly split) payment. Tie it to the primary resolved order.
   try {
-    const customerId = (order.customer_id as any)?._id?.toString?.() ?? order.customer_id?.toString();
+    const customerId = (primaryOrder.customer_id as any)?._id?.toString?.() ?? primaryOrder.customer_id?.toString();
     await Transaction.create({
       transactionId: paymentId,                    // Razorpay pay_xxx — globally unique
       customerId,
-      orderId: order._id,
-      transactionType: resolveTransactionType(order),
+      orderId: primaryOrder._id,
+      transactionType: resolveTransactionType(primaryOrder),
       amount: amountRupees,
       payment_id: paymentId,
       payment_gateway: 'razorpay',
@@ -151,43 +206,6 @@ async function handlePaymentCaptured(paymentEntity: any): Promise<void> {
     } else {
       logger.error(`[Webhook] ❌ Failed to create Transaction record: ${txErr.message}`);
     }
-  }
-
-  // ── Notify customer via WebSocket ───────────────────────────────────────
-  try {
-    const customerId = (order.customer_id as any)?._id?.toString?.() ?? order.customer_id?.toString();
-    io.to(`customer:${customerId}`).emit('payment:success', {
-      orderId: order._id,
-      paymentId,
-      amount: amountRupees,
-    });
-  } catch (wsErr: any) {
-    logger.warn(`[Webhook] WebSocket emit failed: ${wsErr.message}`);
-  }
-
-  // ── Send payment receipt email ──────────────────────────────────────────
-  try {
-    const customer = order.customer_id as any;
-    if (customer?.email) {
-      const orderId = order._id.toString().slice(-8).toUpperCase();
-      sendPaymentSuccessEmail(
-        customer.email,
-        customer.name || 'Customer',
-        orderId,
-        order.total ?? 0,
-        paymentId,
-        {
-          items: order.items,
-          customerAddress: order.customerAddress,
-          paymentGateway: 'Razorpay',
-          paymentMethod: paymentEntity?.method || 'Online Payment',
-        }
-      )
-        .then(() => logger.info(`[Webhook] ✅ Payment receipt email sent to ${customer.email}`))
-        .catch((e: any) => logger.error(`[Webhook] ❌ Receipt email failed: ${e.message}`));
-    }
-  } catch (emailErr: any) {
-    logger.warn(`[Webhook] Email send failed: ${emailErr.message}`);
   }
 }
 

@@ -265,6 +265,80 @@ export const getCustomerOrders = async (req: AuthRequest, res: Response, next: N
 };
 
 // Update order (for payment status updates)
+/**
+ * Post-payment side effects for an order that was just marked Paid: the customer
+ * payment receipt email and the vendor "paid order awaiting acceptance" notification.
+ * Never throws — a notification hiccup must not roll back the payment state.
+ */
+async function dispatchPaidOrderSideEffects(orderId: any): Promise<void> {
+  try {
+    const populatedOrder = await Order.findById(orderId).populate(['customer_id', 'items.product_id']);
+    if (!populatedOrder) return;
+    const customer = populatedOrder.customer_id as any;
+
+    if (customer?.email) {
+      logger.info('[dispatchPaidOrderSideEffects] Queueing payment receipt to:', customer.email);
+      const shortId = populatedOrder._id.toString().slice(-8).toUpperCase();
+      sendPaymentSuccessEmail(
+        customer.email,
+        customer.name || 'Customer',
+        shortId,
+        populatedOrder.total || 0,
+        populatedOrder.payment_id,
+        {
+          items: populatedOrder.items,
+          customerAddress: populatedOrder.customerAddress,
+          paymentGateway: populatedOrder.payment_gateway || 'Razorpay',
+          paymentMethod: 'Online Payment',
+        }
+      ).then(() => logger.info('[dispatchPaidOrderSideEffects] ✅ Payment receipt email sent'))
+       .catch((e: any) => logger.error('[dispatchPaidOrderSideEffects] ❌ Payment receipt email failed:', e.message));
+    } else {
+      logger.info('[dispatchPaidOrderSideEffects] ⚠️ No customer email found, skipping receipt');
+    }
+
+    // Notify the assigned vendor(s) that a paid order is waiting for acceptance
+    const assignedVendorIdStr = (populatedOrder.assignedVendorId as any)?._id?.toString()
+      || (populatedOrder.assignedVendorId as any)?.toString?.();
+    const assignedVendorsArr = (populatedOrder.assignedVendors || []) as any[];
+    const isPrimeOrder = populatedOrder.isPrime;
+
+    const vendorIds: string[] = [];
+    let isBroadcast = false;
+
+    if (isPrimeOrder && assignedVendorIdStr) {
+      vendorIds.push(assignedVendorIdStr);
+      isBroadcast = false;
+    } else if (assignedVendorsArr.length > 0) {
+      vendorIds.push(...assignedVendorsArr.map((v: any) => v._id?.toString() || v.toString()));
+      isBroadcast = true;
+    }
+
+    if (vendorIds.length > 0) {
+      const orderItems = (populatedOrder.items || []).map((item: any) => ({
+        name: (item.product_id as any)?.name || 'Product',
+        quantity: item.quantity,
+        price: item.sellingPrice || item.price || 0,
+      }));
+      orderQueue.emit('order:vendor-notify', {
+        orderId: populatedOrder._id.toString(),
+        customerId: (customer as any)?._id?.toString() || populatedOrder.customer_id.toString(),
+        vendorIds,
+        orderItems,
+        orderTotal: populatedOrder.total || 0,
+        customerAddress: populatedOrder.customerAddress || {},
+        customerPincode: (populatedOrder.customerAddress as any)?.pincode || (populatedOrder as any).customerPincode || '',
+        isBroadcast,
+      });
+      logger.info(`[dispatchPaidOrderSideEffects] ✅ Vendor notification queued for order ${populatedOrder._id}`);
+    } else {
+      logger.info('[dispatchPaidOrderSideEffects] ⚠️ No vendor assigned to notify for this order');
+    }
+  } catch (err: any) {
+    logger.error('[dispatchPaidOrderSideEffects] ❌ Failed:', err.message);
+  }
+}
+
 export const updateOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
@@ -351,74 +425,39 @@ export const updateOrder = async (req: AuthRequest, res: Response, next: NextFun
 
     await order.save();
 
-    // Queue payment receipt email when payment is completed (non-blocking)
+    // Queue payment receipt + vendor notification when payment is completed.
     if (payment_status === 'Paid') {
-      logger.info('[updateOrder] Payment completed, queueing receipt email...');
-      try {
-        const populatedOrder = await order.populate(['customer_id', 'items.product_id']);
-        const customer = populatedOrder.customer_id as any;
+      logger.info('[updateOrder] Payment completed, dispatching receipt + vendor notify...');
+      await dispatchPaidOrderSideEffects(order._id);
 
-        if (customer?.email) {
-          logger.info('[updateOrder] Queueing payment receipt to:', customer.email);
-          const orderId = order._id.toString().slice(-8).toUpperCase();
-          sendPaymentSuccessEmail(
-            customer.email,
-            customer.name || 'Customer',
-            orderId,
-            order.total || 0,
-            order.payment_id,
-            {
-              items: populatedOrder.items,
-              customerAddress: order.customerAddress,
-              paymentGateway: order.payment_gateway || 'Razorpay',
-              paymentMethod: 'Online Payment',
-            }
-          ).then(() => logger.info('[updateOrder] ✅ Payment receipt email sent'))
-           .catch((e: any) => logger.error('[updateOrder] ❌ Payment receipt email failed:', e.message));
-        } else {
-          logger.info('[updateOrder] ⚠️ No customer email found, skipping receipt');
-        }
-
-        // Notify the assigned vendor(s) that a paid order is waiting for acceptance
-        const assignedVendorIdStr = (populatedOrder.assignedVendorId as any)?._id?.toString()
-          || (populatedOrder.assignedVendorId as any)?.toString?.();
-        const assignedVendorsArr = (populatedOrder.assignedVendors || []) as any[];
-        const isPrimeOrder = populatedOrder.isPrime;
-
-        const vendorIds: string[] = [];
-        let isBroadcast = false;
-
-        if (isPrimeOrder && assignedVendorIdStr) {
-          vendorIds.push(assignedVendorIdStr);
-          isBroadcast = false;
-        } else if (assignedVendorsArr.length > 0) {
-          vendorIds.push(...assignedVendorsArr.map((v: any) => v._id?.toString() || v.toString()));
-          isBroadcast = true;
-        }
-
-        if (vendorIds.length > 0) {
-          const orderItems = (populatedOrder.items || []).map((item: any) => ({
-            name: (item.product_id as any)?.name || 'Product',
-            quantity: item.quantity,
-            price: item.sellingPrice || item.price || 0,
-          }));
-          orderQueue.emit('order:vendor-notify', {
-            orderId: populatedOrder._id.toString(),
-            customerId: (customer as any)?._id?.toString() || populatedOrder.customer_id.toString(),
-            vendorIds,
-            orderItems,
-            orderTotal: populatedOrder.total || 0,
-            customerAddress: populatedOrder.customerAddress || {},
-            customerPincode: (populatedOrder.customerAddress as any)?.pincode || (populatedOrder as any).customerPincode || '',
-            isBroadcast,
+      // ── Heal split-shipment siblings ────────────────────────────────────────
+      // A split checkout produces several orders that share ONE razorpay_order_id,
+      // and createPaymentOrder pinned the captured amount to the SUM of all of them,
+      // so this single payment settles every one. The guard above already proved the
+      // payment is captured and belongs to that razorpay_order_id — the same proof
+      // covers the siblings. The client confirms each order with an independent,
+      // individually-failable PUT; if one fails, that order would be stranded Pending
+      // forever (the exact #6A4A26 bug). Marking any still-unpaid sibling Paid here
+      // means a single successful confirmation heals the whole group.
+      const rzpId = (order as any).razorpay_order_id;
+      if (rzpId && !wasPaidBeforeUpdate) {
+        try {
+          const siblings = await Order.find({
+            razorpay_order_id: rzpId,
+            _id: { $ne: order._id },
+            payment_status: { $ne: 'Paid' },
           });
-          logger.info(`[updateOrder] ✅ Vendor notification queued for order ${populatedOrder._id}`);
-        } else {
-          logger.info('[updateOrder] ⚠️ No vendor assigned to notify for this order');
+          for (const sib of siblings) {
+            sib.payment_status = 'Paid';
+            if (order.payment_id) sib.payment_id = order.payment_id;
+            if (!sib.payment_gateway) sib.payment_gateway = order.payment_gateway || 'razorpay';
+            await sib.save();
+            logger.info(`[updateOrder] ✅ Healed split-shipment sibling ${sib._id} → Paid (settled by ${order._id}'s payment)`);
+            await dispatchPaidOrderSideEffects(sib._id);
+          }
+        } catch (healErr: any) {
+          logger.error('[updateOrder] ❌ Failed to heal split-shipment siblings:', healErr.message);
         }
-      } catch (emailError: any) {
-        logger.error('[updateOrder] ❌ Failed to send payment receipt or vendor notify:', emailError.message);
-        // Don't fail the order update if email/notify fails
       }
     }
     res.status(200).json({
