@@ -5,6 +5,8 @@ import {
   // updateVendorProductStock, // DEPRECATED - using isActive toggle only
   updateVendorProductStatus,
   getVendorStats,
+  getOwnVendorDetails,
+  updateOwnVendorDetails,
 } from '../controllers/vendorController';
 import { getVendorOrders } from '../controllers/orderController';
 import { verifyToken, checkRole } from '../middlewares/auth';
@@ -22,5 +24,7 @@ router.get('/products/my', getVendorProducts);
 router.put('/products/my/:id/status', updateVendorProductStatus); // Update availability status
 router.get('/orders', getVendorOrders); // Get vendor's orders
 router.get('/stats', getVendorStats);
+router.get('/details', getOwnVendorDetails); // Own shop profile (name, pickup address, serviceable pincodes)
+router.put('/details', updateOwnVendorDetails);
 
 export default router;
