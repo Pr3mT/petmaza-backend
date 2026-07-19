@@ -8,7 +8,7 @@ export interface IUser extends Document {
   profilePicture?: string;
   isEmailVerified: boolean;
   role: 'admin' | 'sub_admin' | 'vendor' | 'customer';
-  vendorType?: 'PRIME' | 'MY_SHOP' | 'WAREHOUSE_FULFILLER';
+  vendorType?: 'PRIME' | 'MY_SHOP' | 'WAREHOUSE_FULFILLER' | 'QUICK_SHOP';
   pincodesServed?: string[];
   phone: string;
   address?: {
@@ -167,6 +167,8 @@ export interface IOrder extends Document {
   totalProfit: number; // Total profit
   status: OrderStatus;
   isPrime: boolean; // True if order contains only prime products
+  orderChannel: 'NORMAL' | 'QUICK'; // 'QUICK' = placed via Petmaza Quick
+  quickDeliveryMode?: 'HALF_HOUR' | 'ONE_DAY'; // Only set when orderChannel === 'QUICK'
   isSplitShipment: boolean; // True if order is split across vendors
   parentOrderId?: Types.ObjectId | string; // For split shipments, link to parent order
   childOrderIds?: (Types.ObjectId | string)[]; // For parent orders, list of child orders
@@ -235,9 +237,21 @@ export interface IVendorProductPricing extends Document {
   updatedAt: Date;
 }
 
+// Shop Admin (QUICK_SHOP vendor)'s self-service listing of an existing catalog
+// product for Petmaza Quick — their own price + stock for that product.
+export interface IQuickProductListing extends Document {
+  vendor_id: Types.ObjectId | string;
+  product_id: Types.ObjectId | string;
+  sellingPrice: number;
+  stock: number;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface IVendorDetails extends Document {
   vendor_id: Types.ObjectId | string;
-  vendorType: 'PRIME' | 'MY_SHOP' | 'WAREHOUSE_FULFILLER';
+  vendorType: 'PRIME' | 'MY_SHOP' | 'WAREHOUSE_FULFILLER' | 'QUICK_SHOP';
   shopName: string;
   brandsHandled: (Types.ObjectId | string)[]; // Brand IDs
   assignedSubcategories?: string[]; // Subcategories assigned to fulfiller (e.g., ['Dog Food', 'Cat Food'])

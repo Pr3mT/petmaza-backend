@@ -828,3 +828,48 @@ export const getVendorStats = async (req: AuthRequest, res: Response, next: Next
   }
 };
 
+// Vendor's own shop profile (shopName / pickupAddress / serviceablePincodes).
+// Used by MY_SHOP / QUICK_SHOP / PRIME vendors to self-manage their VendorDetails
+// after admin creates their login (admin only fills in placeholders at creation).
+export const getOwnVendorDetails = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const details = await VendorDetails.findOne({ vendor_id: req.user._id });
+    if (!details) {
+      return next(new AppError('Vendor details not found', 404));
+    }
+    res.status(200).json({ success: true, data: details });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+export const updateOwnVendorDetails = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { shopName, pickupAddress, serviceablePincodes } = req.body;
+
+    const update: any = {};
+    if (shopName !== undefined) update.shopName = shopName;
+    if (pickupAddress !== undefined) update.pickupAddress = pickupAddress;
+    if (serviceablePincodes !== undefined) {
+      if (!Array.isArray(serviceablePincodes)) {
+        return next(new AppError('serviceablePincodes must be an array of pincode strings', 400));
+      }
+      update.serviceablePincodes = serviceablePincodes.map((p: any) => String(p).trim()).filter(Boolean);
+    }
+
+    const details = await VendorDetails.findOneAndUpdate(
+      { vendor_id: req.user._id },
+      { $set: update },
+      { new: true, runValidators: true }
+    );
+
+    if (!details) {
+      return next(new AppError('Vendor details not found', 404));
+    }
+
+    res.status(200).json({ success: true, data: details });
+  } catch (error: any) {
+    next(error);
+  }
+};
+

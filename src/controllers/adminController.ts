@@ -336,7 +336,8 @@ export const getAllOrders = async (req: AuthRequest, res: Response, next: NextFu
     const query: any = {};
     if (status) query.status = status;
     if (orderType === 'PRIME') query.isPrime = true;
-    else if (orderType === 'NORMAL') query.isPrime = { $ne: true };
+    else if (orderType === 'QUICK') query.orderChannel = 'QUICK';
+    else if (orderType === 'NORMAL') { query.isPrime = { $ne: true }; query.orderChannel = { $ne: 'QUICK' }; }
     if (paymentStatus) query.payment_status = paymentStatus;
 
     // ── Role-based visibility ────────────────────────────────────────────────
@@ -633,8 +634,8 @@ export const createVendor = async (req: AuthRequest, res: Response, next: NextFu
       return next(new AppError('Please provide name, email, password and vendor type', 400));
     }
 
-    if (!['PRIME', 'MY_SHOP'].includes(vendorType)) {
-      return next(new AppError('Invalid vendor type. Must be PRIME or MY_SHOP', 400));
+    if (!['PRIME', 'MY_SHOP', 'QUICK_SHOP'].includes(vendorType)) {
+      return next(new AppError('Invalid vendor type. Must be PRIME, MY_SHOP or QUICK_SHOP', 400));
     }
 
     const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
@@ -691,6 +692,22 @@ export const createVendor = async (req: AuthRequest, res: Response, next: NextFu
       message: 'Vendor created successfully',
       data: { user: userResponse },
     });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// Fetch a vendor's shop profile (shopName / pickupAddress / serviceablePincodes)
+// so Admin can see the same shop details the vendor (e.g. a Shop Admin) filled in.
+export const getVendorDetailsById = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    const details = await VendorDetails.findOne({ vendor_id: id });
+    if (!details) {
+      return next(new AppError('Vendor details not found', 404));
+    }
+    res.status(200).json({ success: true, data: details });
   } catch (error: any) {
     next(error);
   }

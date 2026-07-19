@@ -123,6 +123,15 @@ const orderSchema = new Schema<IOrder>(
       type: Boolean,
       default: false,
     },
+    orderChannel: {
+      type: String,
+      enum: ['NORMAL', 'QUICK'],
+      default: 'NORMAL',
+    },
+    quickDeliveryMode: {
+      type: String,
+      enum: ['HALF_HOUR', 'ONE_DAY'],
+    },
     isSplitShipment: {
       type: Boolean,
       default: false,
@@ -308,6 +317,7 @@ orderSchema.index({ isPrime: 1 });
 orderSchema.index({ isPrime: 1, status: 1 });
 orderSchema.index({ assignedVendorId: 1, isPrime: 1, status: 1 });
 orderSchema.index({ customerPincode: 1 });
+orderSchema.index({ orderChannel: 1, status: 1 });
 orderSchema.index({ acceptanceDeadline: 1 });
 orderSchema.index({ parentOrderId: 1 });
 

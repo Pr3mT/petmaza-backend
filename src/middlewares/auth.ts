@@ -135,6 +135,19 @@ export const checkWarehouseFulfiller = (req: AuthRequest, res: Response, next: N
   return next(new AppError('Access denied. Only Warehouse Fulfillers can access this resource', 403));
 };
 
+// Check for QUICK_SHOP vendor type (Shop Admin)
+export const checkQuickShopVendor = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return next(new AppError('Not authorized', 401));
+  }
+
+  if (isAdminRole(req.user.role) || (req.user.role === 'vendor' && req.user.vendorType === 'QUICK_SHOP')) {
+    return next();
+  }
+
+  return next(new AppError('Access denied. Only Shop Admins can access this resource', 403));
+};
+
 // Alias for verifyToken
 export const authenticate = verifyToken;
 

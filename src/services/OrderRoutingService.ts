@@ -547,6 +547,122 @@ export class OrderRoutingService {
   }
 
   /**
+   * Route a Petmaza Quick order. Unlike routeOrder (which can split across
+   * multiple vendors/subcategories), a Quick cart only ever comes from one
+   * QUICK_SHOP vendor — whichever shop admin's serviceablePincodes covers the
+   * customer's pincode. Pricing/stock come from that shop's own
+   * QuickProductListing rows, not the shared Product pricing.
+   */
+  static async routeQuickOrder(data: {
+    customer_id: string;
+    items: Array<{ product_id: string; quantity: number }>;
+    customerPincode: string;
+    customerAddress: {
+      street: string;
+      city: string;
+      state: string;
+      pincode: string;
+      phone?: string;
+    };
+    deliveryMode: 'HALF_HOUR' | 'ONE_DAY';
+  }): Promise<{ order: any; notifications: VendorNotificationData[] }> {
+    const { customer_id, items, customerPincode, customerAddress, deliveryMode } = data;
+
+    const vendorDetails = await VendorDetails.findOne({
+      vendorType: 'QUICK_SHOP',
+      serviceablePincodes: customerPincode,
+      isApproved: true,
+    });
+
+    if (!vendorDetails) {
+      throw new AppError("Petmaza Quick isn't available in your area yet", 404);
+    }
+
+    const quickVendorId = vendorDetails.vendor_id.toString();
+    const vendor = await User.findOne({ _id: quickVendorId, role: 'vendor', vendorType: 'QUICK_SHOP', isApproved: true });
+    if (!vendor) {
+      throw new AppError("Petmaza Quick isn't available in your area yet", 404);
+    }
+
+    const QuickProductListing = (await import('../models/QuickProductListing')).default;
+
+    const productIds = items.map((item) => item.product_id);
+    const listings = await QuickProductListing.find({
+      vendor_id: quickVendorId,
+      product_id: { $in: productIds },
+      isActive: true,
+    }).populate('product_id', 'name');
+
+    const listingMap = new Map<string, any>();
+    listings.forEach((l: any) => listingMap.set(l.product_id._id.toString(), l));
+
+    const orderItems: IOrderItem[] = [];
+    for (const item of items) {
+      const listing = listingMap.get(item.product_id);
+      if (!listing) {
+        throw new AppError(`This product isn't available at your local Quick shop`, 400);
+      }
+      if (listing.stock < item.quantity) {
+        throw new AppError(`${listing.product_id.name} only has ${listing.stock} left at your local Quick shop`, 400);
+      }
+
+      const sellingPrice = listing.sellingPrice;
+      const purchasePrice = sellingPrice; // Shop admin sets their own price; no separate platform cost tracked.
+      const subtotal = sellingPrice * item.quantity;
+      const purchaseSubtotal = purchasePrice * item.quantity;
+      const profit = subtotal - purchaseSubtotal;
+      const profitPercentage = subtotal > 0 ? (profit / subtotal) * 100 : 0;
+
+      orderItems.push({
+        product_id: item.product_id as any,
+        vendor_id: quickVendorId as any,
+        quantity: item.quantity,
+        sellingPrice,
+        purchasePrice,
+        subtotal,
+        purchaseSubtotal,
+        profit,
+        profitPercentage,
+      });
+    }
+
+    const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
+    const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
+    const totalProfit = total - totalPurchasePrice;
+
+    const order = await Order.create({
+      customer_id,
+      assignedVendorId: quickVendorId,
+      items: orderItems,
+      total,
+      totalPurchasePrice,
+      totalProfit,
+      status: 'PENDING',
+      isPrime: false,
+      orderChannel: 'QUICK',
+      quickDeliveryMode: deliveryMode,
+      isSplitShipment: false,
+      customerPincode,
+      customerAddress,
+    });
+
+    logger.info(`[routeQuickOrder] ✅ Quick order ${order._id} created for shop ${quickVendorId} (${deliveryMode})`);
+
+    const notifications: VendorNotificationData[] = [{
+      orderId: order._id.toString(),
+      customerId: customer_id,
+      vendorIds: [quickVendorId],
+      orderItems,
+      orderTotal: order.total,
+      customerAddress,
+      customerPincode,
+      isBroadcast: false,
+    }];
+
+    return { order, notifications };
+  }
+
+  /**
    * Route to Normal Vendors (broadcast to all vendors - first come first serve)
    */
   private static async routeToNormalVendors(
