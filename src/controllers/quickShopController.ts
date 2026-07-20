@@ -17,7 +17,51 @@ import {
 
 // ==================== CUSTOMER-FACING ====================
 
-// Whether Petmaza Quick covers a given pincode, and which shop would serve it.
+// A customer's "area" = every pincode covered by the shop(s) that serve their
+// registered pincode. So an Uran (400702) customer can shop all the nearby
+// Uran-side pincodes their local shops deliver to, but NOT a different area like
+// Panvel (410206) — because the Panvel shop doesn't serve their registered
+// pincode. The registered pincode itself is always included so messaging stays
+// coherent even before any shop covers the area.
+async function getCustomerAreaPincodes(registeredPincode: string): Promise<Set<string>> {
+  const area = new Set<string>();
+  if (!/^\d{6}$/.test(registeredPincode)) return area;
+  area.add(registeredPincode);
+
+  const shops = await VendorDetails.find({
+    vendorType: 'QUICK_SHOP',
+    serviceablePincodes: registeredPincode,
+    isApproved: true,
+  })
+    .select('serviceablePincodes')
+    .lean();
+
+  shops.forEach((s: any) => (s.serviceablePincodes || []).forEach((p: string) => area.add(String(p).trim())));
+  return area;
+}
+
+// The logged-in customer's serviceable area — their registered pincode plus the
+// nearby pincodes their local shops deliver to. The app uses this to let them
+// browse nearby areas while blocking far ones (e.g. Panvel for an Uran account).
+export const getMyArea = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const registeredPincode = String((req.user as any)?.address?.pincode || '').trim();
+    const area = await getCustomerAreaPincodes(registeredPincode);
+    res.status(200).json({
+      success: true,
+      data: {
+        registeredPincode: /^\d{6}$/.test(registeredPincode) ? registeredPincode : '',
+        areaPincodes: Array.from(area),
+      },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// Whether Petmaza Quick covers a given pincode, and which shops serve it.
+// A pincode can be covered by several shops (e.g. Panvel has 3–4); the customer
+// only ever sees shops whose serviceablePincodes include THEIR pincode.
 export const getAvailability = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const pincode = String(req.query.pincode || '').trim();
@@ -25,27 +69,35 @@ export const getAvailability = async (req: Request, res: Response, next: NextFun
       return next(new AppError('Pincode is required', 400));
     }
 
-    const vendorDetails = await VendorDetails.findOne({
+    const shops = await VendorDetails.find({
       vendorType: 'QUICK_SHOP',
       serviceablePincodes: pincode,
       isApproved: true,
     }).lean();
 
-    if (!vendorDetails) {
-      return res.status(200).json({ success: true, data: { available: false } });
+    if (!shops.length) {
+      return res.status(200).json({ success: true, data: { available: false, shops: [] } });
     }
 
     res.status(200).json({
       success: true,
-      data: { available: true, shopName: vendorDetails.shopName, vendorId: vendorDetails.vendor_id },
+      data: {
+        available: true,
+        shopName: shops[0].shopName,
+        vendorId: shops[0].vendor_id,
+        shopCount: shops.length,
+        shops: shops.map((s: any) => ({ vendorId: s.vendor_id, shopName: s.shopName })),
+      },
     });
   } catch (error: any) {
     next(error);
   }
 };
 
-// Catalog products available for Quick delivery to a given pincode, with the
-// matched shop's own price/stock.
+// Catalog products available for Quick delivery to a given pincode, with each
+// serving shop's own price/stock. When several shops cover the pincode, the
+// customer sees every shop's listings — each product carries the shop it comes
+// from (shopId/shopName), and the same catalog product may appear once per shop.
 export const getQuickProducts = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const pincode = String(req.query.pincode || '').trim();
@@ -53,17 +105,23 @@ export const getQuickProducts = async (req: Request, res: Response, next: NextFu
       return next(new AppError('Pincode is required', 400));
     }
 
-    const vendorDetails = await VendorDetails.findOne({
+    const shops = await VendorDetails.find({
       vendorType: 'QUICK_SHOP',
       serviceablePincodes: pincode,
       isApproved: true,
     }).lean();
 
-    if (!vendorDetails) {
-      return res.status(200).json({ success: true, data: { available: false, products: [] } });
+    if (!shops.length) {
+      return res.status(200).json({ success: true, data: { available: false, shops: [], products: [] } });
     }
 
-    const listings = await QuickProductListing.find({ vendor_id: vendorDetails.vendor_id, isActive: true, stock: { $gt: 0 } })
+    const shopNameById = new Map(shops.map((s: any) => [s.vendor_id.toString(), s.shopName]));
+
+    const listings = await QuickProductListing.find({
+      vendor_id: { $in: shops.map((s: any) => s.vendor_id) },
+      isActive: true,
+      stock: { $gt: 0 },
+    })
       .populate({
         path: 'product_id',
         match: { isActive: true },
@@ -81,18 +139,27 @@ export const getQuickProducts = async (req: Request, res: Response, next: NextFu
         stock: l.stock,
         inStock: l.stock > 0,
         quickListingId: l._id,
+        shopId: l.vendor_id.toString(),
+        shopName: shopNameById.get(l.vendor_id.toString()) || '',
       }));
 
     res.status(200).json({
       success: true,
-      data: { available: true, shopName: vendorDetails.shopName, products },
+      data: {
+        available: true,
+        shopName: shops[0].shopName,
+        shopCount: shops.length,
+        shops: shops.map((s: any) => ({ vendorId: s.vendor_id, shopName: s.shopName })),
+        products,
+      },
     });
   } catch (error: any) {
     next(error);
   }
 };
 
-// Place a Petmaza Quick order — single-shop cart, routed by pincode.
+// Place a Petmaza Quick order — routed by pincode. The cart may hold products
+// from different shops serving the same pincode; routing creates one order per shop.
 export const createQuickOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { items, customerPincode, customerAddress, deliveryMode } = req.body;
@@ -107,6 +174,22 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
       return next(new AppError('deliveryMode must be HALF_HOUR or ONE_DAY', 400));
     }
 
+    // Customers can only shop within their own area (the pincodes their local
+    // shops cover). An Uran (400702) customer can order to nearby Uran pincodes
+    // but not to a different area like Panvel (410206).
+    const registeredPincode = String((req.user as any)?.address?.pincode || '').trim();
+    if (/^\d{6}$/.test(registeredPincode)) {
+      const area = await getCustomerAreaPincodes(registeredPincode);
+      if (!area.has(String(customerPincode).trim())) {
+        return next(
+          new AppError(
+            `This is not your area. Petmaza Quick can deliver only within your area (around ${registeredPincode}). Update your profile address to shop somewhere else.`,
+            400
+          )
+        );
+      }
+    }
+
     let contactPhone = String(customerAddress.phone || req.user.phone || '').replace(/\D/g, '');
     if (contactPhone.length > 10) contactPhone = contactPhone.slice(-10);
     if (contactPhone.length !== 10) {
@@ -114,7 +197,7 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
     }
     customerAddress.phone = contactPhone;
 
-    const { order } = await OrderRoutingService.routeQuickOrder({
+    const { orders } = await OrderRoutingService.routeQuickOrder({
       customer_id: req.user._id.toString(),
       items,
       customerPincode,
@@ -122,31 +205,36 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
       deliveryMode,
     });
 
-    order.grandTotal = order.total;
-    order.subtotalBeforeCharges = order.total;
-    await order.save();
+    for (const order of orders) {
+      order.grandTotal = order.total;
+      order.subtotalBeforeCharges = order.total;
+      await order.save();
+    }
 
-    logger.info(`[createQuickOrder] Quick order ${order._id} created (${deliveryMode})`);
+    const totalAmount = orders.reduce((sum, o) => sum + (o.total || 0), 0);
+    const isSplitShipment = orders.length > 1;
+
+    logger.info(`[createQuickOrder] ${orders.length} Quick order(s) created (${deliveryMode})`);
 
     res.status(201).json({
       success: true,
       message: 'Quick order created successfully',
-      data: { orders: [order], isSplitShipment: false, totalAmount: order.total },
+      data: { orders, isSplitShipment, totalAmount },
     });
 
     orderQueue.emit('order:created', {
       userEmail: req.user.email,
       userName: req.user.name,
       userId: req.user._id.toString(),
-      orderIds: [order._id.toString()],
-      isSplitShipment: false,
-      combinedSubtotal: order.total,
+      orderIds: orders.map((o) => o._id.toString()),
+      isSplitShipment,
+      combinedSubtotal: totalAmount,
       shippingCharges: 0,
       platformFee: 0,
       discountAmount: 0,
-      customerAddress: order.customerAddress,
+      customerAddress: orders[0].customerAddress,
       adminEmails: process.env.ADMIN_EMAILS ? process.env.ADMIN_EMAILS.split(',').map((e) => e.trim()).filter(Boolean) : [],
-      totalAmount: order.total,
+      totalAmount,
     });
   } catch (error: any) {
     next(error);

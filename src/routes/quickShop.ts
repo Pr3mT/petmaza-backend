@@ -7,6 +7,7 @@ const router = express.Router();
 // ── Customer-facing (public browse, auth required to order) ────────────────
 router.get('/availability', quickShopController.getAvailability);
 router.get('/products', quickShopController.getQuickProducts);
+router.get('/my-area', verifyToken, quickShopController.getMyArea);
 router.post('/orders', verifyToken, quickShopController.createQuickOrder);
 
 // ── Shop Admin (QUICK_SHOP vendor) ──────────────────────────────────────────

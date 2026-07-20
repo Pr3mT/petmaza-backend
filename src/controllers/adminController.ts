@@ -32,13 +32,31 @@ export const getUsers = async (req: AuthRequest, res: Response, next: NextFuncti
 
     const skip = (Number(page) - 1) * Number(limit);
 
-    const users = await User.find(query)
+    let users: any[] = await User.find(query)
       .select('-password')
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
 
     const total = await User.countDocuments(query);
+
+    // Shop Admin lists also show each shop's name and delivery pincodes, so
+    // attach them from VendorDetails in one batch query.
+    if (vendorType === 'QUICK_SHOP' && users.length) {
+      const VendorDetails = (await import('../models/VendorDetails')).default;
+      const details = await VendorDetails.find({ vendor_id: { $in: users.map((u) => u._id) } })
+        .select('vendor_id shopName serviceablePincodes')
+        .lean();
+      const byVendor = new Map(details.map((d: any) => [d.vendor_id.toString(), d]));
+      users = users.map((u) => {
+        const d = byVendor.get(u._id.toString());
+        return {
+          ...u.toObject(),
+          shopName: d?.shopName || '',
+          serviceablePincodes: d?.serviceablePincodes || [],
+        };
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -628,7 +646,7 @@ export const reseedVariantProduct = async (req: Request, res: Response, next: Ne
 
 export const createVendor = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { name, email, password, vendorType, phone } = req.body;
+    const { name, email, password, vendorType, phone, serviceablePincodes } = req.body;
 
     if (!name || !email || !password || !vendorType) {
       return next(new AppError('Please provide name, email, password and vendor type', 400));
@@ -636,6 +654,19 @@ export const createVendor = async (req: AuthRequest, res: Response, next: NextFu
 
     if (!['PRIME', 'MY_SHOP', 'QUICK_SHOP'].includes(vendorType)) {
       return next(new AppError('Invalid vendor type. Must be PRIME, MY_SHOP or QUICK_SHOP', 400));
+    }
+
+    // Optional delivery pincodes (Shop Admins): customers only see this shop's
+    // Quick products when their pincode is in this list.
+    let pincodes: string[] = [];
+    if (serviceablePincodes !== undefined) {
+      if (!Array.isArray(serviceablePincodes)) {
+        return next(new AppError('serviceablePincodes must be an array of 6-digit pincodes', 400));
+      }
+      pincodes = Array.from(new Set(serviceablePincodes.map((p: any) => String(p).trim()).filter(Boolean)));
+      if (pincodes.some((p) => !/^\d{6}$/.test(p))) {
+        return next(new AppError('Each pincode must be exactly 6 digits', 400));
+      }
     }
 
     const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
@@ -680,6 +711,7 @@ export const createVendor = async (req: AuthRequest, res: Response, next: NextFu
         state: 'TBD',
         pincode: '000000',
       },
+      serviceablePincodes: pincodes,
       isApproved: true,
       approvedBy: req.user._id,
       approvedAt: new Date(),

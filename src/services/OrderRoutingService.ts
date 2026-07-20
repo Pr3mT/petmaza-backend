@@ -547,15 +547,15 @@ export class OrderRoutingService {
   }
 
   /**
-   * Route a Petmaza Quick order. Unlike routeOrder (which can split across
-   * multiple vendors/subcategories), a Quick cart only ever comes from one
-   * QUICK_SHOP vendor — whichever shop admin's serviceablePincodes covers the
-   * customer's pincode. Pricing/stock come from that shop's own
-   * QuickProductListing rows, not the shared Product pricing.
+   * Route a Petmaza Quick order. Every item comes from a QUICK_SHOP vendor
+   * whose serviceablePincodes covers the customer's pincode. A pincode can be
+   * served by several shops, so the cart may mix shops — items are grouped by
+   * shop and one order is created per shop. Pricing/stock come from each shop's
+   * own QuickProductListing rows, not the shared Product pricing.
    */
   static async routeQuickOrder(data: {
     customer_id: string;
-    items: Array<{ product_id: string; quantity: number }>;
+    items: Array<{ product_id: string; quantity: number; shop_id?: string }>;
     customerPincode: string;
     customerAddress: {
       street: string;
@@ -565,22 +565,23 @@ export class OrderRoutingService {
       phone?: string;
     };
     deliveryMode: 'HALF_HOUR' | 'ONE_DAY';
-  }): Promise<{ order: any; notifications: VendorNotificationData[] }> {
+  }): Promise<{ orders: any[]; notifications: VendorNotificationData[] }> {
     const { customer_id, items, customerPincode, customerAddress, deliveryMode } = data;
 
-    const vendorDetails = await VendorDetails.findOne({
+    const shopDetails = await VendorDetails.find({
       vendorType: 'QUICK_SHOP',
       serviceablePincodes: customerPincode,
       isApproved: true,
     });
 
-    if (!vendorDetails) {
+    if (!shopDetails.length) {
       throw new AppError("Petmaza Quick isn't available in your area yet", 404);
     }
 
-    const quickVendorId = vendorDetails.vendor_id.toString();
-    const vendor = await User.findOne({ _id: quickVendorId, role: 'vendor', vendorType: 'QUICK_SHOP', isApproved: true });
-    if (!vendor) {
+    const candidateIds = shopDetails.map((d) => d.vendor_id.toString());
+    const vendors = await User.find({ _id: { $in: candidateIds }, role: 'vendor', vendorType: 'QUICK_SHOP', isApproved: true });
+    const servingShopIds = new Set(vendors.map((v: any) => v._id.toString()));
+    if (!servingShopIds.size) {
       throw new AppError("Petmaza Quick isn't available in your area yet", 404);
     }
 
@@ -588,24 +589,44 @@ export class OrderRoutingService {
 
     const productIds = items.map((item) => item.product_id);
     const listings = await QuickProductListing.find({
-      vendor_id: quickVendorId,
+      vendor_id: { $in: Array.from(servingShopIds) },
       product_id: { $in: productIds },
       isActive: true,
     }).populate('product_id', 'name');
 
-    const listingMap = new Map<string, any>();
-    listings.forEach((l: any) => listingMap.set(l.product_id._id.toString(), l));
+    // `${shopId}:${productId}` -> listing, plus productId -> all serving shops' listings
+    const listingByShopProduct = new Map<string, any>();
+    const listingsByProduct = new Map<string, any[]>();
+    listings.forEach((l: any) => {
+      const pid = l.product_id._id.toString();
+      listingByShopProduct.set(`${l.vendor_id.toString()}:${pid}`, l);
+      const arr = listingsByProduct.get(pid) || [];
+      arr.push(l);
+      listingsByProduct.set(pid, arr);
+    });
 
-    const orderItems: IOrderItem[] = [];
+    // Group order items per shop
+    const itemsByShop = new Map<string, IOrderItem[]>();
     for (const item of items) {
-      const listing = listingMap.get(item.product_id);
+      let listing: any;
+      if (item.shop_id && servingShopIds.has(item.shop_id)) {
+        listing = listingByShopProduct.get(`${item.shop_id}:${item.product_id}`);
+      }
       if (!listing) {
-        throw new AppError(`This product isn't available at your local Quick shop`, 400);
+        // No shop pinned (or that shop no longer lists it) — fall back to the
+        // cheapest serving shop that has this product in stock.
+        const options = (listingsByProduct.get(item.product_id) || []).filter((l) => l.stock >= item.quantity);
+        options.sort((a, b) => a.sellingPrice - b.sellingPrice);
+        listing = options[0];
+      }
+      if (!listing) {
+        throw new AppError(`This product isn't available from a Quick shop in your area`, 400);
       }
       if (listing.stock < item.quantity) {
-        throw new AppError(`${listing.product_id.name} only has ${listing.stock} left at your local Quick shop`, 400);
+        throw new AppError(`${listing.product_id.name} only has ${listing.stock} left at this Quick shop`, 400);
       }
 
+      const shopId = listing.vendor_id.toString();
       const sellingPrice = listing.sellingPrice;
       const purchasePrice = sellingPrice; // Shop admin sets their own price; no separate platform cost tracked.
       const subtotal = sellingPrice * item.quantity;
@@ -613,9 +634,10 @@ export class OrderRoutingService {
       const profit = subtotal - purchaseSubtotal;
       const profitPercentage = subtotal > 0 ? (profit / subtotal) * 100 : 0;
 
-      orderItems.push({
+      const shopItems = itemsByShop.get(shopId) || [];
+      shopItems.push({
         product_id: item.product_id as any,
-        vendor_id: quickVendorId as any,
+        vendor_id: shopId as any,
         quantity: item.quantity,
         sellingPrice,
         purchasePrice,
@@ -624,42 +646,50 @@ export class OrderRoutingService {
         profit,
         profitPercentage,
       });
+      itemsByShop.set(shopId, shopItems);
     }
 
-    const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
-    const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
-    const totalProfit = total - totalPurchasePrice;
+    const isSplitShipment = itemsByShop.size > 1;
+    const orders: any[] = [];
+    const notifications: VendorNotificationData[] = [];
 
-    const order = await Order.create({
-      customer_id,
-      assignedVendorId: quickVendorId,
-      items: orderItems,
-      total,
-      totalPurchasePrice,
-      totalProfit,
-      status: 'PENDING',
-      isPrime: false,
-      orderChannel: 'QUICK',
-      quickDeliveryMode: deliveryMode,
-      isSplitShipment: false,
-      customerPincode,
-      customerAddress,
-    });
+    for (const [shopId, orderItems] of itemsByShop) {
+      const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
+      const totalPurchasePrice = orderItems.reduce((sum, item) => sum + item.purchaseSubtotal, 0);
+      const totalProfit = total - totalPurchasePrice;
 
-    logger.info(`[routeQuickOrder] ✅ Quick order ${order._id} created for shop ${quickVendorId} (${deliveryMode})`);
+      const order = await Order.create({
+        customer_id,
+        assignedVendorId: shopId,
+        items: orderItems,
+        total,
+        totalPurchasePrice,
+        totalProfit,
+        status: 'PENDING',
+        isPrime: false,
+        orderChannel: 'QUICK',
+        quickDeliveryMode: deliveryMode,
+        isSplitShipment,
+        customerPincode,
+        customerAddress,
+      });
 
-    const notifications: VendorNotificationData[] = [{
-      orderId: order._id.toString(),
-      customerId: customer_id,
-      vendorIds: [quickVendorId],
-      orderItems,
-      orderTotal: order.total,
-      customerAddress,
-      customerPincode,
-      isBroadcast: false,
-    }];
+      logger.info(`[routeQuickOrder] ✅ Quick order ${order._id} created for shop ${shopId} (${deliveryMode})`);
 
-    return { order, notifications };
+      orders.push(order);
+      notifications.push({
+        orderId: order._id.toString(),
+        customerId: customer_id,
+        vendorIds: [shopId],
+        orderItems,
+        orderTotal: order.total,
+        customerAddress,
+        customerPincode,
+        isBroadcast: false,
+      });
+    }
+
+    return { orders, notifications };
   }
 
   /**
