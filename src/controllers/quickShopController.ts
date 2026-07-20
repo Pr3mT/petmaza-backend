@@ -8,6 +8,7 @@ import Brand from '../models/Brand';
 import VendorDetails from '../models/VendorDetails';
 import QuickProductListing from '../models/QuickProductListing';
 import { OrderRoutingService } from '../services/OrderRoutingService';
+import { ShippingService } from '../services/ShippingService';
 import { orderQueue } from '../services/OrderQueue';
 import { sanitizeOrderForVendor } from '../utils/vendorOrderSanitizer';
 import {
@@ -206,11 +207,22 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
       deliveryMode,
     });
 
-    for (const order of orders) {
-      order.grandTotal = order.total;
-      order.subtotalBeforeCharges = order.total;
-      await order.save();
-    }
+    // ── Petmaza Quick delivery & platform fee (admin-controlled) ──────────────
+    // Charges are computed once on the combined Quick cart subtotal, then split
+    // evenly across the per-shop orders (mirrors the normal checkout flow).
+    const combinedSubtotal = orders.reduce((sum, o) => sum + (o.total || 0), 0);
+    const charges = await ShippingService.calculateQuickCharges(combinedSubtotal);
+
+    await Promise.all(
+      orders.map((order) => {
+        order.subtotalBeforeCharges = order.total;
+        order.shippingCharges = Math.round(charges.shippingCharges / orders.length);
+        order.platformFee = Math.round(charges.platformFee / orders.length);
+        order.total = order.subtotalBeforeCharges + order.shippingCharges + order.platformFee;
+        order.grandTotal = order.total;
+        return order.save();
+      })
+    );
 
     const totalAmount = orders.reduce((sum, o) => sum + (o.total || 0), 0);
     const isSplitShipment = orders.length > 1;
@@ -229,9 +241,9 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
       userId: req.user._id.toString(),
       orderIds: orders.map((o) => o._id.toString()),
       isSplitShipment,
-      combinedSubtotal: totalAmount,
-      shippingCharges: 0,
-      platformFee: 0,
+      combinedSubtotal,
+      shippingCharges: charges.shippingCharges,
+      platformFee: charges.platformFee,
       discountAmount: 0,
       customerAddress: orders[0].customerAddress,
       adminEmails: process.env.ADMIN_EMAILS ? process.env.ADMIN_EMAILS.split(',').map((e) => e.trim()).filter(Boolean) : [],
