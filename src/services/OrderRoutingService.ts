@@ -592,7 +592,7 @@ export class OrderRoutingService {
       vendor_id: { $in: Array.from(servingShopIds) },
       product_id: { $in: productIds },
       isActive: true,
-    }).populate('product_id', 'name');
+    }).populate('product_id', 'name images');
 
     // `${shopId}:${productId}` -> listing, plus productId -> all serving shops' listings
     const listingByShopProduct = new Map<string, any>();
@@ -634,6 +634,7 @@ export class OrderRoutingService {
       const profit = subtotal - purchaseSubtotal;
       const profitPercentage = subtotal > 0 ? (profit / subtotal) * 100 : 0;
 
+      const prod = listing.product_id as any;
       const shopItems = itemsByShop.get(shopId) || [];
       shopItems.push({
         product_id: item.product_id as any,
@@ -645,6 +646,10 @@ export class OrderRoutingService {
         purchaseSubtotal,
         profit,
         profitPercentage,
+        // Snapshot name/image so the order line always renders, even if the
+        // product or the shop's listing is later edited or removed.
+        productName: prod?.name,
+        productImage: Array.isArray(prod?.images) ? prod.images[0] : undefined,
       });
       itemsByShop.set(shopId, shopItems);
     }

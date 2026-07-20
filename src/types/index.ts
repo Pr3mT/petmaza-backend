@@ -137,6 +137,8 @@ export interface IOrderItem {
   purchaseSubtotal: number; // quantity * purchaseSubtotal
   profit: number; // subtotal - purchaseSubtotal
   profitPercentage: number; // (profit / subtotal) * 100
+  productName?: string; // Snapshot of the product name at order time (survives product deletion)
+  productImage?: string; // Snapshot of the product's primary image at order time
   selectedVariant?: {
     weight?: number;
     unit?: string;
