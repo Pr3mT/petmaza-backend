@@ -13,6 +13,8 @@ import {
   cleanupVariantProducts,
   reseedVariantProduct,
   createVendor,
+  updateVendor,
+  deleteVendor,
   getVendorDetailsById,
   createFulfiller,
   getFulfillers,
@@ -53,6 +55,8 @@ router.get('/orders', getAllOrders);
 
 // Admin vendor creation
 router.post('/vendors', createVendor);
+router.put('/vendors/:id', updateVendor);
+router.delete('/vendors/:id', deleteVendor);
 router.get('/vendors/:id/details', getVendorDetailsById);
 
 // Vendor-Product Assignment routes
