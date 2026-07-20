@@ -184,6 +184,10 @@ export class ProductService {
   } = {}) {
     const query: any = {};
 
+    // QUICK_SHOP vendors' own products are private to their Quick store —
+    // never surface them in the main website/admin catalog listings.
+    query.quickOwnerVendorId = { $exists: false };
+
     if (filters.category_id) {
       query.category_id = filters.category_id;
     }

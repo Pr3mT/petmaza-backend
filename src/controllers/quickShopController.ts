@@ -4,6 +4,7 @@ import { AuthRequest } from '../middlewares/auth';
 import { AppError } from '../middlewares/errorHandler';
 import Order from '../models/Order';
 import Product from '../models/Product';
+import Brand from '../models/Brand';
 import VendorDetails from '../models/VendorDetails';
 import QuickProductListing from '../models/QuickProductListing';
 import { OrderRoutingService } from '../services/OrderRoutingService';
@@ -247,7 +248,8 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
 export const getCatalog = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { search = '', page = 1, limit = 30 } = req.query as any;
-    const query: any = { isActive: true };
+    // Exclude other shops' own (private) Quick products from the shared catalog.
+    const query: any = { isActive: true, quickOwnerVendorId: { $exists: false } };
     if (search) query.name = { $regex: String(search), $options: 'i' };
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -265,7 +267,7 @@ export const getCatalog = async (req: AuthRequest, res: Response, next: NextFunc
 export const getMyListings = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const listings = await QuickProductListing.find({ vendor_id: req.user._id })
-      .populate('product_id', 'name images mrp brand_id')
+      .populate('product_id', 'name images mrp brand_id description mainCategory quickOwnerVendorId')
       .sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: { listings } });
   } catch (error: any) {
@@ -283,9 +285,13 @@ export const upsertListing = async (req: AuthRequest, res: Response, next: NextF
       return next(new AppError('sellingPrice and stock must be non-negative', 400));
     }
 
-    const product = await Product.findById(product_id).select('_id');
+    const product = await Product.findById(product_id).select('_id quickOwnerVendorId');
     if (!product) {
       return next(new AppError('Product not found', 404));
+    }
+    // Another shop's private product can't be listed by this vendor.
+    if (product.quickOwnerVendorId && product.quickOwnerVendorId.toString() !== req.user._id.toString()) {
+      return next(new AppError('This product belongs to another shop', 403));
     }
 
     const listing = await QuickProductListing.findOneAndUpdate(
@@ -311,6 +317,157 @@ export const deleteListing = async (req: AuthRequest, res: Response, next: NextF
     const { product_id } = req.params;
     await QuickProductListing.findOneAndDelete({ vendor_id: req.user._id, product_id });
     res.status(200).json({ success: true, message: 'Removed from Petmaza Quick' });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ==================== SHOP ADMIN — OWN PRODUCTS ====================
+// A shop can also sell products that aren't in the Petmaza catalog. These are
+// stored as regular Product docs tagged with quickOwnerVendorId so the whole
+// order/stock pipeline works unchanged, but they stay private to this shop —
+// hidden from the main website catalog and other shops' Quick catalogs.
+
+const QUICK_PET_TYPES = ['Dog', 'Cat', 'Fish', 'Bird', 'Small Animals'];
+
+// The vendor's own products are branded with their shop name (find-or-create).
+async function getOwnBrand(vendorId: string) {
+  const details = await VendorDetails.findOne({ vendor_id: vendorId }).select('shopName').lean();
+  const brandName = String((details as any)?.shopName || 'My Shop').trim() || 'My Shop';
+  const existing = await Brand.findOne({ name: brandName });
+  if (existing) return existing;
+  return Brand.create({ name: brandName, description: `Products by ${brandName}` });
+}
+
+export const createOwnProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { name, description, image, mainCategory, mrp, sellingPrice, stock } = req.body;
+
+    if (!name || !String(name).trim()) {
+      return next(new AppError('Product name is required', 400));
+    }
+    if (!QUICK_PET_TYPES.includes(mainCategory)) {
+      return next(new AppError(`Pet type must be one of: ${QUICK_PET_TYPES.join(', ')}`, 400));
+    }
+    const price = Number(sellingPrice);
+    if (!sellingPrice || isNaN(price) || price <= 0) {
+      return next(new AppError('A valid selling price is required', 400));
+    }
+    const qty = Number(stock);
+    if (stock === undefined || stock === null || stock === '' || isNaN(qty) || qty < 0) {
+      return next(new AppError('A valid stock quantity is required', 400));
+    }
+    // MRP defaults to the selling price and can never sit below it.
+    const productMrp = mrp !== undefined && mrp !== null && String(mrp) !== '' ? Math.max(Number(mrp) || 0, price) : price;
+
+    const brand = await getOwnBrand(req.user._id.toString());
+    const product = await Product.create({
+      name: String(name).trim(),
+      description: description ? String(description).trim() : undefined,
+      brand_id: brand._id,
+      mainCategory: [mainCategory],
+      subCategory: ['Shop Special'],
+      mrp: productMrp,
+      sellingPrice: price,
+      // Set explicitly — schema validation runs before the pre-save hook computes it.
+      sellingPercentage: productMrp > 0 ? Math.round((price / productMrp) * 100 * 100) / 100 : 100,
+      images: image ? [image] : [],
+      isActive: true,
+      inStock: qty > 0,
+      addedBy: req.user._id,
+      quickOwnerVendorId: req.user._id,
+    });
+
+    const listing = await QuickProductListing.create({
+      vendor_id: req.user._id,
+      product_id: product._id,
+      sellingPrice: price,
+      stock: qty,
+      isActive: true,
+    });
+
+    res.status(201).json({ success: true, message: 'Product created', data: { product, listing } });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+export const updateOwnProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { productId } = req.params;
+    const product = await Product.findOne({ _id: productId, quickOwnerVendorId: req.user._id });
+    if (!product) {
+      return next(new AppError('Product not found or not owned by you', 404));
+    }
+
+    const { name, description, image, mainCategory, mrp, sellingPrice, stock } = req.body;
+
+    if (name !== undefined) {
+      if (!String(name).trim()) return next(new AppError('Product name cannot be empty', 400));
+      product.name = String(name).trim();
+    }
+    if (description !== undefined) product.description = String(description).trim();
+    if (image !== undefined) product.images = image ? [image] : [];
+    if (mainCategory !== undefined) {
+      if (!QUICK_PET_TYPES.includes(mainCategory)) {
+        return next(new AppError(`Pet type must be one of: ${QUICK_PET_TYPES.join(', ')}`, 400));
+      }
+      product.mainCategory = [mainCategory];
+    }
+
+    let price = product.sellingPrice || 0;
+    if (sellingPrice !== undefined) {
+      price = Number(sellingPrice);
+      if (isNaN(price) || price <= 0) return next(new AppError('A valid selling price is required', 400));
+      product.sellingPrice = price;
+    }
+    if (mrp !== undefined && mrp !== null && String(mrp) !== '') {
+      product.mrp = Math.max(Number(mrp) || 0, price);
+    } else if ((product.mrp || 0) < price) {
+      product.mrp = price;
+    }
+
+    let qty: number | undefined;
+    if (stock !== undefined) {
+      qty = Number(stock);
+      if (isNaN(qty) || qty < 0) return next(new AppError('A valid stock quantity is required', 400));
+      product.inStock = qty > 0;
+    }
+
+    await product.save();
+
+    const listing = await QuickProductListing.findOneAndUpdate(
+      { vendor_id: req.user._id, product_id: product._id },
+      {
+        $set: {
+          sellingPrice: price,
+          ...(qty !== undefined ? { stock: qty } : {}),
+          isActive: true,
+        },
+      },
+      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+    );
+
+    res.status(200).json({ success: true, message: 'Product updated', data: { product, listing } });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+export const deleteOwnProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { productId } = req.params;
+    const product = await Product.findOne({ _id: productId, quickOwnerVendorId: req.user._id });
+    if (!product) {
+      return next(new AppError('Product not found or not owned by you', 404));
+    }
+
+    await QuickProductListing.findOneAndDelete({ vendor_id: req.user._id, product_id: product._id });
+    // Soft-delete so past orders keep a valid product reference.
+    product.isActive = false;
+    await product.save();
+
+    res.status(200).json({ success: true, message: 'Product deleted' });
   } catch (error: any) {
     next(error);
   }

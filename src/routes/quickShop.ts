@@ -17,6 +17,11 @@ router.get('/vendor/listings', quickShopController.getMyListings);
 router.post('/vendor/listings', quickShopController.upsertListing);
 router.delete('/vendor/listings/:product_id', quickShopController.deleteListing);
 
+// Shop's own products (not in the Petmaza catalog — private to this shop)
+router.post('/vendor/my-products', quickShopController.createOwnProduct);
+router.put('/vendor/my-products/:productId', quickShopController.updateOwnProduct);
+router.delete('/vendor/my-products/:productId', quickShopController.deleteOwnProduct);
+
 router.get('/vendor/orders', quickShopController.getQuickShopOrders);
 router.post('/vendor/orders/:orderId/accept', quickShopController.acceptOrder);
 router.post('/vendor/orders/:orderId/reject', quickShopController.rejectOrder);
