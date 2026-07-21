@@ -493,10 +493,8 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
     if (!trackingId) {
       return next(new AppError('Tracking ID is required', 400));
     }
-    if (!trackingLink) {
-      return next(new AppError('Tracking link is required', 400));
-    }
-    if (!/^https?:\/\/\S+$/i.test(trackingLink)) {
+    // Tracking link is optional; validate the format only when one is provided.
+    if (trackingLink && !/^https?:\/\/\S+$/i.test(trackingLink)) {
       return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
     }
     // ── Optional fields — validate only when provided ──────────────────────────
@@ -551,7 +549,7 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
         ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }
         : {}),
       tracking_id: trackingId,
-      tracking_link: trackingLink,
+      ...(trackingLink ? { tracking_link: trackingLink } : {}),
       ...(shipping_cost !== undefined && String(shipping_cost).trim() !== ''
         ? { shipping_cost: Number(shipping_cost) }
         : {}),
@@ -562,7 +560,7 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
     if (!order.courier) order.courier = {};
     order.courier.name = courierName;
     order.courier.tracking_id = trackingId;
-    order.courier.tracking_link = trackingLink;
+    if (trackingLink) order.courier.tracking_link = trackingLink;
 
     order.status = 'READY_TO_SHIP';
     await order.save();

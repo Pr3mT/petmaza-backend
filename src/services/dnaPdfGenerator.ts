@@ -37,6 +37,25 @@ const LOGO_BUFFER: Buffer | null = (() => {
 })();
 
 
+// The 2400×2400 upscale is pure CPU (~0.4s on a dev box, several seconds on a small
+// dyno) and always produces the same bytes, so do it once and share the result.
+let logoHighResPromise: Promise<Buffer> | null = null;
+const getLogoHighRes = (): Promise<Buffer> | null => {
+  if (!LOGO_BUFFER) return null;
+  if (!logoHighResPromise) {
+    logoHighResPromise = sharp(LOGO_BUFFER)
+      .resize(2400, 2400, { fit: 'cover' })
+      .flatten({ background: '#ffffff' })
+      .png({ compressionLevel: 9 })
+      .toBuffer()
+      .catch((err) => {
+        logoHighResPromise = null;   // let the next request retry
+        throw err;
+      });
+  }
+  return logoHighResPromise;
+};
+
 // ─── Brand colours ────────────────────────────────────────────────────────────
 const PRIMARY    = '#0051a5';
 const GOLD       = '#e8a000';
@@ -367,13 +386,7 @@ export async function generateDnaResultCertificatePdf(
       });
       // Upscale logo to 2400px PNG — embeds at print resolution, pushes PDF to 4-5 MB
       // Upscale logo to high-res RGB PNG (no alpha) — forces large XObject in PDF for print quality
-      const logoHighRes: Buffer | null = LOGO_BUFFER
-        ? await sharp(LOGO_BUFFER)
-            .resize(2400, 2400, { fit: 'cover' })
-            .flatten({ background: '#ffffff' })
-            .png({ compressionLevel: 9 })
-            .toBuffer()
-        : null;
+      const logoHighRes: Buffer | null = await getLogoHighRes();
       logger.info('[PDF] logoHighRes size:', logoHighRes ? logoHighRes.length : 'null', 'bytes');
       const logoPng96  = logoHighRes;
       const logoPng240 = logoHighRes;
