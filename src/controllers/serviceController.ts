@@ -10,6 +10,7 @@ import cloudinary from '../config/cloudinary';
 import {
   generateDnaRequestPdf,
   generateDnaResultCertificatePdf,
+  generateDnaCardPdf,
 } from '../services/dnaPdfGenerator';
 
 const BIRD_DNA_PRICE_PER_BIRD = 200;
@@ -575,7 +576,7 @@ export const downloadCertificateCardPdf = async (req: AuthRequest, res: Response
       return next(new AppError('DNA result has not been set yet', 400));
     }
 
-    const pdfBuffer = await generateDnaResultCertificatePdf({
+    const pdfBuffer = await generateDnaCardPdf({
       requestId: id,
       birdIndex: birdPosition,
       birdName: bird.birdName,

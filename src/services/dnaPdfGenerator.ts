@@ -881,3 +881,258 @@ export async function generateDnaResultCertificatePdf(
     }
   });
 }
+
+// ─── 3. Printed DNA Card (CR80 ID-card, front + back) ────────────────────────
+//
+// This is NOT the certificate. The certificate is an A4 document meant to be
+// read / filed; the card is a wallet-size plastic card (85.6 x 54 mm) that
+// stays with the bird's owner or clips to the cage. It carries only the
+// identity + result + verification QR, at type sizes that survive card print.
+//
+// Page 1 = card front, page 2 = card back (card printers expect this order).
+// Output page is 1013 x 638 pt = CR80 at 300 DPI when 1 pt is rasterized as 1 px.
+
+export async function generateDnaCardPdf(data: DnaResultCertificateData): Promise<Buffer> {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // Logical canvas: 856 x 540 (units of 0.1 mm) — exactly CR80 proportions.
+      const PW = 856;
+      const PH = 540;
+      const PAGE_W = 1013;
+      const PAGE_H = 638;
+      const S = Math.min(PAGE_W / PW, PAGE_H / PH);
+      const OFFSET_X = (PAGE_W - PW * S) / 2;
+      const OFFSET_Y = (PAGE_H - PH * S) / 2;
+
+      const NAVY      = '#0d1b3e';
+      const NAVY_DEEP = '#0a1530';
+      const GOLD_C    = '#d4a017';
+      const GOLD_SOFT = '#f5d97e';
+      const CREAM     = '#fbf7ef';
+      const PAPER     = '#ffffff';
+      const INK       = '#1f2937';
+      const MUTED     = '#6b7280';
+
+      const resultLabel = data.dnaResult === 'male' ? 'MALE'
+        : data.dnaResult === 'female' ? 'FEMALE' : 'INCONCLUSIVE';
+      const cardNo = certNumber(data.requestId, data.birdIndex);
+
+      const qrValue = data.useStaticQr ? 'https://www.petmaza.com' : data.verificationUrl;
+      const qrBuffer: Buffer = await QRCode.toBuffer(qrValue, {
+        errorCorrectionLevel: 'H',
+        width: 1200,
+        margin: 1,
+        color: { dark: NAVY_DEEP, light: PAPER },
+      });
+
+      const logoPng: Buffer | null = LOGO_BUFFER
+        ? await sharp(LOGO_BUFFER)
+            .resize(1200, 1200, { fit: 'cover' })
+            .flatten({ background: '#ffffff' })
+            .png({ compressionLevel: 9 })
+            .toBuffer()
+        : null;
+
+      const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0, autoFirstPage: true });
+      const buffers: Buffer[] = [];
+      const pass = new PassThrough();
+      pass.on('data', (c: Buffer) => buffers.push(c));
+      pass.on('end', () => resolve(Buffer.concat(buffers)));
+      pass.on('error', reject);
+      doc.pipe(pass);
+
+      const applyPageTransform = () => {
+        (doc.page as any).width = PW;
+        (doc.page as any).height = PH;
+        doc.translate(OFFSET_X, OFFSET_Y).scale(S);
+      };
+      applyPageTransform();
+
+      // Logo inside a gold-ringed navy disc
+      const drawLogoDisc = (cx: number, cy: number, r: number) => {
+        doc.circle(cx, cy, r + 2).fill(GOLD_C);
+        doc.circle(cx, cy, r).fill(NAVY_DEEP);
+        if (logoPng) {
+          doc.save();
+          doc.circle(cx, cy, r - 2).clip();
+          doc.image(logoPng, cx - r + 2, cy - r + 2, { width: (r - 2) * 2, height: (r - 2) * 2 });
+          doc.restore();
+        } else {
+          doc.font('Helvetica-Bold').fontSize(r * 0.34).fillColor(GOLD_C)
+            .text('PETMAZA', cx - r, cy - r * 0.2, { width: r * 2, align: 'center', lineBreak: false });
+        }
+      };
+
+      // label above value — the basic unit of card data
+      const drawField = (lbl: string, val: string, x: number, y: number, w: number, valSize = 15) => {
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(MUTED)
+          .text(lbl.toUpperCase(), x, y, { width: w, lineBreak: false, characterSpacing: 1.2 });
+        doc.font('Helvetica-Bold').fontSize(valSize).fillColor(INK)
+          .text(val && String(val).trim() ? String(val).trim() : '—', x, y + 13, {
+            width: w, lineBreak: false, ellipsis: true,
+          });
+      };
+
+      // ==================== PAGE 1 — CARD FRONT ====================
+      doc.rect(0, 0, PW, PH).fill(CREAM);
+
+      // Header band
+      const HDR_H = 104;
+      doc.rect(0, 0, PW, HDR_H).fill(NAVY);
+      doc.rect(0, HDR_H, PW, 5).fill(GOLD_C);
+
+      drawLogoDisc(62, HDR_H / 2, 34);
+
+      doc.font('Helvetica-Bold').fontSize(30).fillColor(PAPER)
+        .text('PETMAZA', 110, 22, { lineBreak: false, characterSpacing: 1.5 });
+      doc.font('Helvetica-Bold').fontSize(10.5).fillColor(GOLD_SOFT)
+        .text('DNA SEXING CARD', 112, 60, { lineBreak: false, characterSpacing: 3 });
+
+      // Card number, right side of header
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GOLD_C)
+        .text('CARD NO.', PW - 300 - 24, 30, { width: 300, align: 'right', lineBreak: false, characterSpacing: 1.5 });
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(PAPER)
+        .text(cardNo, PW - 300 - 24, 46, { width: 300, align: 'right', lineBreak: false });
+
+      // Result block (left)
+      const RES_X = 26, RES_Y = 126, RES_W = 320, RES_H = 108;
+      doc.roundedRect(RES_X, RES_Y, RES_W, RES_H, 8).fill(PAPER);
+      doc.roundedRect(RES_X, RES_Y, RES_W, RES_H, 8).lineWidth(1.4).strokeColor(GOLD_C).stroke();
+      doc.font('Helvetica-Bold').fontSize(9.5).fillColor(MUTED)
+        .text('DNA SEXING RESULT', RES_X, RES_Y + 14, {
+          width: RES_W, align: 'center', lineBreak: false, characterSpacing: 2.5,
+        });
+      const resFS = resultLabel.length > 6 ? 30 : 46;
+      doc.font('Times-Bold').fontSize(resFS).fillColor(NAVY)
+        .text(resultLabel, RES_X, RES_Y + (resultLabel.length > 6 ? 52 : 40), {
+          width: RES_W, align: 'center', lineBreak: false, characterSpacing: 3,
+        });
+      doc.moveTo(RES_X + RES_W / 2 - 60, RES_Y + RES_H - 14)
+        .lineTo(RES_X + RES_W / 2 + 60, RES_Y + RES_H - 14)
+        .lineWidth(1).strokeColor(GOLD_C).stroke();
+
+      // QR block (right)
+      const QR_SZ = 128;
+      const QR_FW = QR_SZ + 20, QR_FH = QR_SZ + 34;
+      const QR_X = PW - QR_FW - 26, QR_Y = 126;
+      doc.roundedRect(QR_X, QR_Y, QR_FW, QR_FH, 8).fill(PAPER);
+      doc.roundedRect(QR_X, QR_Y, QR_FW, QR_FH, 8).lineWidth(1.4).strokeColor(GOLD_C).stroke();
+      doc.image(qrBuffer, QR_X + 10, QR_Y + 10, { width: QR_SZ, height: QR_SZ });
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(MUTED)
+        .text(data.useStaticQr ? 'SCAN TO VISIT' : 'SCAN TO VERIFY', QR_X, QR_Y + QR_SZ + 17, {
+          width: QR_FW, align: 'center', lineBreak: false, characterSpacing: 1.4,
+        });
+
+      // Bird identity — sits between the result block and the QR block
+      const MID_X = RES_X + RES_W + 22;
+      const MID_W = QR_X - MID_X - 20;
+      drawField('Bird Name', data.birdName || data.species, MID_X, RES_Y + 4, MID_W, 17);
+      drawField('Band ID',   data.bandId,                   MID_X, RES_Y + 48, MID_W, 17);
+
+      // Detail grid under both blocks
+      const G_Y = 262, ROW = 42;
+      const C1 = 26, C2 = 300, C3 = 574;
+      const CW = 250;
+      drawField('Species',        data.species,                                  C1, G_Y, CW);
+      drawField('Farm / Loft',    data.farm,                                     C2, G_Y, CW);
+      drawField('Specimen',       'Feather',                                     C3, G_Y, CW);
+      drawField('Owner',          data.customerName,                             C1, G_Y + ROW, CW);
+      drawField('Sample Collected', fmt(data.collectionDate || data.testDate),    C2, G_Y + ROW, CW);
+      drawField('Issue Date',     fmt(data.testDate),                            C3, G_Y + ROW, CW);
+
+      // Assurance line
+      doc.moveTo(26, 372).lineTo(PW - 26, 372).lineWidth(0.8).strokeColor(GOLD_C).stroke();
+      doc.font('Helvetica-Oblique').fontSize(10).fillColor(MUTED)
+        .text('DNA sexing performed and certified by Petmaza DNA Lab.', 26, 384, {
+          width: PW - 52, align: 'center', lineBreak: false,
+        });
+
+      // Footer band
+      const FT_H = 56, FT_Y = PH - FT_H;
+      doc.rect(0, FT_Y, PW, FT_H).fill(NAVY);
+      doc.rect(0, FT_Y, PW, 3).fill(GOLD_C);
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(PAPER)
+        .text('www.petmaza.com', 26, FT_Y + 20, { lineBreak: false });
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(GOLD_SOFT)
+        .text('+91 70212 10753', 26, FT_Y + 20, { width: PW - 52, align: 'center', lineBreak: false });
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(PAPER)
+        .text('PETMAZA DNA LAB', PW - 300 - 26, FT_Y + 20, { width: 300, align: 'right', lineBreak: false });
+
+      // ==================== PAGE 2 — CARD BACK ====================
+      doc.addPage({ size: [PAGE_W, PAGE_H], margin: 0 });
+      applyPageTransform();
+
+      doc.rect(0, 0, PW, PH).fill(CREAM);
+
+      const BHDR_H = 62;
+      doc.rect(0, 0, PW, BHDR_H).fill(NAVY);
+      doc.rect(0, BHDR_H, PW, 4).fill(GOLD_C);
+      doc.font('Helvetica-Bold').fontSize(14).fillColor(PAPER)
+        .text('PETMAZA DNA SERVICE', 0, BHDR_H / 2 - 8, {
+          width: PW, align: 'center', lineBreak: false, characterSpacing: 3,
+        });
+
+      // Faint watermark disc behind the text
+      if (logoPng) {
+        doc.save();
+        doc.opacity(0.06);
+        doc.circle(PW / 2, 300, 130).clip();
+        doc.image(logoPng, PW / 2 - 130, 170, { width: 260, height: 260 });
+        doc.restore();
+        doc.opacity(1);
+      }
+
+      doc.font('Helvetica-Bold').fontSize(10).fillColor(MUTED)
+        .text('HOW TO VERIFY THIS CARD', 40, 96, { lineBreak: false, characterSpacing: 2 });
+
+      const notes = [
+        data.useStaticQr
+          ? 'Scan the QR code on the front of this card to reach Petmaza, then quote the card number below.'
+          : 'Scan the QR code on the front of this card to open the official Petmaza verification page.',
+        'Verification shows the same bird, band ID and DNA sexing result printed here.',
+        'This card is valid only for the bird whose band ID appears on the front. It is not transferable.',
+        'Report a lost, damaged or suspected duplicate card to lab@petmaza.com with the card number.',
+      ];
+      let ny = 118;
+      notes.forEach((n) => {
+        doc.circle(46, ny + 6, 2.4).fill(GOLD_C);
+        doc.font('Helvetica').fontSize(11).fillColor(INK)
+          .text(n, 58, ny, { width: PW - 100 });
+        ny = doc.y + 8;
+      });
+
+      // Card number strip
+      doc.roundedRect(40, 330, PW - 80, 56, 6).fill(PAPER);
+      doc.roundedRect(40, 330, PW - 80, 56, 6).lineWidth(1.2).strokeColor(GOLD_C).stroke();
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(MUTED)
+        .text('CARD NO.', 56, 344, { lineBreak: false, characterSpacing: 1.5 });
+      doc.font('Helvetica-Bold').fontSize(16).fillColor(NAVY)
+        .text(cardNo, 56, 358, { lineBreak: false });
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(MUTED)
+        .text('BAND ID', PW - 260, 344, { width: 204, align: 'right', lineBreak: false, characterSpacing: 1.5 });
+      doc.font('Helvetica-Bold').fontSize(16).fillColor(NAVY)
+        .text(data.bandId || '—', PW - 260, 358, { width: 204, align: 'right', lineBreak: false });
+
+      // Back footer — full lab address
+      const BFT_H = 84, BFT_Y = PH - BFT_H;
+      doc.rect(0, BFT_Y, PW, BFT_H).fill(NAVY);
+      doc.rect(0, BFT_Y, PW, 3).fill(GOLD_C);
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GOLD_C)
+        .text('PETMAZA DNA LAB', 0, BFT_Y + 16, {
+          width: PW, align: 'center', lineBreak: false, characterSpacing: 2,
+        });
+      doc.font('Helvetica').fontSize(10).fillColor(PAPER)
+        .text('Near Hanuman Mandir, Khanda Colony, Sai Simran Bldg, Shop No. 10, Panvel', 0, BFT_Y + 34, {
+          width: PW, align: 'center', lineBreak: false,
+        });
+      doc.font('Helvetica-Bold').fontSize(10).fillColor(GOLD_SOFT)
+        .text('+91 70212 10753   ·   lab@petmaza.com   ·   www.petmaza.com', 0, BFT_Y + 52, {
+          width: PW, align: 'center', lineBreak: false,
+        });
+
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
