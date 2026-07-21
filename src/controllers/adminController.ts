@@ -32,13 +32,31 @@ export const getUsers = async (req: AuthRequest, res: Response, next: NextFuncti
 
     const skip = (Number(page) - 1) * Number(limit);
 
-    const users = await User.find(query)
+    let users: any[] = await User.find(query)
       .select('-password')
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
 
     const total = await User.countDocuments(query);
+
+    // Shop Admin lists also show each shop's name and delivery pincodes, so
+    // attach them from VendorDetails in one batch query.
+    if (vendorType === 'QUICK_SHOP' && users.length) {
+      const VendorDetails = (await import('../models/VendorDetails')).default;
+      const details = await VendorDetails.find({ vendor_id: { $in: users.map((u) => u._id) } })
+        .select('vendor_id shopName serviceablePincodes')
+        .lean();
+      const byVendor = new Map(details.map((d: any) => [d.vendor_id.toString(), d]));
+      users = users.map((u) => {
+        const d = byVendor.get(u._id.toString());
+        return {
+          ...u.toObject(),
+          shopName: d?.shopName || '',
+          serviceablePincodes: d?.serviceablePincodes || [],
+        };
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -628,7 +646,7 @@ export const reseedVariantProduct = async (req: Request, res: Response, next: Ne
 
 export const createVendor = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { name, email, password, vendorType, phone } = req.body;
+    const { name, email, password, vendorType, phone, serviceablePincodes, shopName } = req.body;
 
     if (!name || !email || !password || !vendorType) {
       return next(new AppError('Please provide name, email, password and vendor type', 400));
@@ -636,6 +654,19 @@ export const createVendor = async (req: AuthRequest, res: Response, next: NextFu
 
     if (!['PRIME', 'MY_SHOP', 'QUICK_SHOP'].includes(vendorType)) {
       return next(new AppError('Invalid vendor type. Must be PRIME, MY_SHOP or QUICK_SHOP', 400));
+    }
+
+    // Optional delivery pincodes (Shop Admins): customers only see this shop's
+    // Quick products when their pincode is in this list.
+    let pincodes: string[] = [];
+    if (serviceablePincodes !== undefined) {
+      if (!Array.isArray(serviceablePincodes)) {
+        return next(new AppError('serviceablePincodes must be an array of 6-digit pincodes', 400));
+      }
+      pincodes = Array.from(new Set(serviceablePincodes.map((p: any) => String(p).trim()).filter(Boolean)));
+      if (pincodes.some((p) => !/^\d{6}$/.test(p))) {
+        return next(new AppError('Each pincode must be exactly 6 digits', 400));
+      }
     }
 
     const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
@@ -673,13 +704,14 @@ export const createVendor = async (req: AuthRequest, res: Response, next: NextFu
     await VendorDetails.create({
       vendor_id: user._id,
       vendorType,
-      shopName: `${name.trim()}'s Shop`,
+      shopName: shopName?.trim() || `${name.trim()}'s Shop`,
       pickupAddress: {
         street: 'TBD',
         city: 'TBD',
         state: 'TBD',
         pincode: '000000',
       },
+      serviceablePincodes: pincodes,
       isApproved: true,
       approvedBy: req.user._id,
       approvedAt: new Date(),
@@ -708,6 +740,77 @@ export const getVendorDetailsById = async (req: AuthRequest, res: Response, next
       return next(new AppError('Vendor details not found', 404));
     }
     res.status(200).json({ success: true, data: details });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// Admin edits a vendor's account + shop profile: name/phone live on the User,
+// while shopName / pickupAddress / serviceablePincodes live on VendorDetails.
+// This is what lets Admin fill in a real pickup address so the "TBD" placeholder
+// created at signup goes away.
+export const updateVendor = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { name, phone, shopName, pickupAddress, serviceablePincodes } = req.body;
+
+    const user = await User.findById(id);
+    if (!user || user.role !== 'vendor') {
+      return next(new AppError('Vendor not found', 404));
+    }
+
+    // Optional delivery pincodes — validate 6-digit when provided.
+    let pincodes: string[] | undefined;
+    if (serviceablePincodes !== undefined) {
+      if (!Array.isArray(serviceablePincodes)) {
+        return next(new AppError('serviceablePincodes must be an array of 6-digit pincodes', 400));
+      }
+      pincodes = Array.from(new Set(serviceablePincodes.map((p: any) => String(p).trim()).filter(Boolean)));
+      if (pincodes.some((p) => !/^\d{6}$/.test(p))) {
+        return next(new AppError('Each pincode must be exactly 6 digits', 400));
+      }
+    }
+
+    if (name !== undefined && String(name).trim()) user.name = String(name).trim();
+    if (phone !== undefined) user.phone = String(phone).trim() || '0000000000';
+    await user.save();
+
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    const details = await VendorDetails.findOne({ vendor_id: id });
+    if (details) {
+      if (shopName !== undefined && String(shopName).trim()) details.shopName = String(shopName).trim();
+      if (pickupAddress !== undefined && pickupAddress) {
+        details.pickupAddress = {
+          street: String(pickupAddress.street || '').trim() || details.pickupAddress?.street || 'TBD',
+          city: String(pickupAddress.city || '').trim() || details.pickupAddress?.city || 'TBD',
+          state: String(pickupAddress.state || '').trim() || details.pickupAddress?.state || 'TBD',
+          pincode: String(pickupAddress.pincode || '').trim() || details.pickupAddress?.pincode || '000000',
+        };
+      }
+      if (pincodes !== undefined) details.serviceablePincodes = pincodes;
+      await details.save();
+    }
+
+    const userResponse = await User.findById(id).select('-password');
+    res.status(200).json({ success: true, message: 'Vendor updated', data: { user: userResponse, details } });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// Admin removes a vendor (e.g. a Shop Admin): deletes the User login and its
+// shop profile. Guarded to vendor accounts so admins/customers can't be deleted.
+export const deleteVendor = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id);
+    if (!user || user.role !== 'vendor') {
+      return next(new AppError('Vendor not found', 404));
+    }
+    const VendorDetails = (await import('../models/VendorDetails')).default;
+    await VendorDetails.deleteOne({ vendor_id: id });
+    await User.deleteOne({ _id: id });
+    res.status(200).json({ success: true, message: 'Vendor deleted' });
   } catch (error: any) {
     next(error);
   }

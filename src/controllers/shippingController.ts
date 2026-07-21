@@ -29,6 +29,13 @@ export const updateShippingSettings = async (req: AuthRequest, res: Response, ne
       platformFeeEnabled,
       platformFeeThreshold,
       platformFeeAmount,
+      // Petmaza Quick
+      quickShippingEnabled,
+      quickFreeShippingThreshold,
+      quickShippingChargesBelowThreshold,
+      quickPlatformFeeEnabled,
+      quickPlatformFeeThreshold,
+      quickPlatformFeeAmount,
     } = req.body;
 
     // Validate input
@@ -48,6 +55,23 @@ export const updateShippingSettings = async (req: AuthRequest, res: Response, ne
       return next(new AppError('Platform fee amount must be non-negative', 400));
     }
 
+    // Validate Petmaza Quick input
+    if (quickFreeShippingThreshold !== undefined && quickFreeShippingThreshold < 0) {
+      return next(new AppError('Quick free delivery threshold must be non-negative', 400));
+    }
+
+    if (quickShippingChargesBelowThreshold !== undefined && quickShippingChargesBelowThreshold < 0) {
+      return next(new AppError('Quick delivery charge must be non-negative', 400));
+    }
+
+    if (quickPlatformFeeThreshold !== undefined && quickPlatformFeeThreshold < 0) {
+      return next(new AppError('Quick platform fee threshold must be non-negative', 400));
+    }
+
+    if (quickPlatformFeeAmount !== undefined && quickPlatformFeeAmount < 0) {
+      return next(new AppError('Quick platform fee amount must be non-negative', 400));
+    }
+
     // Get existing settings or create new
     let settings = await ShippingSettings.findOne();
     
@@ -59,6 +83,12 @@ export const updateShippingSettings = async (req: AuthRequest, res: Response, ne
         platformFeeEnabled: platformFeeEnabled ?? true,
         platformFeeThreshold: platformFeeThreshold ?? 0,
         platformFeeAmount: platformFeeAmount ?? 10,
+        quickShippingEnabled: quickShippingEnabled ?? false,
+        quickFreeShippingThreshold: quickFreeShippingThreshold ?? 199,
+        quickShippingChargesBelowThreshold: quickShippingChargesBelowThreshold ?? 25,
+        quickPlatformFeeEnabled: quickPlatformFeeEnabled ?? false,
+        quickPlatformFeeThreshold: quickPlatformFeeThreshold ?? 0,
+        quickPlatformFeeAmount: quickPlatformFeeAmount ?? 5,
         updatedBy: req.user._id,
       });
     } else {
@@ -69,8 +99,15 @@ export const updateShippingSettings = async (req: AuthRequest, res: Response, ne
       if (platformFeeEnabled !== undefined) settings.platformFeeEnabled = platformFeeEnabled;
       if (platformFeeThreshold !== undefined) settings.platformFeeThreshold = platformFeeThreshold;
       if (platformFeeAmount !== undefined) settings.platformFeeAmount = platformFeeAmount;
+      // Petmaza Quick
+      if (quickShippingEnabled !== undefined) settings.quickShippingEnabled = quickShippingEnabled;
+      if (quickFreeShippingThreshold !== undefined) settings.quickFreeShippingThreshold = quickFreeShippingThreshold;
+      if (quickShippingChargesBelowThreshold !== undefined) settings.quickShippingChargesBelowThreshold = quickShippingChargesBelowThreshold;
+      if (quickPlatformFeeEnabled !== undefined) settings.quickPlatformFeeEnabled = quickPlatformFeeEnabled;
+      if (quickPlatformFeeThreshold !== undefined) settings.quickPlatformFeeThreshold = quickPlatformFeeThreshold;
+      if (quickPlatformFeeAmount !== undefined) settings.quickPlatformFeeAmount = quickPlatformFeeAmount;
       settings.updatedBy = req.user._id;
-      
+
       await settings.save();
     }
 

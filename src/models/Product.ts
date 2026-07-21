@@ -146,6 +146,14 @@ const productSchema = new Schema<IProduct>(
       ref: 'User',
       required: false,
     },
+    // Owner shop when this is a QUICK_SHOP vendor's own product. Present only on
+    // vendor-created Quick products; such products never appear in the main
+    // website catalog or in other shops' Quick catalogs.
+    quickOwnerVendorId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: false,
+    },
     totalSoldWebsite: {
       type: Number,
       default: 0,
@@ -362,6 +370,7 @@ productSchema.index({ subCategory: 1 });
 // multikey indexes when BOTH fields are arrays (parallel arrays restriction).
 productSchema.index({ isPrime: 1 });
 productSchema.index({ isActive: 1 });
+productSchema.index({ quickOwnerVendorId: 1 });
 productSchema.index({ createdAt: -1 }); // For sorting by newest
 productSchema.index({ category_id: 1, isActive: 1 }); // Compound index
 productSchema.index({ brand_id: 1, isActive: 1 }); // Compound index

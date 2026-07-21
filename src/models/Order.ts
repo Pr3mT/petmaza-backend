@@ -59,6 +59,14 @@ const orderItemSchema = new Schema(
       type: Number,
       required: true,
     },
+    // Snapshot of product name/image at order time, so the item still displays
+    // correctly even if the product/listing is later edited or removed.
+    productName: {
+      type: String,
+    },
+    productImage: {
+      type: String,
+    },
     selectedVariant: {
       weight: { type: Number },
       unit: { type: String },

@@ -89,11 +89,44 @@ export class ShippingService {
   }
 
   /**
+   * Calculate Petmaza Quick delivery charge and platform fee.
+   * Uses the separate Quick settings the admin controls. Defaults to no charge
+   * when the Quick toggles are off (or unset on older settings documents).
+   * @param subtotal - Combined Quick cart subtotal (before charges)
+   */
+  static async calculateQuickCharges(subtotal: number): Promise<{
+    shippingCharges: number;
+    platformFee: number;
+    total: number;
+  }> {
+    const settings = await this.getSettings();
+
+    let shippingCharges = 0;
+    let platformFee = 0;
+
+    if (settings.quickShippingEnabled) {
+      if (subtotal < (settings.quickFreeShippingThreshold ?? 0)) {
+        shippingCharges = settings.quickShippingChargesBelowThreshold ?? 0;
+      }
+    }
+
+    if (settings.quickPlatformFeeEnabled) {
+      if (subtotal >= (settings.quickPlatformFeeThreshold ?? 0)) {
+        platformFee = settings.quickPlatformFeeAmount ?? 0;
+      }
+    }
+
+    const total = subtotal + shippingCharges + platformFee;
+
+    return { shippingCharges, platformFee, total };
+  }
+
+  /**
    * Get shipping info for display on frontend
    */
   static async getShippingInfo() {
     const settings = await this.getSettings();
-    
+
     return {
       shippingEnabled: settings.shippingEnabled,
       freeShippingThreshold: settings.freeShippingThreshold,
@@ -101,6 +134,14 @@ export class ShippingService {
       platformFeeEnabled: settings.platformFeeEnabled,
       platformFeeThreshold: settings.platformFeeThreshold,
       platformFee: settings.platformFeeAmount,
+
+      // Petmaza Quick — separate delivery & platform fee
+      quickShippingEnabled: settings.quickShippingEnabled ?? false,
+      quickFreeShippingThreshold: settings.quickFreeShippingThreshold ?? 199,
+      quickShippingCharges: settings.quickShippingChargesBelowThreshold ?? 25,
+      quickPlatformFeeEnabled: settings.quickPlatformFeeEnabled ?? false,
+      quickPlatformFeeThreshold: settings.quickPlatformFeeThreshold ?? 0,
+      quickPlatformFee: settings.quickPlatformFeeAmount ?? 5,
     };
   }
 }

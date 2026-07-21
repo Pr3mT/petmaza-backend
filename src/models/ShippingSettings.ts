@@ -10,7 +10,15 @@ export interface IShippingSettings extends Document {
   platformFeeEnabled: boolean;
   platformFeeThreshold: number; // Orders above this amount get platform fee
   platformFeeAmount: number; // Fixed platform fee amount
-  
+
+  // Petmaza Quick — separate delivery & platform fee for Quick (hyperlocal) orders
+  quickShippingEnabled: boolean;
+  quickFreeShippingThreshold: number; // Quick orders above this amount get free delivery
+  quickShippingChargesBelowThreshold: number; // Delivery charge for Quick orders below threshold
+  quickPlatformFeeEnabled: boolean;
+  quickPlatformFeeThreshold: number; // Quick orders above this amount get platform fee
+  quickPlatformFeeAmount: number; // Fixed platform fee for Quick orders
+
   // Metadata
   updatedBy?: mongoose.Types.ObjectId; // Admin who made the changes
   createdAt: Date;
@@ -56,7 +64,44 @@ const ShippingSettingsSchema = new Schema<IShippingSettings>(
       required: true,
       min: 0,
     },
-    
+
+    // Petmaza Quick delivery & platform fee configuration.
+    // Defaults OFF so Quick stays free/no-fee until admin turns it on.
+    quickShippingEnabled: {
+      type: Boolean,
+      default: false,
+      required: true,
+    },
+    quickFreeShippingThreshold: {
+      type: Number,
+      default: 199,
+      required: true,
+      min: 0,
+    },
+    quickShippingChargesBelowThreshold: {
+      type: Number,
+      default: 25,
+      required: true,
+      min: 0,
+    },
+    quickPlatformFeeEnabled: {
+      type: Boolean,
+      default: false,
+      required: true,
+    },
+    quickPlatformFeeThreshold: {
+      type: Number,
+      default: 0,
+      required: true,
+      min: 0,
+    },
+    quickPlatformFeeAmount: {
+      type: Number,
+      default: 5,
+      required: true,
+      min: 0,
+    },
+
     // Metadata
     updatedBy: {
       type: Schema.Types.ObjectId,

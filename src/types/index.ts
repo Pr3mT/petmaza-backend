@@ -70,6 +70,10 @@ export interface IProduct extends Document {
   images: string[];
   isActive: boolean;
   addedBy?: Types.ObjectId | string; // User who created the product
+  // Set when a QUICK_SHOP vendor creates their own product. Such products are
+  // private to that shop's Petmaza Quick store — hidden from the main website
+  // catalog and from other shops' Quick catalogs.
+  quickOwnerVendorId?: Types.ObjectId | string;
   totalSoldWebsite?: number; // Total units sold via website
   totalSoldStore?: number; // Total units sold in physical store
   averageRating?: number; // Average rating from reviews (0-5)
@@ -133,6 +137,8 @@ export interface IOrderItem {
   purchaseSubtotal: number; // quantity * purchaseSubtotal
   profit: number; // subtotal - purchaseSubtotal
   profitPercentage: number; // (profit / subtotal) * 100
+  productName?: string; // Snapshot of the product name at order time (survives product deletion)
+  productImage?: string; // Snapshot of the product's primary image at order time
   selectedVariant?: {
     weight?: number;
     unit?: string;
