@@ -505,6 +505,12 @@ export const getQuickShopOrders = async (req: AuthRequest, res: Response, next: 
       const plain = o.toObject();
       const sanitizedOrder = sanitizeOrderForVendor(plain);
       sanitizedOrder.customerPaidTotal = plain.grandTotal || plain.total || 0;
+      // Quick shop admins hand the order to the customer themselves, so they see
+      // the customer's delivery charge and platform fee (the generic vendor
+      // sanitizer strips both). These are platform revenue, not shop earnings —
+      // the app shows them under "what the customer paid", never in the payout.
+      sanitizedOrder.quickShippingCharges = plain.shippingCharges || 0;
+      sanitizedOrder.quickPlatformFee = plain.platformFee || 0;
       return sanitizedOrder;
     });
 
