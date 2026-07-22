@@ -535,6 +535,105 @@ export const getQuickShopOrders = async (req: AuthRequest, res: Response, next: 
   }
 };
 
+// Shop admin wallet — same response shape as getPrimeWalletStats so the app can
+// reuse the Wallet screen. The shop earns the item subtotal only: the delivery
+// charge and platform fee the customer paid are platform revenue (same rule the
+// orders list follows when it exposes them separately).
+const quickShopShare = (order: any) => {
+  if (typeof order.subtotalBeforeCharges === 'number') return order.subtotalBeforeCharges;
+  return Math.max(
+    (order.total || 0) - (order.shippingCharges || 0) - (order.platformFee || 0),
+    0
+  );
+};
+
+export const getQuickWalletStats = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const vendor_id = req.user._id;
+    const { startDate, endDate } = req.query;
+
+    const query: any = {
+      assignedVendorId: vendor_id,
+      orderChannel: 'QUICK',
+      payment_status: 'Paid',
+      status: { $nin: ['CANCELLED', 'REJECTED'] },
+    };
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate as string);
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = end;
+      }
+    }
+
+    const allOrders = await Order.find(query)
+      .populate('customer_id', 'name email phone')
+      .populate('items.product_id', 'name images')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    let totalEarnings = 0;
+    let pendingSettlement = 0;
+    let completedOrders = 0;
+
+    const orders = allOrders.map((order: any) => {
+      const share = quickShopShare(order);
+      const isDelivered = order.status === 'DELIVERED';
+      if (isDelivered) {
+        totalEarnings += share;
+        completedOrders += 1;
+      } else {
+        pendingSettlement += share;
+      }
+
+      return {
+        orderId: order.order_id || order._id,
+        orderDate: order.createdAt,
+        customerName: (order.customer_id as any)?.name || 'N/A',
+        products: (order.items || []).map((i: any) => i.product_id?.name || 'Product').join(', '),
+        status: order.status,
+        vendorEarning: isDelivered ? share : 0,
+        pendingAmount: isDelivered ? 0 : share,
+        paymentStatus: order.payment_status || 'N/A',
+      };
+    });
+
+    const monthlyMap: Record<string, { month: string; orders: number; earnings: number }> = {};
+    const statusBreakdown: Record<string, number> = {};
+    allOrders.forEach((order: any) => {
+      statusBreakdown[order.status] = (statusBreakdown[order.status] || 0) + 1;
+      if (order.status !== 'DELIVERED') return;
+      const d = new Date(order.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+      if (!monthlyMap[key]) monthlyMap[key] = { month: label, orders: 0, earnings: 0 };
+      monthlyMap[key].orders += 1;
+      monthlyMap[key].earnings += quickShopShare(order);
+    });
+    const monthlyBreakdown = Object.values(monthlyMap).sort((a, b) => (a.month > b.month ? 1 : -1));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: {
+          totalOrders: allOrders.length,
+          completedOrders,
+          totalEarnings,
+          pendingSettlement,
+          platformFee: '0%',
+        },
+        statusBreakdown,
+        monthlyBreakdown,
+        orders,
+      },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
 async function findOwnQuickOrder(vendor: any, orderId: string) {
   const order = await Order.findById(orderId);
   if (!order) throw new AppError('Order not found', 404);
