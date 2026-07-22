@@ -279,7 +279,11 @@ export const getCatalog = async (req: AuthRequest, res: Response, next: NextFunc
 export const getMyListings = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const listings = await QuickProductListing.find({ vendor_id: req.user._id })
-      .populate('product_id', 'name images mrp brand_id description mainCategory quickOwnerVendorId')
+      .populate({
+        path: 'product_id',
+        select: 'name images mrp brand_id description mainCategory subCategory quickOwnerVendorId',
+        populate: { path: 'brand_id', select: 'name' },
+      })
       .sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: { listings } });
   } catch (error: any) {
@@ -342,18 +346,22 @@ export const deleteListing = async (req: AuthRequest, res: Response, next: NextF
 
 const QUICK_PET_TYPES = ['Dog', 'Cat', 'Fish', 'Bird', 'Small Animals'];
 
-// The vendor's own products are branded with their shop name (find-or-create).
-async function getOwnBrand(vendorId: string) {
-  const details = await VendorDetails.findOne({ vendor_id: vendorId }).select('shopName').lean();
-  const brandName = String((details as any)?.shopName || 'My Shop').trim() || 'My Shop';
-  const existing = await Brand.findOne({ name: brandName });
+// The vendor's own products carry the brand they typed, falling back to their
+// shop name (find-or-create either way).
+async function getOwnBrand(vendorId: string, brandName?: string) {
+  let name = String(brandName || '').trim();
+  if (!name) {
+    const details = await VendorDetails.findOne({ vendor_id: vendorId }).select('shopName').lean();
+    name = String((details as any)?.shopName || 'My Shop').trim() || 'My Shop';
+  }
+  const existing = await Brand.findOne({ name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') });
   if (existing) return existing;
-  return Brand.create({ name: brandName, description: `Products by ${brandName}` });
+  return Brand.create({ name, description: `Products by ${name}` });
 }
 
 export const createOwnProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { name, description, image, mainCategory, mrp, sellingPrice, stock } = req.body;
+    const { name, description, image, mainCategory, subCategory, brand, mrp, sellingPrice, stock } = req.body;
 
     if (!name || !String(name).trim()) {
       return next(new AppError('Product name is required', 400));
@@ -372,13 +380,13 @@ export const createOwnProduct = async (req: AuthRequest, res: Response, next: Ne
     // MRP defaults to the selling price and can never sit below it.
     const productMrp = mrp !== undefined && mrp !== null && String(mrp) !== '' ? Math.max(Number(mrp) || 0, price) : price;
 
-    const brand = await getOwnBrand(req.user._id.toString());
+    const brandDoc = await getOwnBrand(req.user._id.toString(), brand);
     const product = await Product.create({
       name: String(name).trim(),
       description: description ? String(description).trim() : undefined,
-      brand_id: brand._id,
+      brand_id: brandDoc._id,
       mainCategory: [mainCategory],
-      subCategory: ['Shop Special'],
+      subCategory: [String(subCategory || '').trim() || 'Shop Special'],
       mrp: productMrp,
       sellingPrice: price,
       // Set explicitly — schema validation runs before the pre-save hook computes it.
@@ -412,7 +420,7 @@ export const updateOwnProduct = async (req: AuthRequest, res: Response, next: Ne
       return next(new AppError('Product not found or not owned by you', 404));
     }
 
-    const { name, description, image, mainCategory, mrp, sellingPrice, stock } = req.body;
+    const { name, description, image, mainCategory, subCategory, brand, mrp, sellingPrice, stock } = req.body;
 
     if (name !== undefined) {
       if (!String(name).trim()) return next(new AppError('Product name cannot be empty', 400));
@@ -425,6 +433,13 @@ export const updateOwnProduct = async (req: AuthRequest, res: Response, next: Ne
         return next(new AppError(`Pet type must be one of: ${QUICK_PET_TYPES.join(', ')}`, 400));
       }
       product.mainCategory = [mainCategory];
+    }
+    if (subCategory !== undefined) {
+      product.subCategory = [String(subCategory || '').trim() || 'Shop Special'];
+    }
+    if (brand !== undefined && String(brand).trim()) {
+      const brandDoc = await getOwnBrand(req.user._id.toString(), brand);
+      product.brand_id = brandDoc._id as any;
     }
 
     let price = product.sellingPrice || 0;
