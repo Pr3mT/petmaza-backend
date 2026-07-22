@@ -21,6 +21,7 @@ import {
   updateFulfiller,
   deleteFulfiller,
   getVendorBilling,
+  getQuickBilling,
   getVendorWeeklyBilling,
   markWeeklyInvoicePaid,
   getCategoryMappings,
@@ -91,6 +92,7 @@ router.delete('/fulfillers/:id', deleteFulfiller);
 
 // Vendor billing routes — admin only (billing/finance)
 router.get('/vendor-billing', checkRole('admin'), getVendorBilling);
+router.get('/quick-billing', checkRole('admin'), getQuickBilling);
 router.get('/vendor-weekly-billing', checkRole('admin'), getVendorWeeklyBilling);
 router.post('/vendor-weekly-billing/mark-paid', checkRole('admin'), markWeeklyInvoicePaid);
 

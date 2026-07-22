@@ -1544,6 +1544,219 @@ export const getVendorBilling = async (req: AuthRequest, res: Response, next: Ne
   }
 };
 
+/**
+ * GET /admin/quick-billing
+ * Petmaza Quick counterpart of getVendorBilling: billing & settlement figures
+ * for QUICK_SHOP vendors, built only from QUICK-channel orders. Platform profit
+ * here is the real platformFee charged on the order (not a commission %),
+ * because Quick charges are computed at checkout and stored on the order.
+ */
+export const getQuickBilling = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    const dateFilter: any = {};
+    if (startDate || endDate) {
+      dateFilter.createdAt = {};
+      if (startDate) {
+        dateFilter.createdAt.$gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        dateFilter.createdAt.$lte = end;
+      }
+    }
+
+    const vendors = await User.find({
+      role: 'vendor',
+      vendorType: 'QUICK_SHOP',
+    }).select('name email vendorType isApproved phone address pincodesServed').lean();
+
+    const VendorDetails = require('../models/VendorDetails').default;
+    const QuickProductListing = require('../models/QuickProductListing').default;
+
+    const vendorDetailsMap: any = {};
+    for (const vendor of vendors) {
+      const details = await VendorDetails.findOne({ vendor_id: vendor._id }).lean();
+      if (details) {
+        vendorDetailsMap[vendor._id.toString()] = details;
+      }
+    }
+
+    // Listing counts per shop — the Quick equivalent of "prime products".
+    const listingCounts = await QuickProductListing.aggregate([
+      {
+        $group: {
+          _id: '$vendor_id',
+          total: { $sum: 1 },
+          active: { $sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] } },
+          inStock: { $sum: { $cond: [{ $gt: ['$stock', 0] }, 1, 0] } },
+        },
+      },
+    ]);
+    const listingCountMap: any = {};
+    listingCounts.forEach((row: any) => {
+      listingCountMap[row._id.toString()] = row;
+    });
+
+    const orderFilter = {
+      ...dateFilter,
+      orderChannel: 'QUICK',
+      assignedVendorId: { $exists: true, $ne: null },
+      status: { $nin: ['CANCELLED', 'REJECTED'] },
+    };
+
+    const orders = await Order.find(orderFilter)
+      .populate('assignedVendorId', 'name email vendorType')
+      .populate('customer_id', 'name email phone')
+      .populate('items.product_id', 'name category brand')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    logger.info('[getQuickBilling] Shops found:', vendors.length);
+    logger.info('[getQuickBilling] Quick orders found:', orders.length);
+
+    const deliveryModeStats: any = {};
+    const vendorStats: any = {};
+    const detailedOrders: any[] = [];
+
+    vendors.forEach(vendor => {
+      const vendorId = vendor._id.toString();
+      const details = vendorDetailsMap[vendorId];
+      const listings = listingCountMap[vendorId];
+
+      vendorStats[vendorId] = {
+        _id: vendor._id,
+        name: vendor.name,
+        email: vendor.email,
+        phone: vendor.phone,
+        vendorType: vendor.vendorType,
+        isApproved: vendor.isApproved,
+        totalOrders: 0,
+        totalRevenue: 0,
+        platformProfit: 0,
+        shopEarnings: 0,
+        ordersByStatus: {},
+        ordersByDeliveryMode: {},
+        shopName: details?.shopName || 'N/A',
+        businessType: details?.businessType || 'N/A',
+        serviceablePincodes: details?.serviceablePincodes || vendor.pincodesServed || [],
+        pickupAddress: details?.pickupAddress || vendor.address || null,
+        rating: details?.rating || 0,
+        completedOrders: details?.completedOrders || 0,
+        totalListings: listings?.total || 0,
+        activeListings: listings?.active || 0,
+        inStockListings: listings?.inStock || 0,
+        yearsInBusiness: details?.yearsInBusiness || 0,
+        averageDeliveryTime: details?.averageDeliveryTime || 'N/A',
+      };
+    });
+
+    orders.forEach(order => {
+      const vendor = order.assignedVendorId as any;
+      if (!vendor || !vendor._id) return;
+
+      const vendorId = vendor._id.toString();
+      const orderTotal = order.total || 0;
+      const orderStatus = order.status;
+      const deliveryMode = (order as any).quickDeliveryMode || 'UNSPECIFIED';
+
+      // Platform keeps the platform fee; the shop is owed the item subtotal.
+      const platformProfit = (order as any).platformFee || 0;
+      const shopEarnings = (order as any).subtotalBeforeCharges ?? orderTotal;
+
+      if (vendorStats[vendorId]) {
+        const stats = vendorStats[vendorId];
+        stats.totalOrders += 1;
+        stats.totalRevenue += orderTotal;
+        stats.platformProfit += platformProfit;
+        stats.shopEarnings += shopEarnings;
+        stats.ordersByStatus[orderStatus] = (stats.ordersByStatus[orderStatus] || 0) + 1;
+        stats.ordersByDeliveryMode[deliveryMode] = (stats.ordersByDeliveryMode[deliveryMode] || 0) + 1;
+      }
+
+      if (!deliveryModeStats[deliveryMode]) {
+        deliveryModeStats[deliveryMode] = {
+          deliveryMode,
+          totalShops: 0,
+          totalOrders: 0,
+          totalRevenue: 0,
+          totalProfit: 0,
+          ordersByStatus: {},
+          _shopIds: new Set<string>(),
+        };
+      }
+      const modeStats = deliveryModeStats[deliveryMode];
+      modeStats.totalOrders += 1;
+      modeStats.totalRevenue += orderTotal;
+      modeStats.totalProfit += platformProfit;
+      modeStats.ordersByStatus[orderStatus] = (modeStats.ordersByStatus[orderStatus] || 0) + 1;
+      modeStats._shopIds.add(vendorId);
+
+      const customer = order.customer_id as any;
+
+      let productNames = 'N/A';
+      if (order.items && Array.isArray(order.items)) {
+        productNames = order.items
+          .map((item: any) => (item.product_id as any)?.name || 'Unknown Product')
+          .filter((name: string) => name !== 'Unknown Product')
+          .join(', ') || 'N/A';
+      }
+
+      detailedOrders.push({
+        orderId: (order as any).order_id || order._id,
+        orderDate: order.createdAt,
+        vendorId,
+        vendorName: vendor.name,
+        vendorEmail: vendor.email,
+        shopName: vendorStats[vendorId]?.shopName || 'N/A',
+        deliveryMode,
+        customerName: customer?.name || 'N/A',
+        customerEmail: customer?.email || 'N/A',
+        products: productNames,
+        orderStatus,
+        orderTotal,
+        platformProfit,
+        shopEarnings,
+        paymentStatus: order.payment_status || 'N/A',
+      });
+    });
+
+    const byDeliveryMode: any[] = (Object.values(deliveryModeStats) as any[]).map((mode: any) => {
+      const { _shopIds, ...rest } = mode;
+      return { ...rest, totalShops: _shopIds.size };
+    });
+
+    const vendorList = Object.values(vendorStats);
+
+    const totalRevenue = byDeliveryMode.reduce((sum: number, item: any) => sum + item.totalRevenue, 0);
+    const totalProfit = byDeliveryMode.reduce((sum: number, item: any) => sum + item.totalProfit, 0);
+
+    const summary = {
+      totalVendors: vendors.length,
+      totalOrders: orders.length,
+      totalRevenue,
+      totalProfit,
+      pendingSettlement: (vendorList as any[]).reduce((sum: number, v: any) => sum + v.shopEarnings, 0),
+      averageOrderValue: orders.length > 0 ? totalRevenue / orders.length : 0,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary,
+        byDeliveryMode,
+        vendors: vendorList,
+        detailedOrders,
+      },
+    });
+  } catch (error: any) {
+    logger.error('[getQuickBilling] Error:', error);
+    next(error);
+  }
+};
+
 // ─── Category → Fulfiller Mapping ────────────────────────────────────────────
 
 /**
