@@ -1,6 +1,7 @@
 import express from 'express';
 import * as quickShopController from '../controllers/quickShopController';
 import { verifyToken, checkQuickShopVendor } from '../middlewares/auth';
+import { uploadReceipt } from '../config/cloudinary';
 
 const router = express.Router();
 
@@ -28,6 +29,7 @@ router.get('/vendor/orders', quickShopController.getQuickShopOrders);
 router.post('/vendor/orders/:orderId/accept', quickShopController.acceptOrder);
 router.post('/vendor/orders/:orderId/reject', quickShopController.rejectOrder);
 router.post('/vendor/orders/:orderId/packed', quickShopController.markPacked);
+router.post('/vendor/orders/:orderId/shipping-details', uploadReceipt.single('receipt'), quickShopController.addShippingDetails);
 router.post('/vendor/orders/:orderId/picked-up', quickShopController.markPickedUp);
 router.post('/vendor/orders/:orderId/in-transit', quickShopController.markInTransit);
 router.post('/vendor/orders/:orderId/delivered', quickShopController.markDelivered);

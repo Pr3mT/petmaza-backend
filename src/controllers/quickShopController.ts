@@ -15,7 +15,11 @@ import {
   sendOrderAcceptedEmail,
   sendDeliveryCompletedEmail,
   sendRefundInitiatedEmail,
+  sendShippingTrackingEmail,
 } from '../services/emailer';
+import ShippingDetails from '../models/ShippingDetails';
+import cloudinary from '../config/cloudinary';
+import streamifier from 'streamifier';
 
 // ==================== CUSTOMER-FACING ====================
 
@@ -762,6 +766,141 @@ export const markPickedUp = async (req: AuthRequest, res: Response, next: NextFu
     order.status = 'PICKED_UP';
     await order.save();
     res.status(200).json({ success: true, message: 'Order picked up for delivery', data: { order } });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// ─── Add Shipping Details (PACKED → PICKED_UP, Quick Shop Admin) ─────────────
+// Same form and validation as the Prime vendor's addShippingDetails; Quick has
+// no READY_TO_SHIP stage, so submitting moves the order straight to PICKED_UP.
+export const addShippingDetails = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const vendor_id = req.user._id;
+    const { orderId } = req.params;
+    const {
+      shipping_company,
+      tracking_id,
+      tracking_link,
+      shipping_cost,
+      total_weight,
+      weight_unit,
+      delivery_type,
+    } = req.body;
+
+    // ── Validate required text fields ─────────────────────────────────────────
+    if (!shipping_company || !String(shipping_company).trim()) {
+      return next(new AppError('Shipping company name is required', 400));
+    }
+    if (!tracking_id || !String(tracking_id).trim()) {
+      return next(new AppError('Tracking ID is required', 400));
+    }
+    // Tracking link is optional for Quick (local riders rarely have one) —
+    // validated only when provided.
+    const trackingLink = tracking_link ? String(tracking_link).trim() : '';
+    if (trackingLink && !/^https?:\/\/\S+$/i.test(trackingLink)) {
+      return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
+    }
+    // ── Optional fields — validate only when provided ─────────────────────────
+    if (shipping_cost !== undefined && String(shipping_cost).trim() !== '') {
+      if (isNaN(Number(shipping_cost)) || Number(shipping_cost) < 0) {
+        return next(new AppError('Shipping cost must be a non-negative number', 400));
+      }
+    }
+    const hasWeight = total_weight !== undefined && String(total_weight).trim() !== '';
+    if (hasWeight && (isNaN(Number(total_weight)) || Number(total_weight) <= 0)) {
+      return next(new AppError('Total weight must be a positive number', 400));
+    }
+    if (hasWeight && !['kg', 'g'].includes(weight_unit)) {
+      return next(new AppError('Weight unit must be kg or g', 400));
+    }
+    if (delivery_type && !['inter_state', 'out_of_state'].includes(delivery_type)) {
+      return next(new AppError('Delivery type must be inter_state or out_of_state', 400));
+    }
+
+    const order = await findOwnQuickOrder(req.user, orderId);
+    if (order.status !== 'PACKED') {
+      return next(new AppError(`Cannot add shipping details for an order that is ${order.status}`, 400));
+    }
+
+    const existing = await ShippingDetails.findOne({ order_id: orderId });
+    if (existing) {
+      return next(new AppError('Shipping details already submitted for this order', 409));
+    }
+
+    // ── Upload receipt to Cloudinary (optional) ──────────────────────────────
+    let uploadResult: any = null;
+    if (req.file) {
+      const isPdf = req.file.mimetype === 'application/pdf';
+      uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'petmaza/shipping-receipts',
+            resource_type: isPdf ? 'raw' : 'image',
+            ...(isPdf ? { format: 'pdf' } : {}),
+          },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        streamifier.createReadStream(req.file!.buffer).pipe(stream);
+      });
+    }
+
+    const shippingDetails = await ShippingDetails.create({
+      order_id: orderId,
+      vendor_id,
+      shipping_company: String(shipping_company).trim(),
+      ...(uploadResult
+        ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }
+        : {}),
+      tracking_id: String(tracking_id).trim(),
+      ...(trackingLink ? { tracking_link: trackingLink } : {}),
+      ...(shipping_cost !== undefined && String(shipping_cost).trim() !== ''
+        ? { shipping_cost: Number(shipping_cost) }
+        : {}),
+      ...(hasWeight ? { total_weight: Number(total_weight), weight_unit } : {}),
+      ...(delivery_type ? { delivery_type } : {}),
+    });
+
+    order.status = 'PICKED_UP';
+    if (!order.courier) order.courier = {};
+    order.courier.name = String(shipping_company).trim();
+    order.courier.tracking_id = String(tracking_id).trim();
+    if (trackingLink) order.courier.tracking_link = trackingLink;
+    await order.save();
+
+    logger.info(`[quickShop] Shipping details added for order ${orderId} by shop ${vendor_id}`);
+
+    try {
+      const populatedOrder = await order.populate('customer_id');
+      const customer = populatedOrder.customer_id as any;
+      if (customer?.email) {
+        await sendShippingTrackingEmail(
+          customer.email,
+          customer.name || 'Customer',
+          order._id.toString().slice(-8).toUpperCase(),
+          {
+            company: shippingDetails.shipping_company,
+            trackingId: shippingDetails.tracking_id,
+            trackingLink: shippingDetails.tracking_link,
+            deliveryType: shippingDetails.delivery_type,
+            totalWeight: shippingDetails.total_weight,
+            weightUnit: shippingDetails.weight_unit,
+            estimatedDelivery: order.quickDeliveryMode === 'HALF_HOUR' ? 'Within 30 minutes' : 'Within 1 day',
+          }
+        );
+      }
+    } catch (emailError: any) {
+      logger.error('[quickShop:addShippingDetails] Failed to send tracking email:', emailError.message);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Shipping details saved. Order marked as Picked Up.',
+      data: { shippingDetails },
+    });
   } catch (error: any) {
     next(error);
   }
