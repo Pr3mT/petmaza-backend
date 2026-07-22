@@ -154,7 +154,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
 
 export const getProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { category_id, brand_id, isPrime, pincode, search, mainCategory, subCategory, page, limit, seed, sortBy, sortOrder, minPrice, maxPrice, discount } = req.query;
+    const { category_id, brand_id, isPrime, quick, pincode, search, mainCategory, subCategory, page, limit, seed, sortBy, sortOrder, minPrice, maxPrice, discount } = req.query;
 
     const filters: any = {};
     if (category_id) filters.category_id = category_id as string;
@@ -220,6 +220,8 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
     if (req.user && isAdminRole(req.user.role)) {
       // Admin sees everything (including inactive)
       filters.isActive = undefined;
+      // Admin-only: quick=true lists Quick shops' own products (normally hidden).
+      if (quick === 'true') filters.quick = true;
       logger.info('✅ Admin detected - showing all products');
     } else {
       // Customers see only active products

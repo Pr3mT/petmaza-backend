@@ -83,6 +83,7 @@ export class ProductService {
       sub: filters.subCategory ?? null,
       brand: filters.brand_id ?? null,
       prime: filters.isPrime ?? null,
+      quick: filters.quick ?? null,
       active: filters.isActive ?? null,
       min: filters.minPrice ?? null,
       max: filters.maxPrice ?? null,
@@ -181,12 +182,14 @@ export class ProductService {
     minPrice?: number;  // Minimum selling price filter
     maxPrice?: number;  // Maximum selling price filter
     discount?: number;  // Minimum discount percentage filter
+    quick?: boolean;    // Admin-only: list QUICK_SHOP vendors' own products instead
   } = {}) {
     const query: any = {};
 
-    // QUICK_SHOP vendors' own products are private to their Quick store —
-    // never surface them in the main website/admin catalog listings.
-    query.quickOwnerVendorId = { $exists: false };
+    // QUICK_SHOP vendors' own products are private to their Quick store — they never
+    // surface in the main website/admin catalog listings, unless an admin explicitly
+    // asks for them (quick: true), which lists ONLY those products.
+    query.quickOwnerVendorId = { $exists: !!filters.quick };
 
     if (filters.category_id) {
       query.category_id = filters.category_id;
