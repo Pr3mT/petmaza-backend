@@ -173,6 +173,7 @@ import shippingRoutes from './routes/shipping';
 import productNotificationRoutes from './routes/productNotifications';
 import couponRoutes from './routes/coupons';
 import visitorRoutes from './routes/visitors';
+import verifyRoutes from './routes/verify';
 
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/products', generalLimiter, productRoutes);
@@ -208,6 +209,9 @@ app.use('/api/debug', generalLimiter, debugRoutes);
 app.use('/api/shipping', generalLimiter, shippingRoutes);
 app.use('/api/coupons', generalLimiter, couponRoutes);
 app.use('/api/visits', generalLimiter, visitorRoutes);
+
+// QR-code landing pages for printed DNA cards — public, no /api prefix.
+app.use('/verify', generalLimiter, verifyRoutes);
 
 // Error handling
 app.use(notFound);

@@ -2,6 +2,11 @@ import PDFDocument from 'pdfkit';
 import { PassThrough } from 'stream';
 import pdfParse from 'pdf-parse';
 import QRCode from 'qrcode';
+// Shared with the DNA card QR so both printed artefacts resolve to the same
+// host. The local copy this replaces fell back to localhost:6969 with no
+// production branch, so any lab report generated without the env var set had an
+// unreachable QR baked into it.
+import { getVerificationBaseUrl } from './verificationUrl';
 
 export interface PetmazaReportContext {
   requestId: string;
@@ -748,15 +753,6 @@ export const extractLabReportWithText = async (pdfBuffer: Buffer, context?: Extr
 export const extractLabReportFields = async (pdfBuffer: Buffer, context?: ExtractionContext): Promise<ParsedLabReportFields> => {
   const { fields } = await extractLabReportWithText(pdfBuffer, context);
   return fields;
-};
-
-const getVerificationBaseUrl = () => {
-  const raw = process.env.PETMAZA_VERIFICATION_BASE_URL
-    || process.env.BACKEND_PUBLIC_URL
-    || process.env.APP_BASE_URL
-    || 'http://localhost:6969';
-
-  return raw.replace(/\/+$/, '');
 };
 
 const toDisplayDate = (value?: string) => {

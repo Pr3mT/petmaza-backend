@@ -11,6 +11,11 @@ import {
   generateDnaRequestPdf,
   generateDnaResultCertificatePdf,
 } from '../services/dnaPdfGenerator';
+import { buildDnaVerificationUrl } from '../utils/verificationUrl';
+import {
+  renderDnaVerificationPage,
+  renderDnaVerificationError,
+} from '../views/dnaVerificationPage';
 
 const BIRD_DNA_PRICE_PER_BIRD = 200;
 const BIRD_DNA_PICKUP_CHARGE = 100;
@@ -522,8 +527,10 @@ export const downloadResultCertificatePdf = async (req: AuthRequest, res: Respon
       return next(new AppError('DNA result has not been set yet', 400));
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'https://petmaza.com';
-    const verificationUrl = `${frontendUrl}/dna-verify?requestId=${id}&birdIndex=${birdPosition}`;
+    // Backend-hosted, not FRONTEND_URL/dna-verify: that route only ever existed
+    // in the old React storefront, and petmaza.com now serves the Expo build,
+    // which silently falls back to the shop homepage on an unmatched URL.
+    const verificationUrl = buildDnaVerificationUrl(id, birdPosition);
 
     logger.info('[PDF Debug] birdName:', JSON.stringify(bird.birdName), '| collectionDateTime:', bird.collectionDateTime, '| updatedAt:', serviceRequest.updatedAt);
 
@@ -584,10 +591,14 @@ export const downloadCertificateCardPdf = async (req: AuthRequest, res: Response
       dnaResult,
       collectionDate: bird.collectionDateTime,
       testDate: serviceRequest.updatedAt,
-      verificationUrl: '',
+      // The printed card now carries the same per-bird verification QR as the
+      // A4 certificate. It used to fall back to the static petmaza.com QR
+      // (useStaticQr) because no working verification page existed — scanning a
+      // card just opened the shop homepage, which is the whole reason the cards
+      // read as broken. A result is required above, so this always resolves.
+      verificationUrl: buildDnaVerificationUrl(id, birdPosition),
       customerName: serviceRequest.customerName,
       farm: serviceRequest.farm,
-      useStaticQr: true,
     });
 
     const filename = `dna-card-${id.slice(-8)}-bird${birdPosition + 1}-CR80.pdf`;
@@ -886,7 +897,63 @@ export const createDnaPaymentOrder = async (req: AuthRequest, res: Response, nex
   }
 };
 
-// ─── Public: verify DNA result (for QR code scan page) ───────────────────────
+// ─── Public: the page a printed DNA card's QR code opens ─────────────────────
+//
+// Rendered server-side rather than handed to the SPA, because the URL is printed
+// onto physical cards and has to keep working independently of whatever the
+// storefront is built with. Errors render as HTML too — a scanner must never see
+// a raw JSON error blob. See utils/verificationUrl.ts.
+
+export const renderDnaVerification = async (req: Request, res: Response) => {
+  const html = (status: number, body: string) => res
+    .status(status)
+    .set('Content-Type', 'text/html; charset=utf-8')
+    // Results can be corrected after issue, so a scan must reflect current data.
+    .set('Cache-Control', 'no-store')
+    .send(body);
+
+  try {
+    // `rid`/`b` are the short params printed on new cards; the long forms are
+    // accepted so any link already shared by the old /dna-verify page resolves.
+    const rid = req.query.rid ?? req.query.requestId;
+    const b = req.query.b ?? req.query.birdIndex;
+
+    const requestId = typeof rid === 'string' ? rid.trim() : '';
+    if (!requestId || !mongoose.Types.ObjectId.isValid(requestId)) {
+      return html(400, renderDnaVerificationError('This verification link is not valid. Please rescan the QR code on the card.'));
+    }
+
+    const birdIndex = Number(b);
+    if (!Number.isInteger(birdIndex) || birdIndex < 0) {
+      return html(400, renderDnaVerificationError('This verification link is not valid. Please rescan the QR code on the card.'));
+    }
+
+    const serviceRequest: any = await ServiceRequest.findById(requestId)
+      .select('customerName farm birds updatedAt');
+
+    const bird = serviceRequest?.birds?.[birdIndex];
+    if (!bird) {
+      return html(404, renderDnaVerificationError('No certificate was found for this code. If you believe this is an error, contact Petmaza DNA Labs.'));
+    }
+
+    return html(200, renderDnaVerificationPage({
+      certNumber: `PML-DNA-${requestId.slice(-8).toUpperCase()}-B${birdIndex + 1}`,
+      birdIndex,
+      birdName: bird.birdName,
+      bandId: bird.bandId,
+      species: bird.species,
+      dnaResult: bird.dnaResult || null,
+      farm: serviceRequest.farm,
+      customerName: serviceRequest.customerName,
+      testDate: serviceRequest.updatedAt,
+    }));
+  } catch (error: any) {
+    logger.error('[DNA verify] render failed:', error);
+    return html(500, renderDnaVerificationError('Verification is temporarily unavailable. Please try again in a moment.'));
+  }
+};
+
+// ─── Public: verify DNA result (JSON) ────────────────────────────────────────
 
 export const verifyDnaResult = async (req: Request, res: Response, next: NextFunction) => {
   try {
