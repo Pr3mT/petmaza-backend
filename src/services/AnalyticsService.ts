@@ -23,19 +23,35 @@ export interface OrderReport {
   items: number;
 }
 
+export type OrderType = 'NORMAL' | 'PRIME' | 'QUICK';
+
 export class AnalyticsService {
+  /**
+   * Narrow a query to one order channel (same semantics as GET /admin/orders).
+   * Undefined orderType = every channel combined.
+   */
+  private static applyOrderType(query: any, orderType?: string) {
+    if (orderType === 'PRIME') query.isPrime = true;
+    else if (orderType === 'QUICK') query.orderChannel = 'QUICK';
+    else if (orderType === 'NORMAL') {
+      query.isPrime = { $ne: true };
+      query.orderChannel = { $ne: 'QUICK' };
+    }
+    return query;
+  }
+
   /**
    * Get analytics data for a specific time period
    */
-  static async getAnalytics(period: TimePeriod, startDate?: Date, endDate?: Date): Promise<AnalyticsData[]> {
+  static async getAnalytics(period: TimePeriod, startDate?: Date, endDate?: Date, orderType?: string): Promise<AnalyticsData[]> {
     const dateRange = this.getDateRange(period, startDate, endDate);
     const { start, end, groupFormat } = dateRange;
 
     // Query orders within date range and with payment status 'Paid'
-    const orders = await Order.find({
+    const orders = await Order.find(this.applyOrderType({
       createdAt: { $gte: start, $lte: end },
       payment_status: 'Paid', // Only count paid orders
-    }).sort({ createdAt: 1 });
+    }, orderType)).sort({ createdAt: 1 });
 
     // Group orders by period
     const groupedData = new Map<string, {
@@ -86,9 +102,10 @@ export class AnalyticsService {
     status?: string,
     paymentStatus?: string,
     limit: number = 100,
-    skip: number = 0
+    skip: number = 0,
+    orderType?: string
   ): Promise<{ orders: OrderReport[]; total: number }> {
-    const query: any = {};
+    const query: any = this.applyOrderType({}, orderType);
 
     if (startDate || endDate) {
       query.createdAt = {};
@@ -134,10 +151,10 @@ export class AnalyticsService {
   /**
    * Get summary statistics
    */
-  static async getSummary(startDate?: Date, endDate?: Date) {
-    const query: any = {
+  static async getSummary(startDate?: Date, endDate?: Date, orderType?: string) {
+    const query: any = this.applyOrderType({
       payment_status: 'Paid',
-    };
+    }, orderType);
 
     if (startDate || endDate) {
       query.createdAt = {};

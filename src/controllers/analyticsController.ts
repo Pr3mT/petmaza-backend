@@ -3,6 +3,18 @@ import { AuthRequest } from '../middlewares/auth';
 import { AnalyticsService, TimePeriod } from '../services/AnalyticsService';
 import { AppError } from '../middlewares/errorHandler';
 
+const ORDER_TYPES = ['NORMAL', 'PRIME', 'QUICK'];
+
+/** Read + validate the optional channel filter. Empty/absent = all channels. */
+const readOrderType = (req: AuthRequest): string | undefined => {
+  const orderType = (req.query.orderType as string) || '';
+  if (!orderType || orderType === 'ALL') return undefined;
+  if (!ORDER_TYPES.includes(orderType)) {
+    throw new AppError('Invalid orderType. Must be: NORMAL, PRIME or QUICK', 400);
+  }
+  return orderType;
+};
+
 /**
  * Get analytics data (revenue, profit, orders) for a time period
  */
@@ -24,12 +36,14 @@ export const getAnalytics = async (req: AuthRequest, res: Response, next: NextFu
       return next(new AppError('Invalid period. Must be: daily, weekly, monthly, or yearly', 400));
     }
 
-    const data = await AnalyticsService.getAnalytics(period, startDate, endDate);
+    const orderType = readOrderType(req);
+    const data = await AnalyticsService.getAnalytics(period, startDate, endDate, orderType);
 
     res.status(200).json({
       success: true,
       data: {
         period,
+        orderType: orderType || 'ALL',
         analytics: data,
       },
     });
@@ -64,7 +78,8 @@ export const getOrderReport = async (req: AuthRequest, res: Response, next: Next
       status,
       paymentStatus,
       limit,
-      skip
+      skip,
+      readOrderType(req)
     );
 
     res.status(200).json({
@@ -92,7 +107,7 @@ export const getSummary = async (req: AuthRequest, res: Response, next: NextFunc
       return next(new AppError('Invalid endDate format', 400));
     }
 
-    const summary = await AnalyticsService.getSummary(startDate, endDate);
+    const summary = await AnalyticsService.getSummary(startDate, endDate, readOrderType(req));
 
     res.status(200).json({
       success: true,
