@@ -188,6 +188,12 @@ export interface IOrder extends Document {
     tracking_link?: string;
     status?: string;
   };
+  // Package dimensions in centimetres, captured by the fulfiller at Mark Packed.
+  packageDimensions?: {
+    length_cm?: number;
+    width_cm?: number;
+    height_cm?: number;
+  };
   assignedVendorId?: Types.ObjectId | string; // For single vendor orders
   assignedVendors?: (Types.ObjectId | string)[]; // For split shipments
   acceptanceDeadline?: Date;

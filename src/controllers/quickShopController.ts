@@ -749,6 +749,19 @@ export const markPacked = async (req: AuthRequest, res: Response, next: NextFunc
     if (order.status !== 'ACCEPTED') {
       return next(new AppError(`Cannot pack order that is ${order.status}`, 400));
     }
+    // ── Optional package dimensions (cm), entered in the Mark Packed popup ─────
+    const dims: any = {};
+    for (const key of ['length_cm', 'width_cm', 'height_cm'] as const) {
+      const raw = req.body[key];
+      if (raw !== undefined && String(raw).trim() !== '') {
+        const n = Number(raw);
+        if (isNaN(n) || n <= 0) {
+          return next(new AppError('Package dimensions must be positive numbers (in cm)', 400));
+        }
+        dims[key] = n;
+      }
+    }
+    if (Object.keys(dims).length) order.packageDimensions = dims;
     order.status = 'PACKED';
     await order.save();
     res.status(200).json({ success: true, message: 'Order marked as packed', data: { order } });

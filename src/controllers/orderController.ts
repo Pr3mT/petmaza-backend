@@ -834,6 +834,22 @@ export const updateOrderStatus = async (
       }
     }
 
+    // Optional package dimensions (cm), entered in the Mark Packed popup.
+    if (status === 'PACKED') {
+      const dims: any = {};
+      for (const key of ['length_cm', 'width_cm', 'height_cm'] as const) {
+        const raw = (req.body as any)[key];
+        if (raw !== undefined && String(raw).trim() !== '') {
+          const n = Number(raw);
+          if (isNaN(n) || n <= 0) {
+            return next(new AppError('Package dimensions must be positive numbers (in cm)', 400));
+          }
+          dims[key] = n;
+        }
+      }
+      if (Object.keys(dims).length) order.packageDimensions = dims as any;
+    }
+
     // Update status
     order.status = status as any;
     await order.save();
@@ -932,6 +948,22 @@ export const adminUpdateOrderStatus = async (
     const order = await Order.findById(orderId);
     if (!order) {
       return next(new AppError('Order not found', 404));
+    }
+
+    // Optional package dimensions (cm), entered in the admin Mark Packed popup.
+    if (status === 'PACKED') {
+      const dims: any = {};
+      for (const key of ['length_cm', 'width_cm', 'height_cm'] as const) {
+        const raw = (req.body as any)[key];
+        if (raw !== undefined && String(raw).trim() !== '') {
+          const n = Number(raw);
+          if (isNaN(n) || n <= 0) {
+            return next(new AppError('Package dimensions must be positive numbers (in cm)', 400));
+          }
+          dims[key] = n;
+        }
+      }
+      if (Object.keys(dims).length) order.packageDimensions = dims as any;
     }
 
     order.status = status as any;

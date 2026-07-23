@@ -181,6 +181,12 @@ const orderSchema = new Schema<IOrder>(
       tracking_link: String,
       status: String,
     },
+    // Package dimensions (cm) — captured by the fulfiller when marking packed.
+    packageDimensions: {
+      length_cm: { type: Number, min: 0.001 },
+      width_cm: { type: Number, min: 0.001 },
+      height_cm: { type: Number, min: 0.001 },
+    },
     assignedVendorId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
