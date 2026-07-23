@@ -10,7 +10,6 @@ import cloudinary from '../config/cloudinary';
 import {
   generateDnaRequestPdf,
   generateDnaResultCertificatePdf,
-  generateDnaCardPdf,
 } from '../services/dnaPdfGenerator';
 import { buildDnaVerificationUrl } from '../utils/verificationUrl';
 import {
@@ -561,7 +560,7 @@ export const downloadResultCertificatePdf = async (req: AuthRequest, res: Respon
   }
 };
 
-// ─── Admin: Download DNA certificate card with static PetMaza QR ─────────────
+// ─── Admin: Download print-ready CR80 card (certificate artwork + static QR) ──
 
 export const downloadCertificateCardPdf = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -583,7 +582,14 @@ export const downloadCertificateCardPdf = async (req: AuthRequest, res: Response
       return next(new AppError('DNA result has not been set yet', 400));
     }
 
-    const pdfBuffer = await generateDnaCardPdf({
+    // The print-ready CR80 card reuses the EXACT certificate artwork — same
+    // generator, print-ready branch → single page at CR80/300 DPI with the cover
+    // auto-skipped — so the card and the A4 certificate are one matched design.
+    // The physical card intentionally carries the STATIC petmaza.com QR
+    // (useStaticQr): it's a brand/marketing touchpoint that must keep resolving
+    // for the life of the card. The A4 certificate keeps the dynamic /verify/dna
+    // QR (see downloadResultCertificatePdf above) for per-bird verification.
+    const pdfBuffer = await generateDnaResultCertificatePdf({
       requestId: id,
       birdIndex: birdPosition,
       birdName: bird.birdName,
@@ -592,14 +598,11 @@ export const downloadCertificateCardPdf = async (req: AuthRequest, res: Response
       dnaResult,
       collectionDate: bird.collectionDateTime,
       testDate: serviceRequest.updatedAt,
-      // The printed card now carries the same per-bird verification QR as the
-      // A4 certificate. It used to fall back to the static petmaza.com QR
-      // (useStaticQr) because no working verification page existed — scanning a
-      // card just opened the shop homepage, which is the whole reason the cards
-      // read as broken. A result is required above, so this always resolves.
-      verificationUrl: buildDnaVerificationUrl(id, birdPosition),
+      verificationUrl: 'https://www.petmaza.com',
       customerName: serviceRequest.customerName,
       farm: serviceRequest.farm,
+      useStaticQr: true,
+      printReady: true,
     });
 
     const filename = `dna-card-${id.slice(-8)}-bird${birdPosition + 1}-CR80.pdf`;

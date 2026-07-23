@@ -1,0 +1,102 @@
+Date,OrderID,Customer,Vendor,Status,Payment,GoodsRevenue,DeliveryCharged,PlatformFee,TotalPaidByCustomer,GoodsCost,CourierCostPaid,VendorPayout,PlatformNet,CountedInTotals,PromoOrder,RazorpayOrderId,RazorpayFee (2%),NetAfterRazorpay
+17-06-26,6a324f1775482fb98fdbd2d5,Jyoti Kokane,Bangalore Bird Accessories,DELIVERED,Paid,140,50,10,200,70,50,120,80,YES,NO,order_T2cR1V2yscmMyv,4.00,76.00
+24-06-26,6a3b939c75482fb98fdbf763,Amit Gondhali,Bangalore Bird Accessories,CANCELLED,Failed,75,50,10,135,150,0,150,-15,NO,NO,,0.00,-15.00
+26-06-26,6a3e887b91f44276bcf9e7be,SAYALI PATIL,RameshShirke,CANCELLED,Failed,1100,0,10,1110,550,0,550,560,NO,NO,order_T6HvHmPZIkubmT,0.00,560.00
+26-06-26,6a3ea95791f44276bcf9ec92,SAYALI PATIL,RameshShirke,CANCELLED,Failed,1100,0,10,1110,550,0,550,560,NO,NO,order_T6KJUBBjeZJK2r,0.00,560.00
+28-06-26,6a40a7b40d1d04d09170a72e,Royal pet store,Sub Admin,CANCELLED,Paid,1100,0,0,1100,550,0,550,550,NO,NO,order_T6vPaEGIHtZ6d5,22.00,528.00
+01-07-26,6a446d490a78b22975815d5f,Pooja Gawand,Canine Products,CANCELLED,Paid,200,0,0,200,125,0,125,75,NO,NO,order_T83biJBc5DJ88Y,4.00,71.00
+03-07-26,6a47ac4b0a78b22975817a99,Anuradha Prajapati,Bangalore Bird Accessories,DELIVERED,Paid,760,0,0,760,346,90,436,324,YES,NO,order_T920yiYZczZNy1,15.20,308.80
+13-07-26,6a54a9c5ae9111b3db6a4391,Rajesh Choudhary,Shahid pathan,CANCELLED,Failed,2200,0,5,2205,990,0,990,1215,NO,NO,order_TCvkq5AanntBB1,0.00,"1,215.00"
+13-07-26,6a54a9c6ae9111b3db6a4393,Rajesh Choudhary,Bangalore Bird Accessories,CANCELLED,Failed,300,0,5,305,150,0,150,155,NO,NO,order_TCvkq5AanntBB1,0.00,155.00
+13-07-26,6a54c29eae9111b3db6a4697,Adesh Jitekar,RameshShirke,ACCEPTED,Paid,10,0,0,10,10,0,10,0,NO,NO,order_TCxYo1PsXDhSWS,0.20,-0.20
+13-07-26,6a54c4b1ae9111b3db6a4722,Adesh Jitekar,RameshShirke,CANCELLED,Failed,10,0,0,10,10,0,10,0,NO,NO,order_TCxiAHEtkcTw7P,0.00,0.00
+13-07-26,6a54c619ae9111b3db6a4795,Omkar Kudavkar,RameshShirke,PACKED,Paid,10,0,0,10,10,0,10,0,YES,NO,order_TCxoV4sU33SKuO,0.20,-0.20
+13-07-26,6a54c798ae9111b3db6a47f0,Omkar Kudavkar,RameshShirke,REFUNDED,Refunded,10,0,0,10,10,0,10,0,NO,NO,order_TCxvFE6LIB68du,0.00,0.00
+13-07-26,6a54c965ae9111b3db6a482d,Adesh Jitekar,RameshShirke,REFUNDED,Refunded,10,0,0,10,10,0,10,0,NO,NO,order_TCy3MEwseFTl80,0.00,0.00
+13-07-26,6a54d13eae9111b3db6a4927,Rajesh Choudhary,Shahid pathan,CANCELLED,Failed,2200,0,5,2205,990,0,990,1215,NO,NO,order_TCycjUXtG4d8jC,0.00,"1,215.00"
+13-07-26,6a54d13eae9111b3db6a4929,Rajesh Choudhary,Bangalore Bird Accessories,CANCELLED,Failed,300,0,5,305,150,0,150,155,NO,NO,order_TCycjUXtG4d8jC,0.00,155.00
+13-07-26,6a54d1aaae9111b3db6a495d,Rajesh Choudhary,Shahid pathan,CANCELLED,Failed,2200,0,5,2205,990,0,990,1215,NO,NO,order_TCyecVpx8paq3D,0.00,"1,215.00"
+13-07-26,6a54d1aaae9111b3db6a495f,Rajesh Choudhary,Bangalore Bird Accessories,CANCELLED,Failed,300,0,5,305,150,0,150,155,NO,NO,order_TCyecVpx8paq3D,0.00,155.00
+13-07-26,6a54d1d2ae9111b3db6a4986,Rajesh Choudhary,Shahid pathan,CANCELLED,Failed,2200,0,5,2205,990,0,990,1215,NO,NO,order_TCyfKqcE9gmzFT,0.00,"1,215.00"
+13-07-26,6a54d1d2ae9111b3db6a4988,Rajesh Choudhary,Bangalore Bird Accessories,CANCELLED,Failed,300,0,5,305,150,0,150,155,NO,NO,order_TCyfKqcE9gmzFT,0.00,155.00
+13-07-26,6a54d449ae9111b3db6a4a24,Rajesh Choudhary,Shahid pathan,PACKED,Paid,2200,0,5,2205,990,200,1190,1015,YES,NO,order_TCyqRUtbun0FT8,44.10,970.90
+13-07-26,6a54d449ae9111b3db6a4a26,Rajesh Choudhary,Bangalore Bird Accessories,PICKED_UP,Paid,300,0,5,305,150,50,200,105,YES,NO,order_TCyqRUtbun0FT8,6.10,98.90
+13-07-26,6a54fbff65e4b86794fa07b8,Shantaram Sawant,Canine Products,CANCELLED,Failed,160,50,10,220,80,0,80,140,NO,NO,order_TD1jPxS2Ly2AIg,0.00,140.00
+14-07-26,6a55edd88f73b80d3bcc921b,Nihal Momin,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDJJQkqdLx8pc8,0.02,-0.02
+14-07-26,6a55eff58f73b80d3bcc927b,Arshad Shaikh,RameshShirke,CANCELLED,Pending,1,0,0,1,1,0,1,0,NO,YES,order_TDJSxoiQvxFVTW,0.00,0.00
+14-07-26,6a5638fa8f73b80d3bcc98ce,Nelson Hadke,RameshShirke,CANCELLED,Failed,1,0,0,1,1,0,1,0,NO,YES,order_TDOm4PFMDaljL7,0.00,0.00
+14-07-26,6a5643998f73b80d3bcc9992,DAKSH GAMING,RameshShirke,CANCELLED,Failed,1,0,0,1,1,0,1,0,NO,YES,order_TDPXvZl9DxySEl,0.00,0.00
+14-07-26,6a564a238f73b80d3bcc9a8d,DAKSH GAMING,RameshShirke,CANCELLED,Failed,1,0,0,1,1,0,1,0,NO,YES,order_TDQ1P4WhSE2IMx,0.00,0.00
+14-07-26,6a564b258f73b80d3bcc9aa7,DAKSH GAMING,RameshShirke,CANCELLED,Failed,1,0,0,1,1,0,1,0,NO,YES,order_TDQ5wdMDNOdWG2,0.00,0.00
+14-07-26,6a564c808f73b80d3bcc9ad6,Mohil Patel,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDQC3BJNtEpB9S,0.02,-0.02
+14-07-26,6a564d568f73b80d3bcc9b43,Heera Lal,RameshShirke,CANCELLED,Failed,1,0,0,1,1,0,1,0,NO,YES,order_TDQFocDF8NKTC1,0.00,0.00
+14-07-26,6a564e0b8f73b80d3bcc9b6e,DAKSH GAMING,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDQJ0TLqoea51d,0.02,-0.02
+14-07-26,6a5650d78f73b80d3bcc9c2a,abdul mayana,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDQVcFBats5KsP,0.02,-0.02
+14-07-26,6a5654248f73b80d3bcc9cad,Akash kable Kable,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDQkUjHUf5EnNm,0.02,-0.02
+14-07-26,6a56853a8f73b80d3bcca004,Nelson Hadke,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDUJhtpYRN4Fqq,0.02,-0.02
+14-07-26,6a5686738f73b80d3bcca078,Nelson Hadke,RameshShirke,CANCELLED,Failed,300,50,10,360,180,0,180,180,NO,NO,order_TDUPE2PUjLDrD8,0.00,180.00
+14-07-26,6a5687fa8f73b80d3bcca0c1,Vidhan Nitnaware,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDUW70eOIl96dP,0.02,-0.02
+14-07-26,6a568a378f73b80d3bcca13c,Hatim K Bhori,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDUgCX56jS6NHf,0.02,-0.02
+15-07-26,6a56f80e807dd056d5c6548a,Aryan Jamgade,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDcfG5YYCDx1It,0.02,-0.02
+15-07-26,6a57b6ea807dd056d5c65e99,Pratik Chikne,RameshShirke,PACKED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TDqXRzQFRRYAWU,0.02,-0.02
+17-07-26,6a5a58ed807dd056d5c66d90,Rajesh Choudhary,RameshShirke,DELIVERED,Paid,1,0,0,1,1,200,201,-200,NO,YES,order_TEdXFJVNa2cU6d,0.02,-200.02
+18-07-26,6a5b59d5807dd056d5c670ae,Shrinika Salon,RameshShirke,CANCELLED,Failed,1,0,5,6,1,0,1,5,NO,NO,order_TEwD7XeghTVojO,0.00,5.00
+18-07-26,6a5b59d5807dd056d5c670b2,Shrinika Salon,RameshShirke,CANCELLED,Failed,530,0,5,535,374,0,374,161,NO,NO,order_TEwD7XeghTVojO,0.00,161.00
+18-07-26,6a5b5a41807dd056d5c670fd,Shrinika Salon,RameshShirke,DELIVERED,Paid,530,0,10,540,374,100,474,66,YES,NO,order_TEwF2JpeOkuK39,10.80,55.20
+19-07-26,6a5c7051807dd056d5c67ac7,Shrinika Salon,RameshShirke,CANCELLED,Failed,700,0,10,710,300,0,300,410,NO,NO,order_TFGSGMlAkXFK7u,0.00,410.00
+19-07-26,6a5c7078807dd056d5c67adf,Shrinika Salon,RameshShirke,DELIVERED,Paid,350,50,10,410,150,100,250,160,YES,NO,order_TFGSxLg2VWljHV,8.20,151.80
+21-07-26,6a5ee3c91cf315d85e3cad24,Mayana Abdul,RameshShirke,ACCEPTED,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TG04I1K77krJ1H,0.02,-0.02
+21-07-26,6a5f98dbd62bfa83db75bf0a,Samruddhi Amrutkar,Jahnvi Amrutkar,PENDING,Failed,150,0,0,150,150,0,150,0,NO,NO,order_TGDEMPex1rPWxT,0.00,0.00
+21-07-26,6a5f9ae4d62bfa83db75bf29,Samruddhi Amrutkar,Jahnvi Amrutkar,CANCELLED,Failed,150,0,0,150,150,0,150,0,NO,NO,order_TGDNWoWqbM5IQ5,0.00,0.00
+21-07-26,6a5f9c10d62bfa83db75bf7c,Samruddhi Amrutkar,Jahnvi Amrutkar,PENDING,Paid,1,0,0,1,1,0,1,0,NO,YES,order_TGDSo4FjMCEoiy,0.02,-0.02
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,Razorpay fee %,2.0%,,,,,
+,,,,,,,,,,,,,2670,,,,,
+,,,,,,,,,,,,,390,,,,,
+,,,,,,,,,,,,rahul,3060,,,,,
+,,,,,,,,,,,,Gross net (counted),"1,750.00",,,,,
+,,,,,,,,,,,,Less: Razorpay 2%,-88.60,,,,,
+,,,,,,,,,,,,profit,"1,661.40",,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,
+,,,prem,30%,498,,,,,,,,,,,,,
+,,,saundarya,5%,83,,,,,,,,,,,,,
+,,,rahul,65%,"1,080",,,,,,,,,,,,,
+,,,Total,100%,"1,661",,,,,,,,,,,,,

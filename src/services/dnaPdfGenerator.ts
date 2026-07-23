@@ -340,7 +340,6 @@ export async function generateDnaResultCertificatePdf(
   return new Promise(async (resolve, reject) => {
     try {
       // -- Drawing coordinate system (logical canvas) ------------------------
-      const PW = 794;
       const PH = 540;
 
       // print-ready = single-page, 300 DPI CR80 equivalent (1013×638 pts).
@@ -350,9 +349,16 @@ export async function generateDnaResultCertificatePdf(
 
       const PAGE_W = isPrintReady ? 1013 : 841.89;   // CR80@300DPI  vs  A4-landscape
       const PAGE_H = isPrintReady ? 638  : 595.28;
-      // uniform scale so the 794×540 logical canvas fills the output page
+      // Logical canvas width. The A4 certificate keeps the original 794 (a 1.47
+      // aspect that y-centres inside A4-landscape). The print-ready CR80 card
+      // widens the canvas to the CR80 aspect (PH * 1013/638 ≈ 858) so the SAME
+      // certificate artwork fills the card edge-to-edge — no white pillarbox
+      // bars, and the header/footer/background bands reach both card edges.
+      // Because PW = PH * PAGE_W / PAGE_H, PW*S == PAGE_W exactly → true full bleed.
+      const PW = isPrintReady ? (PH * PAGE_W) / PAGE_H : 794;
+      // uniform scale so the logical canvas fills the output page
       const S        = isPrintReady ? PAGE_H / PH : PAGE_W / PW;  // 1.181 or 1.060
-      const OFFSET_X = isPrintReady ? (PAGE_W - PW * S) / 2 : 0;  // x-pillarbox for CR80
+      const OFFSET_X = 0;                                          // full bleed on both modes
       const OFFSET_Y = isPrintReady ? 0 : (PAGE_H - PH * S) / 2;  // y-centre for A4
 
       // Helper: called once per page right after creation/addPage
@@ -896,6 +902,13 @@ export async function generateDnaResultCertificatePdf(
 }
 
 // ─── 3. Printed DNA Card (CR80 ID-card, front + back) ────────────────────────
+//
+// @deprecated — NO LONGER USED. The "Print-Ready Card (CR80)" download now
+// reuses generateDnaResultCertificatePdf({ printReady: true, useStaticQr: true })
+// so the card and the A4 certificate share ONE design (product decision, 2026-07).
+// This standalone wallet-card layout (its own header/result-box/detail-grid)
+// looked nothing like the certificate, which was the whole complaint. Kept here
+// only for reference; delete once you're confident the unified card is final.
 //
 // This is NOT the certificate. The certificate is an A4 document meant to be
 // read / filed; the card is a wallet-size plastic card (85.6 x 54 mm) that
