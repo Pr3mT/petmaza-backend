@@ -583,12 +583,15 @@ export const downloadCertificateCardPdf = async (req: AuthRequest, res: Response
     }
 
     // The print-ready CR80 card reuses the EXACT certificate artwork — same
-    // generator, print-ready branch → single page at CR80/300 DPI with the cover
-    // auto-skipped — so the card and the A4 certificate are one matched design.
-    // The physical card intentionally carries the STATIC petmaza.com QR
-    // (useStaticQr): it's a brand/marketing touchpoint that must keep resolving
-    // for the life of the card. The A4 certificate keeps the dynamic /verify/dna
-    // QR (see downloadResultCertificatePdf above) for per-bird verification.
+    // generator, print-ready branch → 2 pages at CR80/300 DPI: page 1 = card
+    // FRONT (brand cover, same layout as the A4 certificate's cover page),
+    // page 2 = card BACK (fields + QR + result) — so the card and the A4
+    // certificate are one matched design, just card-front/back instead of
+    // cover/certificate. The physical card intentionally carries the STATIC
+    // petmaza.com QR (useStaticQr): it's a brand/marketing touchpoint that must
+    // keep resolving for the life of the card. The A4 certificate keeps the
+    // dynamic /verify/dna QR (see downloadResultCertificatePdf above) for
+    // per-bird verification.
     const pdfBuffer = await generateDnaResultCertificatePdf({
       requestId: id,
       birdIndex: birdPosition,

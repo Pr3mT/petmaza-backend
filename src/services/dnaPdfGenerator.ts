@@ -342,7 +342,10 @@ export async function generateDnaResultCertificatePdf(
       // -- Drawing coordinate system (logical canvas) ------------------------
       const PH = 540;
 
-      // print-ready = single-page, 300 DPI CR80 equivalent (1013×638 pts).
+      // print-ready = 2-page CR80 equivalent at 300 DPI (1013×638 pts): page 1 is
+      // the card FRONT (brand cover), page 2 is the card BACK (fields + QR +
+      // result) — same front/back convention as a physical ID card, and the
+      // same two pages as the A4 certificate below, just sized to CR80.
       // When card printers rasterize at 1 pt = 1 px they get 300 DPI on the card.
       // regular   = 2-page A4 landscape (cover + certificate) for screen / inkjet.
       const isPrintReady = !!data.printReady;
@@ -720,9 +723,10 @@ export async function generateDnaResultCertificatePdf(
       };
 
       // ====================================================================
-      //  PAGE 1 — COVER  (skipped when skipCover or printReady)
+      //  PAGE 1 — COVER  (card FRONT in print-ready mode; skipped only when
+      //  the caller explicitly opts out via data.skipCover)
       // ====================================================================
-      const skipCover = !!data.skipCover || !!isPrintReady;
+      const skipCover = !!data.skipCover;
       if (!skipCover) {
       doc.rect(0, 0, PW, PH).fill(CREAM);
 
