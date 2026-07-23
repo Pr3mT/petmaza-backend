@@ -1314,6 +1314,151 @@ export const adminAddShippingDetails = async (
   }
 };
 
+// Admin/Sub-admin: edit the shipping details already filed for an order.
+// Lets an admin correct the courier/tracking/receipt after they were saved
+// (any status), without needing to delete-and-re-add the record.
+export const adminUpdateShippingDetails = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const orderId = req.params.id;
+
+    const mongoose = await import('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return next(new AppError('Invalid order ID format', 400));
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return next(new AppError('Order not found', 404));
+    }
+
+    const existing = await ShippingDetails.findOne({ order_id: orderId });
+    if (!existing) {
+      return next(new AppError('No shipping details to edit for this order. Add them first.', 404));
+    }
+
+    const courierName = String(
+      req.body.shipping_company || req.body.courier_name || req.body.courier || ''
+    ).trim();
+    const trackingId = String(req.body.tracking_id || req.body.trackingNumber || '').trim();
+    const trackingLink = String(req.body.tracking_link || '').trim();
+    const { shipping_cost, total_weight, weight_unit, delivery_type } = req.body;
+
+    if (!courierName) {
+      return next(new AppError('Shipping company name is required', 400));
+    }
+    if (!trackingId) {
+      return next(new AppError('Tracking ID is required', 400));
+    }
+    if (trackingLink && !/^https?:\/\/\S+$/i.test(trackingLink)) {
+      return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
+    }
+    if (shipping_cost !== undefined && String(shipping_cost).trim() !== '') {
+      if (isNaN(Number(shipping_cost)) || Number(shipping_cost) < 0) {
+        return next(new AppError('Shipping cost must be a non-negative number', 400));
+      }
+    }
+    const hasWeight = total_weight !== undefined && String(total_weight).trim() !== '';
+    if (hasWeight && (isNaN(Number(total_weight)) || Number(total_weight) <= 0)) {
+      return next(new AppError('Total weight must be a positive number', 400));
+    }
+    if (hasWeight && !['kg', 'g'].includes(weight_unit)) {
+      return next(new AppError('Weight unit must be kg or g', 400));
+    }
+    if (delivery_type && !['inter_state', 'out_of_state'].includes(delivery_type)) {
+      return next(new AppError('Delivery type must be inter_state or out_of_state', 400));
+    }
+
+    const set: Record<string, any> = {
+      shipping_company: courierName,
+      tracking_id: trackingId,
+    };
+    const unset: Record<string, string> = {};
+
+    if (trackingLink) set.tracking_link = trackingLink;
+    else unset.tracking_link = '';
+
+    if (shipping_cost !== undefined && String(shipping_cost).trim() !== '') {
+      set.shipping_cost = Number(shipping_cost);
+    } else {
+      unset.shipping_cost = '';
+    }
+
+    if (hasWeight) {
+      set.total_weight = Number(total_weight);
+      set.weight_unit = weight_unit;
+    } else {
+      unset.total_weight = '';
+      unset.weight_unit = '';
+    }
+
+    if (delivery_type) set.delivery_type = delivery_type;
+    else unset.delivery_type = '';
+
+    // ── Replace the receipt on Cloudinary only when a new file is uploaded ──
+    if (req.file) {
+      const isPdf = req.file.mimetype === 'application/pdf';
+      const uploadResult: any = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'petmaza/shipping-receipts',
+            resource_type: isPdf ? 'raw' : 'image',
+            ...(isPdf ? { format: 'pdf' } : {}),
+          },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        streamifier.createReadStream(req.file!.buffer).pipe(stream);
+      });
+
+      // Best-effort cleanup of the previous asset (ignore failures).
+      if (existing.receipt_file_public_id) {
+        const oldIsRaw = (existing.receipt_file_url || '').includes('/raw/');
+        try {
+          await cloudinary.uploader.destroy(existing.receipt_file_public_id, {
+            resource_type: oldIsRaw ? 'raw' : 'image',
+          });
+        } catch (cleanupErr: any) {
+          logger.warn(`[adminUpdateShippingDetails] Old receipt cleanup failed: ${cleanupErr?.message}`);
+        }
+      }
+
+      set.receipt_file_url = uploadResult.secure_url;
+      set.receipt_file_public_id = uploadResult.public_id;
+    }
+
+    await ShippingDetails.updateOne(
+      { _id: existing._id },
+      { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) }
+    );
+
+    // Keep the order's inline courier snapshot in sync.
+    if (!order.courier) order.courier = {};
+    order.courier.name = courierName;
+    order.courier.tracking_id = trackingId;
+    if (trackingLink) order.courier.tracking_link = trackingLink;
+    else if (order.courier.tracking_link) order.courier.tracking_link = undefined;
+    await order.save();
+
+    logger.info(`[adminUpdateShippingDetails] Order ${orderId} shipping details edited by admin ${req.user._id}`);
+
+    const updated = await ShippingDetails.findById(existing._id);
+    res.status(200).json({
+      success: true,
+      message: 'Shipping details updated.',
+      data: { shippingDetails: updated },
+    });
+  } catch (error: any) {
+    logger.error('[adminUpdateShippingDetails] Error:', error);
+    next(error);
+  }
+};
+
 /**
  * Create Prime Order
  * Creates a direct order for a prime product listing

@@ -15,6 +15,7 @@ import {
   adminAssignOrderToVendor,
   getOrderShippingDetails,
   adminAddShippingDetails,
+  adminUpdateShippingDetails,
   getVendorOrderShippingDetails,
   adminProcessRefund,
 } from '../controllers/orderController';
@@ -51,5 +52,7 @@ router.post('/admin/:id/process-refund', verifyToken, checkRole('admin', 'sub_ad
 router.get('/admin/:id/shipping-details', verifyToken, checkRole('admin', 'sub_admin'), getOrderShippingDetails);
 // Admin/sub-admin adds courier & tracking on the vendor's behalf (PACKED → READY_TO_SHIP).
 router.post('/admin/:id/shipping-details', verifyToken, checkRole('admin', 'sub_admin'), uploadReceipt.single('receipt'), adminAddShippingDetails);
+// Admin/sub-admin edits the courier & tracking already filed for this order.
+router.put('/admin/:id/shipping-details', verifyToken, checkRole('admin', 'sub_admin'), uploadReceipt.single('receipt'), adminUpdateShippingDetails);
 
 export default router;
