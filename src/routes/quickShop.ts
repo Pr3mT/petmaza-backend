@@ -12,6 +12,9 @@ const router = express.Router();
 // yet; see QuickServiceabilityService.
 router.get('/availability', quickShopController.getAvailability);
 router.get('/products', quickShopController.getQuickProducts);
+// Address → coordinates, for customers whose browser can't locate them
+// accurately (any desktop, effectively).
+router.get('/geocode', quickShopController.searchAddress);
 router.post('/orders', verifyToken, quickShopController.createQuickOrder);
 
 // ── Shop Admin (QUICK_SHOP vendor) ──────────────────────────────────────────

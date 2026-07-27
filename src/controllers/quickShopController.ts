@@ -142,6 +142,92 @@ export const getQuickProducts = async (req: Request, res: Response, next: NextFu
   }
 };
 
+// ==================== CUSTOMER-FACING — ADDRESS SEARCH ====================
+// Desktop browsers have no GPS chip: navigator.geolocation falls back to WiFi
+// lookup and then to plain IP geolocation, which resolves to the ISP's regional
+// node and routinely lands 25 km+ from the real address. Against a 4 km delivery
+// radius that produces confidently wrong answers in both directions, so a
+// customer needs a way to say where they actually are.
+//
+// Backed by OpenStreetMap's Nominatim — free, no API key, no billing. We proxy
+// it instead of calling from the app so the User-Agent their usage policy
+// requires is actually sent, and so caching and the 1-request/second limit live
+// in one place rather than once per client.
+
+const geocodeCache = new Map<string, { at: number; results: any[] }>();
+const GEOCODE_TTL_MS = 24 * 60 * 60 * 1000; // Places don't move; a day is conservative.
+const GEOCODE_MAX_ENTRIES = 500;
+const NOMINATIM_MIN_GAP_MS = 1100; // Their policy allows at most 1 req/sec.
+
+let geocodeChain: Promise<any> = Promise.resolve();
+let lastGeocodeAt = 0;
+
+// Serialize outbound calls and space them out, so bursts of typing from several
+// customers can never exceed Nominatim's rate limit.
+async function nominatimSearch(q: string): Promise<any[]> {
+  const run = geocodeChain.then(async () => {
+    const wait = Math.max(0, lastGeocodeAt + NOMINATIM_MIN_GAP_MS - Date.now());
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    lastGeocodeAt = Date.now();
+
+    const url = new URL('https://nominatim.openstreetmap.org/search');
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('q', q);
+    url.searchParams.set('countrycodes', 'in');
+    url.searchParams.set('limit', '6');
+
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': `Petmaza/1.0 (${process.env.GEOCODE_CONTACT_EMAIL || 'support@petmaza.com'})`,
+        'Accept-Language': 'en',
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) {
+      throw new AppError('Address search is temporarily unavailable. Please try again.', 503);
+    }
+    return (await response.json()) as any[];
+  });
+  // Keep the chain alive after a failure, or one error would wedge every
+  // subsequent search behind a rejected promise.
+  geocodeChain = run.catch(() => undefined);
+  return run;
+}
+
+export const searchAddress = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 3) {
+      return res.status(200).json({ success: true, data: { results: [] } });
+    }
+
+    const key = q.toLowerCase();
+    const cached = geocodeCache.get(key);
+    if (cached && Date.now() - cached.at < GEOCODE_TTL_MS) {
+      return res.status(200).json({ success: true, data: { results: cached.results } });
+    }
+
+    const raw = await nominatimSearch(q);
+    const results = (raw || [])
+      .map((r: any) => ({
+        label: r.display_name,
+        lat: Number(r.lat),
+        lng: Number(r.lon),
+      }))
+      .filter((r: any) => isFinite(r.lat) && isFinite(r.lng));
+
+    // Cheap FIFO bound — this cache exists to spare Nominatim, not to be clever.
+    if (geocodeCache.size >= GEOCODE_MAX_ENTRIES) {
+      geocodeCache.delete(geocodeCache.keys().next().value as string);
+    }
+    geocodeCache.set(key, { at: Date.now(), results });
+
+    res.status(200).json({ success: true, data: { results } });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
 // Place a Petmaza Quick order — routed by the delivery point. The cart may hold
 // products from different dark stores whose radii both cover that point; routing
 // creates one order per shop.
