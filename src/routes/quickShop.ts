@@ -17,6 +17,9 @@ router.get('/products', quickShopController.getQuickProducts);
 // accurately (any desktop, effectively). Rate-limited harder than the rest
 // because it spends OpenStreetMap's budget, not ours.
 router.get('/geocode', geocodeLimiter, quickShopController.searchAddress);
+// Coordinates → area name, so a GPS fix can be shown back as a place the
+// customer recognises rather than as "your current location".
+router.get('/reverse-geocode', geocodeLimiter, quickShopController.reverseGeocode);
 router.post('/orders', verifyToken, quickShopController.createQuickOrder);
 
 // ── Shop Admin (QUICK_SHOP vendor) ──────────────────────────────────────────

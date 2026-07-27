@@ -163,18 +163,17 @@ let geocodeChain: Promise<any> = Promise.resolve();
 let lastGeocodeAt = 0;
 
 // Serialize outbound calls and space them out, so bursts of typing from several
-// customers can never exceed Nominatim's rate limit.
-async function nominatimSearch(q: string): Promise<any[]> {
+// customers can never exceed Nominatim's rate limit. Forward ("search") and
+// reverse lookups share one queue because the limit is per-client, not per-endpoint.
+async function nominatimGet(endpoint: 'search' | 'reverse', params: Record<string, string>): Promise<any> {
   const run = geocodeChain.then(async () => {
     const wait = Math.max(0, lastGeocodeAt + NOMINATIM_MIN_GAP_MS - Date.now());
     if (wait) await new Promise((r) => setTimeout(r, wait));
     lastGeocodeAt = Date.now();
 
-    const url = new URL('https://nominatim.openstreetmap.org/search');
+    const url = new URL(`https://nominatim.openstreetmap.org/${endpoint}`);
     url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('q', q);
-    url.searchParams.set('countrycodes', 'in');
-    url.searchParams.set('limit', '6');
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
     const response = await fetch(url, {
       headers: {
@@ -184,14 +183,27 @@ async function nominatimSearch(q: string): Promise<any[]> {
       signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) {
-      throw new AppError('Address search is temporarily unavailable. Please try again.', 503);
+      throw new AppError('Address lookup is temporarily unavailable. Please try again.', 503);
     }
-    return (await response.json()) as any[];
+    return response.json();
   });
   // Keep the chain alive after a failure, or one error would wedge every
-  // subsequent search behind a rejected promise.
+  // subsequent lookup behind a rejected promise.
   geocodeChain = run.catch(() => undefined);
   return run;
+}
+
+// Nominatim labels are long and administrative ("Khanda Colony, Panvel, Raigad,
+// Maharashtra, 410206, India"). Customers want to recognise their area at a
+// glance, so keep the specific parts and drop the state/pincode/country tail.
+function shortAreaLabel(place: any): string {
+  const a = place?.address || {};
+  const area =
+    a.neighbourhood || a.suburb || a.village || a.town || a.hamlet || a.residential || a.quarter;
+  const city = a.city || a.town || a.municipality || a.county;
+  const parts = [area, city].filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i);
+  if (parts.length) return parts.join(', ');
+  return String(place?.display_name || '').split(',').slice(0, 2).join(',').trim();
 }
 
 export const searchAddress = async (req: Request, res: Response, next: NextFunction) => {
@@ -210,10 +222,17 @@ export const searchAddress = async (req: Request, res: Response, next: NextFunct
       return res.status(200).json({ success: true, data: { results: cached.results } });
     }
 
-    const raw = await nominatimSearch(q);
-    const results = (raw || [])
+    const raw = await nominatimGet('search', {
+      q,
+      countrycodes: 'in',
+      limit: '6',
+      addressdetails: '1',
+    });
+    const results = ((raw || []) as any[])
       .map((r: any) => ({
         label: r.display_name,
+        // What the app shows once this result is picked.
+        area: shortAreaLabel(r),
         lat: Number(r.lat),
         lng: Number(r.lon),
       }))
@@ -226,6 +245,43 @@ export const searchAddress = async (req: Request, res: Response, next: NextFunct
     geocodeCache.set(key, { at: Date.now(), results });
 
     res.status(200).json({ success: true, data: { results } });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// Coordinates → area name. A GPS fix is just numbers, and "Your current
+// location" tells the customer nothing about whether we understood where they
+// are — showing "Khanda Colony, Panvel" lets them catch a wrong pin themselves.
+export const reverseGeocode = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const point = pointFromRequest(req.query);
+    if (!point) {
+      return next(new AppError('A valid lat and lng are required', 400));
+    }
+
+    // Round to ~100 m for the cache key: finer precision would make every fix a
+    // unique miss, and an area name doesn't change within a block anyway.
+    const key = `r:${point.lat.toFixed(3)},${point.lng.toFixed(3)}`;
+    const cached = geocodeCache.get(key);
+    if (cached && Date.now() - cached.at < GEOCODE_TTL_MS) {
+      return res.status(200).json({ success: true, data: { area: cached.results[0] || '' } });
+    }
+
+    const place = await nominatimGet('reverse', {
+      lat: String(point.lat),
+      lon: String(point.lng),
+      zoom: '16', // Neighbourhood level — the granularity customers recognise.
+      addressdetails: '1',
+    });
+    const area = shortAreaLabel(place);
+
+    if (geocodeCache.size >= GEOCODE_MAX_ENTRIES) {
+      geocodeCache.delete(geocodeCache.keys().next().value as string);
+    }
+    geocodeCache.set(key, { at: Date.now(), results: [area] });
+
+    res.status(200).json({ success: true, data: { area } });
   } catch (error: any) {
     next(error);
   }
