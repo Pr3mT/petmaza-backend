@@ -3,6 +3,7 @@ import Product from '../models/Product';
 import User from '../models/User';
 import VendorDetails from '../models/VendorDetails';
 import { AppError } from '../middlewares/errorHandler';
+import QuickServiceabilityService, { ServingShop } from './QuickServiceabilityService';
 import { IOrderItem } from '../types';
 import { VendorNotificationData, SalesRecordData } from './OrderQueue';
 import logger from '../config/logger';
@@ -547,11 +548,15 @@ export class OrderRoutingService {
   }
 
   /**
-   * Route a Petmaza Quick order. Every item comes from a QUICK_SHOP vendor
-   * whose serviceablePincodes covers the customer's pincode. A pincode can be
-   * served by several shops, so the cart may mix shops — items are grouped by
-   * shop and one order is created per shop. Pricing/stock come from each shop's
-   * own QuickProductListing rows, not the shared Product pricing.
+   * Route a Petmaza Quick order. Every item comes from a dark store whose own
+   * delivery radius covers the customer's delivery point (see
+   * QuickServiceabilityService). Radii overlap, so the cart may mix shops —
+   * items are grouped by shop and one order is created per shop. Pricing/stock
+   * come from each shop's own QuickProductListing rows, not shared Product pricing.
+   *
+   * `servingShops` is resolved by the caller (which already needed it to give the
+   * customer a decent out-of-range message), so serviceability is decided exactly
+   * once per order instead of twice with a chance of disagreeing.
    */
   static async routeQuickOrder(data: {
     customer_id: string;
@@ -563,26 +568,25 @@ export class OrderRoutingService {
       state: string;
       pincode: string;
       phone?: string;
+      location?: { lat: number; lng: number };
     };
     deliveryMode: 'HALF_HOUR' | 'ONE_DAY';
+    servingShops?: ServingShop[];
   }): Promise<{ orders: any[]; notifications: VendorNotificationData[] }> {
     const { customer_id, items, customerPincode, customerAddress, deliveryMode } = data;
 
-    const shopDetails = await VendorDetails.find({
-      vendorType: 'QUICK_SHOP',
-      serviceablePincodes: customerPincode,
-      isApproved: true,
-    });
+    const servingShops =
+      data.servingShops ??
+      (await QuickServiceabilityService.findServingShops({
+        point: customerAddress.location
+          ? { lat: customerAddress.location.lat, lng: customerAddress.location.lng }
+          : null,
+        pincode: customerPincode,
+      }));
 
-    if (!shopDetails.length) {
-      throw new AppError("Petmaza Quick isn't available in your area yet", 404);
-    }
-
-    const candidateIds = shopDetails.map((d) => d.vendor_id.toString());
-    const vendors = await User.find({ _id: { $in: candidateIds }, role: 'vendor', vendorType: 'QUICK_SHOP', isApproved: true });
-    const servingShopIds = new Set(vendors.map((v: any) => v._id.toString()));
+    const servingShopIds = new Set(servingShops.map((s) => s.vendorId));
     if (!servingShopIds.size) {
-      throw new AppError("Petmaza Quick isn't available in your area yet", 404);
+      throw new AppError("Petmaza Quick doesn't deliver to this address yet", 404);
     }
 
     const QuickProductListing = (await import('../models/QuickProductListing')).default;
@@ -613,14 +617,14 @@ export class OrderRoutingService {
         listing = listingByShopProduct.get(`${item.shop_id}:${item.product_id}`);
       }
       if (!listing) {
-        // No shop pinned (or that shop no longer lists it) — fall back to the
-        // cheapest serving shop that has this product in stock.
+        // No shop pinned (or that shop no longer reaches this address) — fall
+        // back to the cheapest in-range shop that has this product in stock.
         const options = (listingsByProduct.get(item.product_id) || []).filter((l) => l.stock >= item.quantity);
         options.sort((a, b) => a.sellingPrice - b.sellingPrice);
         listing = options[0];
       }
       if (!listing) {
-        throw new AppError(`This product isn't available from a Quick shop in your area`, 400);
+        throw new AppError(`This product isn't available from a Quick store that delivers to you`, 400);
       }
       if (listing.stock < item.quantity) {
         throw new AppError(`${listing.product_id.name} only has ${listing.stock} left at this Quick shop`, 400);

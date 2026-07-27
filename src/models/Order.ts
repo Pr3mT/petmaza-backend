@@ -226,6 +226,13 @@ const orderSchema = new Schema<IOrder>(
       phone: {
         type: String,
       },
+      // Delivery point, snapshotted at order time. Petmaza Quick decides which
+      // dark store can serve an order from this, so freezing it here keeps the
+      // decision reproducible even if the customer later edits the address.
+      location: {
+        lat: Number,
+        lng: Number,
+      },
     },
     deliveryCost: {
       type: Number,

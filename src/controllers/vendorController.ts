@@ -11,6 +11,7 @@ import { AuthRequest } from '../middlewares/auth';
 import { notifyWaitingCustomers } from './productNotificationController';
 import { clearCache } from '../middlewares/cache';
 import { ProductService } from '../services/ProductService';
+import { parseStoreLocationUpdate } from '../services/QuickServiceabilityService';
 
 export const getVendorProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -857,9 +858,22 @@ export const updateOwnVendorDetails = async (req: AuthRequest, res: Response, ne
       update.serviceablePincodes = serviceablePincodes.map((p: any) => String(p).trim()).filter(Boolean);
     }
 
+    // Petmaza Quick shops set their own dark-store pin + delivery radius here;
+    // for every other vendor type these fields simply never arrive.
+    const locationUpdate = parseStoreLocationUpdate(req.body);
+    if (locationUpdate.error) {
+      return next(new AppError(locationUpdate.error, 400));
+    }
+    Object.assign(update, locationUpdate.set || {});
+
     const details = await VendorDetails.findOneAndUpdate(
       { vendor_id: req.user._id },
-      { $set: update },
+      {
+        $set: update,
+        // Clearing the pin has to be an $unset — a $set of undefined is dropped
+        // by mongoose, which would silently leave the old location in place.
+        ...(locationUpdate.clearLocation ? { $unset: { storeLocation: '' } } : {}),
+      },
       { new: true, runValidators: true }
     );
 

@@ -15,6 +15,7 @@ import CategoryFulfillerMapping from '../models/CategoryFulfillerMapping';
 import '../models/PrimeProduct';
 import { VendorProductPricingService } from '../services/VendorProductPricingService';
 import { ShippingService } from '../services/ShippingService';
+import { parseStoreLocationUpdate } from '../services/QuickServiceabilityService';
 import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest } from '../middlewares/auth';
 
@@ -45,7 +46,7 @@ export const getUsers = async (req: AuthRequest, res: Response, next: NextFuncti
     if (vendorType === 'QUICK_SHOP' && users.length) {
       const VendorDetails = (await import('../models/VendorDetails')).default;
       const details = await VendorDetails.find({ vendor_id: { $in: users.map((u) => u._id) } })
-        .select('vendor_id shopName serviceablePincodes')
+        .select('vendor_id shopName serviceablePincodes storeLocation deliveryRadiusKm')
         .lean();
       const byVendor = new Map(details.map((d: any) => [d.vendor_id.toString(), d]));
       users = users.map((u) => {
@@ -54,6 +55,10 @@ export const getUsers = async (req: AuthRequest, res: Response, next: NextFuncti
           ...u.toObject(),
           shopName: d?.shopName || '',
           serviceablePincodes: d?.serviceablePincodes || [],
+          // Dark-store serviceability — the list shows "4 km radius" for located
+          // shops and falls back to the pincode chips for ones without a pin yet.
+          storeLocation: d?.storeLocation || null,
+          deliveryRadiusKm: d?.deliveryRadiusKm ?? null,
         };
       });
     }
@@ -652,6 +657,14 @@ export const createVendor = async (req: AuthRequest, res: Response, next: NextFu
       return next(new AppError('Please provide name, email, password and vendor type', 400));
     }
 
+    // Petmaza Quick dark store: where the shop physically is, and how far it
+    // delivers. This — not the pincode list — is what decides serviceability
+    // once it's set.
+    const locationUpdate = parseStoreLocationUpdate(req.body);
+    if (locationUpdate.error) {
+      return next(new AppError(locationUpdate.error, 400));
+    }
+
     if (!['PRIME', 'MY_SHOP', 'QUICK_SHOP'].includes(vendorType)) {
       return next(new AppError('Invalid vendor type. Must be PRIME, MY_SHOP or QUICK_SHOP', 400));
     }
@@ -712,6 +725,7 @@ export const createVendor = async (req: AuthRequest, res: Response, next: NextFu
         pincode: '000000',
       },
       serviceablePincodes: pincodes,
+      ...(locationUpdate.set || {}),
       isApproved: true,
       approvedBy: req.user._id,
       approvedAt: new Date(),
@@ -759,6 +773,11 @@ export const updateVendor = async (req: AuthRequest, res: Response, next: NextFu
       return next(new AppError('Vendor not found', 404));
     }
 
+    const locationUpdate = parseStoreLocationUpdate(req.body);
+    if (locationUpdate.error) {
+      return next(new AppError(locationUpdate.error, 400));
+    }
+
     // Optional delivery pincodes — validate 6-digit when provided.
     let pincodes: string[] | undefined;
     if (serviceablePincodes !== undefined) {
@@ -788,6 +807,11 @@ export const updateVendor = async (req: AuthRequest, res: Response, next: NextFu
         };
       }
       if (pincodes !== undefined) details.serviceablePincodes = pincodes;
+      if (locationUpdate.clearLocation) details.storeLocation = undefined;
+      if (locationUpdate.set?.storeLocation) details.storeLocation = locationUpdate.set.storeLocation;
+      if (locationUpdate.set?.deliveryRadiusKm !== undefined) {
+        details.deliveryRadiusKm = locationUpdate.set.deliveryRadiusKm;
+      }
       await details.save();
     }
 
@@ -1642,6 +1666,10 @@ export const getQuickBilling = async (req: AuthRequest, res: Response, next: Nex
         shopName: details?.shopName || 'N/A',
         businessType: details?.businessType || 'N/A',
         serviceablePincodes: details?.serviceablePincodes || vendor.pincodesServed || [],
+        // Dark-store coverage — the billing list shows "4 km radius" for located
+        // stores and falls back to the pincode count for ones without a pin.
+        storeLocation: details?.storeLocation || null,
+        deliveryRadiusKm: details?.deliveryRadiusKm ?? null,
         pickupAddress: details?.pickupAddress || vendor.address || null,
         rating: details?.rating || 0,
         completedOrders: details?.completedOrders || 0,

@@ -59,6 +59,14 @@ const userSchema = new Schema<IUser>(
       city: String,
       state: String,
       pincode: String,
+      // Captured once from GPS when the customer saves the address. Petmaza
+      // Quick needs a point, not a pincode, to tell which dark store can reach
+      // them — a pincode like 410206 is over 10 km wide. Optional: accounts
+      // created before this, or that declined location, simply have none.
+      location: {
+        lat: Number,
+        lng: Number,
+      },
     },
     dob: {
       type: String,

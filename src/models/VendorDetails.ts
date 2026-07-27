@@ -50,6 +50,36 @@ const vendorDetailsSchema = new Schema<IVendorDetails>(
       type: [String],
       default: [],
     },
+    // ── Petmaza Quick dark-store serviceability (QUICK_SHOP only) ─────────────
+    // A pincode is far too coarse for 30-minute delivery — 410206 alone spans
+    // New Panvel to Kalamboli. A Quick shop instead serves a CIRCLE: everything
+    // within `deliveryRadiusKm` of `storeLocation`. Other vendor types keep
+    // using serviceablePincodes, which is why that field stays.
+    //
+    // GeoJSON order is [longitude, latitude] — the opposite of how Google Maps
+    // shows it ("lat, lng"). VendorDetails.setStoreLocation() below takes the
+    // human order so callers can't get it backwards.
+    storeLocation: {
+      type: {
+        type: String,
+        enum: ['Point'],
+      },
+      coordinates: {
+        type: [Number],
+        validate: {
+          validator: (v: number[]) =>
+            !v || v.length === 0 ||
+            (v.length === 2 && v[0] >= -180 && v[0] <= 180 && v[1] >= -90 && v[1] <= 90),
+          message: 'storeLocation.coordinates must be [longitude, latitude] within valid ranges',
+        },
+      },
+    },
+    deliveryRadiusKm: {
+      type: Number,
+      default: 4,
+      min: [0.5, 'Delivery radius must be at least 0.5 km'],
+      max: [25, 'Delivery radius cannot exceed 25 km'],
+    },
     panCard: {
       type: String,
       trim: true,
@@ -142,6 +172,10 @@ const vendorDetailsSchema = new Schema<IVendorDetails>(
 vendorDetailsSchema.index({ vendorType: 1 });
 vendorDetailsSchema.index({ isApproved: 1 });
 vendorDetailsSchema.index({ serviceablePincodes: 1 });
+// 2dsphere indexes are sparse by default, so vendors without a storeLocation
+// (every non-Quick vendor, plus Quick shops the admin hasn't located yet) are
+// simply absent from the index rather than erroring.
+vendorDetailsSchema.index({ storeLocation: '2dsphere' });
 
 const VendorDetails = mongoose.model<IVendorDetails>('VendorDetails', vendorDetailsSchema);
 

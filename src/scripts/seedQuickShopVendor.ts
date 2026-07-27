@@ -7,7 +7,13 @@ dotenv.config();
 
 const EMAIL = 'quickshop@petmaza.com';
 const PASSWORD = 'Password123!';
-const SERVICEABLE_PINCODES = ['410206', '410221', '410222']; // Panvel area — edit to match your test pincode
+const SERVICEABLE_PINCODES = ['410206', '410221', '410222']; // Legacy fallback only — see STORE_LOCATION below
+// Petmaza Quick is a dark-store network: this store serves everyone within
+// DELIVERY_RADIUS_KM of STORE_LOCATION, and the pincode list above is ignored
+// once a location is set. Coordinates are [longitude, latitude] (GeoJSON order,
+// the reverse of how Google Maps prints them).
+const STORE_LOCATION: [number, number] = [73.1198, 19.0177]; // Khanda Colony, New Panvel
+const DELIVERY_RADIUS_KM = 4;
 
 const seedQuickShopVendor = async () => {
   try {
@@ -26,7 +32,8 @@ const seedQuickShopVendor = async () => {
       console.log(`Email: ${EMAIL}`);
       console.log(`Password: ${PASSWORD}`);
       console.log('Role: Vendor (QUICK_SHOP / Shop Admin)');
-      console.log(`Serviceable pincodes: ${SERVICEABLE_PINCODES.join(', ')}`);
+      console.log(`Store location: ${STORE_LOCATION[1]}, ${STORE_LOCATION[0]} (lat, lng)`);
+      console.log(`Delivers within: ${DELIVERY_RADIUS_KM} km of the store`);
       console.log('═══════════════════════════════════════\n');
     };
 
@@ -68,6 +75,8 @@ const seedQuickShopVendor = async () => {
         pincode: '410206',
       },
       serviceablePincodes: SERVICEABLE_PINCODES,
+      storeLocation: { type: 'Point', coordinates: STORE_LOCATION },
+      deliveryRadiusKm: DELIVERY_RADIUS_KM,
       isApproved: true,
     });
 
@@ -77,7 +86,7 @@ const seedQuickShopVendor = async () => {
     console.log('1. Log in with the credentials above in the petmaza app');
     console.log('2. You land on the Petmaza Quick Shop Admin dashboard');
     console.log('3. Go to "My Products" → "Add Products" tab → add a product with your price/stock');
-    console.log('4. As a customer, open Home → "Petmaza Quick" and enter one of the serviceable pincodes above');
+    console.log(`4. As a customer, open Home → "Petmaza Quick" and allow location — you must be within ${DELIVERY_RADIUS_KM} km of the store to see its products`);
     console.log('5. Add the product to cart and place the order — it will land in this Shop Admin\'s Orders tab\n');
 
     await mongoose.disconnect();

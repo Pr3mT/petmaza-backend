@@ -8,6 +8,10 @@ import Brand from '../models/Brand';
 import VendorDetails from '../models/VendorDetails';
 import QuickProductListing from '../models/QuickProductListing';
 import { OrderRoutingService } from '../services/OrderRoutingService';
+import QuickServiceabilityService, {
+  pointFromRequest,
+  ServingShop,
+} from '../services/QuickServiceabilityService';
 import { ShippingService } from '../services/ShippingService';
 import { orderQueue } from '../services/OrderQueue';
 import { sanitizeOrderForVendor } from '../utils/vendorOrderSanitizer';
@@ -23,108 +27,87 @@ import streamifier from 'streamifier';
 
 // ==================== CUSTOMER-FACING ====================
 
-// A customer's "area" = every pincode covered by the shop(s) that serve their
-// registered pincode. So an Uran (400702) customer can shop all the nearby
-// Uran-side pincodes their local shops deliver to, but NOT a different area like
-// Panvel (410206) — because the Panvel shop doesn't serve their registered
-// pincode. The registered pincode itself is always included so messaging stays
-// coherent even before any shop covers the area.
-async function getCustomerAreaPincodes(registeredPincode: string): Promise<Set<string>> {
-  const area = new Set<string>();
-  if (!/^\d{6}$/.test(registeredPincode)) return area;
-  area.add(registeredPincode);
+// Petmaza Quick is a dark-store network: each shop delivers within its own
+// radius of its own location (default 4 km), not across a whole pincode. The
+// customer's COORDINATES are therefore what decides serviceability — a pincode
+// like 410206 spans New Panvel to Kalamboli and can never be served in 30
+// minutes from one shop. See QuickServiceabilityService for the matching rules
+// (including the pincode fallback for shops that aren't located yet).
 
-  const shops = await VendorDetails.find({
-    vendorType: 'QUICK_SHOP',
-    serviceablePincodes: registeredPincode,
-    isApproved: true,
-  })
-    .select('serviceablePincodes')
-    .lean();
-
-  shops.forEach((s: any) => (s.serviceablePincodes || []).forEach((p: string) => area.add(String(p).trim())));
-  return area;
+// Resolve the shops that serve this request from its lat/lng (falling back to
+// pincode for unlocated shops), shared by every customer-facing endpoint.
+async function resolveShops(src: any) {
+  const point = pointFromRequest(src);
+  const pincode = String(src?.pincode || '').trim();
+  const shops = await QuickServiceabilityService.findServingShops({ point, pincode });
+  return { point, pincode, shops };
 }
 
-// The logged-in customer's serviceable area — their registered pincode plus the
-// nearby pincodes their local shops deliver to. The app uses this to let them
-// browse nearby areas while blocking far ones (e.g. Panvel for an Uran account).
-export const getMyArea = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const registeredPincode = String((req.user as any)?.address?.pincode || '').trim();
-    const area = await getCustomerAreaPincodes(registeredPincode);
-    res.status(200).json({
-      success: true,
-      data: {
-        registeredPincode: /^\d{6}$/.test(registeredPincode) ? registeredPincode : '',
-        areaPincodes: Array.from(area),
-      },
-    });
-  } catch (error: any) {
-    next(error);
-  }
-};
+// Shape a serving-shops list into the response envelope every Quick screen reads.
+function shopsPayload(shops: ServingShop[]) {
+  return {
+    available: shops.length > 0,
+    shopName: shops[0]?.shopName || '',
+    vendorId: shops[0]?.vendorId,
+    shopCount: shops.length,
+    // Nearest first, so the app can show "Delivering from <nearest>, 1.2 km away".
+    shops: shops.map((s) => ({
+      vendorId: s.vendorId,
+      shopName: s.shopName,
+      distanceKm: s.distanceKm,
+      deliveryRadiusKm: s.deliveryRadiusKm,
+    })),
+  };
+}
 
-// Whether Petmaza Quick covers a given pincode, and which shops serve it.
-// A pincode can be covered by several shops (e.g. Panvel has 3–4); the customer
-// only ever sees shops whose serviceablePincodes include THEIR pincode.
+// Whether Petmaza Quick reaches a given point, and which dark stores cover it.
+// Several shops can overlap one address; the customer sees all of them.
 export const getAvailability = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const pincode = String(req.query.pincode || '').trim();
-    if (!pincode) {
-      return next(new AppError('Pincode is required', 400));
+    const { point, pincode, shops } = await resolveShops(req.query);
+    if (!point && !pincode) {
+      return next(new AppError('Your location is required to check Petmaza Quick availability', 400));
     }
-
-    const shops = await VendorDetails.find({
-      vendorType: 'QUICK_SHOP',
-      serviceablePincodes: pincode,
-      isApproved: true,
-    }).lean();
 
     if (!shops.length) {
-      return res.status(200).json({ success: true, data: { available: false, shops: [] } });
+      // Out of range is far more useful than a bare "no": tell them how close
+      // Quick actually gets, so they know it's distance and not a dead area.
+      const nearest = point ? await QuickServiceabilityService.findNearestShop(point) : null;
+      return res.status(200).json({
+        success: true,
+        data: { available: false, shops: [], shopCount: 0, nearest },
+      });
     }
 
-    res.status(200).json({
-      success: true,
-      data: {
-        available: true,
-        shopName: shops[0].shopName,
-        vendorId: shops[0].vendor_id,
-        shopCount: shops.length,
-        shops: shops.map((s: any) => ({ vendorId: s.vendor_id, shopName: s.shopName })),
-      },
-    });
+    res.status(200).json({ success: true, data: shopsPayload(shops) });
   } catch (error: any) {
     next(error);
   }
 };
 
-// Catalog products available for Quick delivery to a given pincode, with each
-// serving shop's own price/stock. When several shops cover the pincode, the
-// customer sees every shop's listings — each product carries the shop it comes
-// from (shopId/shopName), and the same catalog product may appear once per shop.
+// Catalog products deliverable to the customer's point, with each serving shop's
+// own price/stock. When several dark stores cover the point, the customer sees
+// every shop's listings — each product carries the shop it comes from
+// (shopId/shopName/shopDistanceKm), so one catalog product may appear per shop.
 export const getQuickProducts = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const pincode = String(req.query.pincode || '').trim();
-    if (!pincode) {
-      return next(new AppError('Pincode is required', 400));
+    const { point, pincode, shops } = await resolveShops(req.query);
+    if (!point && !pincode) {
+      return next(new AppError('Your location is required to browse Petmaza Quick', 400));
     }
-
-    const shops = await VendorDetails.find({
-      vendorType: 'QUICK_SHOP',
-      serviceablePincodes: pincode,
-      isApproved: true,
-    }).lean();
 
     if (!shops.length) {
-      return res.status(200).json({ success: true, data: { available: false, shops: [], products: [] } });
+      const nearest = point ? await QuickServiceabilityService.findNearestShop(point) : null;
+      return res
+        .status(200)
+        .json({ success: true, data: { available: false, shops: [], shopCount: 0, nearest, products: [] } });
     }
 
-    const shopNameById = new Map(shops.map((s: any) => [s.vendor_id.toString(), s.shopName]));
+    const shopNameById = new Map(shops.map((s) => [s.vendorId, s.shopName]));
+    const shopDistanceById = new Map(shops.map((s) => [s.vendorId, s.distanceKm]));
 
     const listings = await QuickProductListing.find({
-      vendor_id: { $in: shops.map((s: any) => s.vendor_id) },
+      vendor_id: { $in: shops.map((s) => s.vendorId) },
       isActive: true,
       stock: { $gt: 0 },
     })
@@ -147,25 +130,21 @@ export const getQuickProducts = async (req: Request, res: Response, next: NextFu
         quickListingId: l._id,
         shopId: l.vendor_id.toString(),
         shopName: shopNameById.get(l.vendor_id.toString()) || '',
+        shopDistanceKm: shopDistanceById.get(l.vendor_id.toString()),
       }));
 
     res.status(200).json({
       success: true,
-      data: {
-        available: true,
-        shopName: shops[0].shopName,
-        shopCount: shops.length,
-        shops: shops.map((s: any) => ({ vendorId: s.vendor_id, shopName: s.shopName })),
-        products,
-      },
+      data: { ...shopsPayload(shops), products },
     });
   } catch (error: any) {
     next(error);
   }
 };
 
-// Place a Petmaza Quick order — routed by pincode. The cart may hold products
-// from different shops serving the same pincode; routing creates one order per shop.
+// Place a Petmaza Quick order — routed by the delivery point. The cart may hold
+// products from different dark stores whose radii both cover that point; routing
+// creates one order per shop.
 export const createQuickOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { items, customerPincode, customerAddress, deliveryMode } = req.body;
@@ -180,20 +159,34 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
       return next(new AppError('deliveryMode must be HALF_HOUR or ONE_DAY', 400));
     }
 
-    // Customers can only shop within their own area (the pincodes their local
-    // shops cover). An Uran (400702) customer can order to nearby Uran pincodes
-    // but not to a different area like Panvel (410206).
-    const registeredPincode = String((req.user as any)?.address?.pincode || '').trim();
-    if (/^\d{6}$/.test(registeredPincode)) {
-      const area = await getCustomerAreaPincodes(registeredPincode);
-      if (!area.has(String(customerPincode).trim())) {
+    // The delivery point is what serviceability is judged on. It may ride on the
+    // address (the saved-address coords) or be sent alongside it (a fresh GPS fix).
+    const deliveryPoint = pointFromRequest(customerAddress) || pointFromRequest(req.body);
+    const servingShops = await QuickServiceabilityService.findServingShops({
+      point: deliveryPoint,
+      pincode: String(customerPincode).trim(),
+    });
+
+    if (!servingShops.length) {
+      // Say WHY it failed — "we don't reach you" and "we don't know where you
+      // are" need completely different fixes from the customer.
+      if (!deliveryPoint) {
         return next(
           new AppError(
-            `This is not your area. Petmaza Quick can deliver only within your area (around ${registeredPincode}). Update your profile address to shop somewhere else.`,
+            'We need your delivery location to place a Petmaza Quick order. Tap "Use my current location" on the address, then try again.',
             400
           )
         );
       }
+      const nearest = await QuickServiceabilityService.findNearestShop(deliveryPoint);
+      return next(
+        new AppError(
+          nearest
+            ? `Petmaza Quick doesn't reach this address yet. The nearest store (${nearest.shopName}) is ${nearest.distanceKm} km away and delivers up to ${nearest.deliveryRadiusKm} km.`
+            : "Petmaza Quick isn't available at this address yet.",
+          400
+        )
+      );
     }
 
     let contactPhone = String(customerAddress.phone || req.user.phone || '').replace(/\D/g, '');
@@ -202,6 +195,12 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
       return next(new AppError('A valid 10-digit contact number is required to place an order', 400));
     }
     customerAddress.phone = contactPhone;
+    // Snapshot the delivery point on the order so the rider, and any later
+    // dispute about "was this actually in range", reads the exact coordinates
+    // the order was accepted against — not whatever the address resolves to later.
+    if (deliveryPoint) {
+      customerAddress.location = { lat: deliveryPoint.lat, lng: deliveryPoint.lng };
+    }
 
     const { orders } = await OrderRoutingService.routeQuickOrder({
       customer_id: req.user._id.toString(),
@@ -209,6 +208,7 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
       customerPincode,
       customerAddress,
       deliveryMode,
+      servingShops,
     });
 
     // ── Petmaza Quick delivery & platform fee (admin-controlled) ──────────────

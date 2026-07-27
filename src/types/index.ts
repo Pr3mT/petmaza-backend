@@ -16,6 +16,8 @@ export interface IUser extends Document {
     city: string;
     state: string;
     pincode: string;
+    /** GPS point captured when the address was saved — Petmaza Quick serviceability. */
+    location?: { lat: number; lng: number };
   };
   dob?: string;
   gender?: string;
@@ -204,6 +206,8 @@ export interface IOrder extends Document {
     state: string;
     pincode: string;
     phone?: string;
+    /** Delivery point frozen at order time — what Quick's radius check ran against. */
+    location?: { lat: number; lng: number };
   };
   deliveryCost?: number; // Extra delivery cost for split shipments
   shippingCharges?: number; // Shipping charges applied to order
@@ -274,6 +278,13 @@ export interface IVendorDetails extends Document {
     pincode: string;
   };
   serviceablePincodes: string[];
+  // Petmaza Quick dark-store serviceability (QUICK_SHOP only). Coordinates are
+  // GeoJSON order: [longitude, latitude].
+  storeLocation?: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
+  deliveryRadiusKm?: number;
   panCard?: string;
   aadharCard?: string;
   bankDetails?: {

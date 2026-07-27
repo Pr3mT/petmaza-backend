@@ -6,9 +6,12 @@ import { uploadReceipt } from '../config/cloudinary';
 const router = express.Router();
 
 // ── Customer-facing (public browse, auth required to order) ────────────────
+// Both browse endpoints take the customer's coordinates (?lat=&lng=) — Quick is
+// a dark-store network, so a pincode is too coarse to answer "can we reach you".
+// `?pincode=` is still accepted, but only matches shops that have no store pin
+// yet; see QuickServiceabilityService.
 router.get('/availability', quickShopController.getAvailability);
 router.get('/products', quickShopController.getQuickProducts);
-router.get('/my-area', verifyToken, quickShopController.getMyArea);
 router.post('/orders', verifyToken, quickShopController.createQuickOrder);
 
 // ── Shop Admin (QUICK_SHOP vendor) ──────────────────────────────────────────
