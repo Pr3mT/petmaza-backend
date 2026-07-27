@@ -143,6 +143,27 @@ export function haversineKm(a: CustomerPoint, b: CustomerPoint): number {
   return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
 }
 
+// $geoNear THROWS if the 2dsphere index is absent, which would take down the
+// whole Quick storefront rather than degrade it. Mongoose's autoIndex normally
+// builds it, but that's a default someone can switch off for startup
+// performance, and index builds are async on a cold start. createIndex is
+// idempotent, so calling it once before the first geo query costs nothing and
+// removes the dependency on that default.
+let geoIndexReady: Promise<unknown> | null = null;
+function ensureGeoIndex() {
+  if (!geoIndexReady) {
+    geoIndexReady = VendorDetails.collection
+      .createIndex({ storeLocation: '2dsphere' })
+      .then(() => logger.info('[QuickServiceability] storeLocation 2dsphere index ready'))
+      .catch((err) => {
+        // Clear the memo so a later request retries instead of caching failure.
+        geoIndexReady = null;
+        logger.error('[QuickServiceability] could not create storeLocation 2dsphere index', err);
+      });
+  }
+  return geoIndexReady;
+}
+
 export class QuickServiceabilityService {
   /**
    * Every approved Quick shop that will deliver to this customer, nearest first.
@@ -157,6 +178,9 @@ export class QuickServiceabilityService {
   }): Promise<ServingShop[]> {
     const { point, pincode } = opts;
     const byVendorId = new Map<string, ServingShop>();
+    // Set when the geo query itself fails, which is an infrastructure problem
+    // rather than "nobody serves you" — it changes how the pincode branch behaves.
+    let geoDegraded = false;
 
     if (point) {
       // $geoNear must be the first stage and only returns docs that actually
@@ -164,50 +188,65 @@ export class QuickServiceabilityService {
       // Each shop has its OWN radius, so a single maxDistance can't do the
       // filtering — we cap the search at the largest allowed radius and then
       // keep only shops whose own radius reaches the customer.
-      const rows = await VendorDetails.aggregate([
-        {
-          $geoNear: {
-            near: { type: 'Point', coordinates: [point.lng, point.lat] },
-            distanceField: 'distanceMeters',
-            maxDistance: MAX_SEARCH_METERS,
-            query: { vendorType: 'QUICK_SHOP', isApproved: true },
-            spherical: true,
-            key: 'storeLocation',
-          },
-        },
-        {
-          $match: {
-            $expr: {
-              $lte: [
-                '$distanceMeters',
-                { $multiply: [{ $ifNull: ['$deliveryRadiusKm', DEFAULT_RADIUS_KM] }, 1000] },
-              ],
+      try {
+        await ensureGeoIndex();
+        const rows = await VendorDetails.aggregate([
+          {
+            $geoNear: {
+              near: { type: 'Point', coordinates: [point.lng, point.lat] },
+              distanceField: 'distanceMeters',
+              maxDistance: MAX_SEARCH_METERS,
+              query: { vendorType: 'QUICK_SHOP', isApproved: true },
+              spherical: true,
+              key: 'storeLocation',
             },
           },
-        },
-        { $project: { vendor_id: 1, shopName: 1, deliveryRadiusKm: 1, distanceMeters: 1 } },
-      ]);
+          {
+            $match: {
+              $expr: {
+                $lte: [
+                  '$distanceMeters',
+                  { $multiply: [{ $ifNull: ['$deliveryRadiusKm', DEFAULT_RADIUS_KM] }, 1000] },
+                ],
+              },
+            },
+          },
+          { $project: { vendor_id: 1, shopName: 1, deliveryRadiusKm: 1, distanceMeters: 1 } },
+        ]);
 
-      rows.forEach((r: any) => {
-        byVendorId.set(r.vendor_id.toString(), {
-          vendorId: r.vendor_id.toString(),
-          shopName: r.shopName,
-          distanceKm: Math.round((r.distanceMeters / 1000) * 100) / 100,
-          deliveryRadiusKm: r.deliveryRadiusKm ?? DEFAULT_RADIUS_KM,
-          matchedBy: 'RADIUS',
+        rows.forEach((r: any) => {
+          byVendorId.set(r.vendor_id.toString(), {
+            vendorId: r.vendor_id.toString(),
+            shopName: r.shopName,
+            distanceKm: Math.round((r.distanceMeters / 1000) * 100) / 100,
+            deliveryRadiusKm: r.deliveryRadiusKm ?? DEFAULT_RADIUS_KM,
+            matchedBy: 'RADIUS',
+          });
         });
-      });
+      } catch (err) {
+        // Taking Quick completely offline is worse for the business than a day
+        // of the wider pincode behaviour it had last week, so degrade instead of
+        // throwing — but make it impossible to miss in the logs.
+        geoDegraded = true;
+        logger.error(
+          '[QuickServiceability] $geoNear FAILED — Quick is falling back to pincode-wide matching. ' +
+            'Check that the storeLocation 2dsphere index exists on vendordetails.',
+          err
+        );
+      }
     }
 
     const pin = String(pincode || '').trim();
     if (/^\d{6}$/.test(pin)) {
       // 'storeLocation.coordinates.0' missing covers the field being absent,
       // null, or an empty array — i.e. every shop that isn't located yet.
+      // While the geo query is broken we can't honour radii at all, so located
+      // shops are matched by pincode too rather than disappearing entirely.
       const legacy = await VendorDetails.find({
         vendorType: 'QUICK_SHOP',
         isApproved: true,
         serviceablePincodes: pin,
-        'storeLocation.coordinates.0': { $exists: false },
+        ...(geoDegraded ? {} : { 'storeLocation.coordinates.0': { $exists: false } }),
       })
         .select('vendor_id shopName deliveryRadiusKm')
         .lean();
@@ -244,7 +283,9 @@ export class QuickServiceabilityService {
     // Nearest first; legacy pincode matches (no distance) sort last.
     shops.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
 
-    logger.info(
+    // Debug-level: this runs on every storefront load, so at info it would bury
+    // the logs the moment Quick gets real traffic.
+    logger.debug(
       `[QuickServiceability] ${shops.length} shop(s) serve ` +
         `${point ? `${point.lat},${point.lng}` : `pincode ${pin || 'unknown'}`}`
     );
@@ -259,26 +300,34 @@ export class QuickServiceabilityService {
   static async findNearestShop(
     point: CustomerPoint
   ): Promise<{ shopName: string; distanceKm: number; deliveryRadiusKm: number } | null> {
-    const rows = await VendorDetails.aggregate([
-      {
-        $geoNear: {
-          near: { type: 'Point', coordinates: [point.lng, point.lat] },
-          distanceField: 'distanceMeters',
-          query: { vendorType: 'QUICK_SHOP', isApproved: true },
-          spherical: true,
-          key: 'storeLocation',
+    // Purely a nicety on top of an already-negative answer, so any failure here
+    // degrades to the plain "not available" message rather than an error page.
+    try {
+      await ensureGeoIndex();
+      const rows = await VendorDetails.aggregate([
+        {
+          $geoNear: {
+            near: { type: 'Point', coordinates: [point.lng, point.lat] },
+            distanceField: 'distanceMeters',
+            query: { vendorType: 'QUICK_SHOP', isApproved: true },
+            spherical: true,
+            key: 'storeLocation',
+          },
         },
-      },
-      { $limit: 1 },
-      { $project: { shopName: 1, deliveryRadiusKm: 1, distanceMeters: 1 } },
-    ]);
+        { $limit: 1 },
+        { $project: { shopName: 1, deliveryRadiusKm: 1, distanceMeters: 1 } },
+      ]);
 
-    if (!rows.length) return null;
-    return {
-      shopName: rows[0].shopName,
-      distanceKm: Math.round((rows[0].distanceMeters / 1000) * 10) / 10,
-      deliveryRadiusKm: rows[0].deliveryRadiusKm ?? DEFAULT_RADIUS_KM,
-    };
+      if (!rows.length) return null;
+      return {
+        shopName: rows[0].shopName,
+        distanceKm: Math.round((rows[0].distanceMeters / 1000) * 10) / 10,
+        deliveryRadiusKm: rows[0].deliveryRadiusKm ?? DEFAULT_RADIUS_KM,
+      };
+    } catch (err) {
+      logger.error('[QuickServiceability] findNearestShop failed', err);
+      return null;
+    }
   }
 }
 

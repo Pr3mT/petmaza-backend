@@ -196,7 +196,10 @@ async function nominatimSearch(q: string): Promise<any[]> {
 
 export const searchAddress = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const q = String(req.query.q || '').trim();
+    // Cap the length before anything else: a real locality name is short, and
+    // an unbounded string would be forwarded straight to a third-party service
+    // and cached under its own key, letting one client poison the cache.
+    const q = String(req.query.q || '').trim().slice(0, 120);
     if (q.length < 3) {
       return res.status(200).json({ success: true, data: { results: [] } });
     }

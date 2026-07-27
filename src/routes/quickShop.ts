@@ -1,6 +1,7 @@
 import express from 'express';
 import * as quickShopController from '../controllers/quickShopController';
 import { verifyToken, checkQuickShopVendor } from '../middlewares/auth';
+import { geocodeLimiter } from '../middlewares/rateLimiter';
 import { uploadReceipt } from '../config/cloudinary';
 
 const router = express.Router();
@@ -13,8 +14,9 @@ const router = express.Router();
 router.get('/availability', quickShopController.getAvailability);
 router.get('/products', quickShopController.getQuickProducts);
 // Address → coordinates, for customers whose browser can't locate them
-// accurately (any desktop, effectively).
-router.get('/geocode', quickShopController.searchAddress);
+// accurately (any desktop, effectively). Rate-limited harder than the rest
+// because it spends OpenStreetMap's budget, not ours.
+router.get('/geocode', geocodeLimiter, quickShopController.searchAddress);
 router.post('/orders', verifyToken, quickShopController.createQuickOrder);
 
 // ── Shop Admin (QUICK_SHOP vendor) ──────────────────────────────────────────

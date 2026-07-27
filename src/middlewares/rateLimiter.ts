@@ -61,6 +61,30 @@ export const authLimiter = RATE_LIMIT_DISABLED
     });
 
 /**
+ * Address-geocode limiter — 40 lookups per 5 minutes per IP (prod only).
+ *
+ * Much tighter than the other limiters because this endpoint spends someone
+ * else's budget: it proxies to OpenStreetMap's Nominatim, whose usage policy
+ * caps us at 1 request/second and whose operators block abusive clients
+ * outright. A customer typing an address needs a handful of lookups; anything
+ * beyond that is a script, and letting it through risks getting Petmaza's
+ * server IP banned from geocoding entirely.
+ */
+export const geocodeLimiter = RATE_LIMIT_DISABLED
+  ? passthrough
+  : rateLimit({
+      windowMs: 5 * 60 * 1000,
+      max: 40,
+      standardHeaders: true,
+      legacyHeaders: false,
+      skip: skipForLoadTest,
+      message: {
+        success: false,
+        message: 'Too many address searches. Please wait a minute and try again.',
+      },
+    });
+
+/**
  * Search / product listing limiter
  * 500 requests per 15 minutes per IP — public browsing is heavier (prod only)
  */
