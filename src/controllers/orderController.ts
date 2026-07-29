@@ -11,6 +11,7 @@ import { AppError } from '../middlewares/errorHandler';
 import { AuthRequest, isAdminRole } from '../middlewares/auth';
 import logger from '../config/logger';
 import { sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
+import { reconcileStuckShipping } from '../utils/shippingDetails';
 import {
   sendOrderConfirmationEmail,
   sendOrderStatusUpdateEmail,
@@ -836,6 +837,18 @@ export const updateOrderStatus = async (
 
     // Optional package dimensions (cm), entered in the Mark Packed popup.
     if (status === 'PACKED') {
+      // Courier & tracking already on file means this order has shipped. Dropping
+      // it back to PACKED re-arms "Add Shipping Details" over a record that can
+      // never be re-submitted (order_id is unique), which is how orders got stuck.
+      // Admins keep the override on PUT /orders/admin/:id/status.
+      if (await ShippingDetails.exists({ order_id: orderId })) {
+        return next(
+          new AppError(
+            'This order already has courier & tracking on file — it cannot be moved back to Packed.',
+            400
+          )
+        );
+      }
       const dims: any = {};
       for (const key of ['length_cm', 'width_cm', 'height_cm'] as const) {
         const raw = (req.body as any)[key];
@@ -952,6 +965,14 @@ export const adminUpdateOrderStatus = async (
 
     // Optional package dimensions (cm), entered in the admin Mark Packed popup.
     if (status === 'PACKED') {
+      // Admins keep the override (this route is the escape hatch), but rewinding
+      // an order that already has courier & tracking on file is worth a trail —
+      // it is how #846B8F ended up re-offering "Add Shipping Details".
+      if (order.status !== 'ACCEPTED' && (await ShippingDetails.exists({ order_id: orderId }))) {
+        logger.warn(
+          `[adminUpdateOrderStatus] Order ${orderId} rewound from ${order.status} to PACKED by admin ${req.user._id} — shipping details are already on file`
+        );
+      }
       const dims: any = {};
       for (const key of ['length_cm', 'width_cm', 'height_cm'] as const) {
         const raw = (req.body as any)[key];
@@ -1259,6 +1280,17 @@ export const adminAddShippingDetails = async (
 
     const existing = await ShippingDetails.findOne({ order_id: orderId });
     if (existing) {
+      // Details are already on file but the order never left PACKED — either the
+      // save after the record was written failed, or the status was pushed back.
+      // Finish that transition instead of dead-ending the panel on a 409.
+      if (await reconcileStuckShipping(order, existing, { from: 'PACKED', to: 'READY_TO_SHIP' })) {
+        logger.info(`[adminAddShippingDetails] Order ${orderId} already had shipping details — advanced to READY_TO_SHIP`);
+        return res.status(200).json({
+          success: true,
+          message: 'Shipping details were already on file. Order marked as Ready to Ship.',
+          data: { order },
+        });
+      }
       return next(new AppError('Shipping details already submitted for this order', 409));
     }
 

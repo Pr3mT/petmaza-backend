@@ -6,6 +6,7 @@ import User from '../models/User';
 import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
 import { sanitizeOrdersForVendor, sanitizeOrderForVendor } from '../utils/vendorOrderSanitizer';
+import { reconcileStuckShipping } from '../utils/shippingDetails';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
 import { applyVendorPriceAdjustments } from '../utils/applyVendorPriceAdjustments';
@@ -473,6 +474,16 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
     // ── Prevent duplicate shipping details for this order ──────────────────────
     const existing = await ShippingDetails.findOne({ order_id: orderId });
     if (existing) {
+      // Already on file but the order never left PICKED_UP (MY_SHOP captures
+      // courier at the in-transit step) — finish that transition rather than
+      // leaving the shop stuck on a button that can only 409.
+      if (await reconcileStuckShipping(order, existing, { from: 'PICKED_UP', to: 'IN_TRANSIT' })) {
+        return res.status(200).json({
+          success: true,
+          message: 'Shipping details were already on file. Order marked as in transit.',
+          data: { order },
+        });
+      }
       return next(new AppError('Shipping details already submitted for this order', 409));
     }
 

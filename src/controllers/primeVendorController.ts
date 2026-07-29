@@ -12,6 +12,7 @@ import { sanitizeOrderForVendor, sanitizeOrdersForVendor } from '../utils/vendor
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
 import { applyVendorPriceAdjustments } from '../utils/applyVendorPriceAdjustments';
+import { reconcileStuckShipping } from '../utils/shippingDetails';
 
 /**
  * Fix orders where purchasePrice was stored as 0.
@@ -322,6 +323,19 @@ export const updatePrimeOrderStatus = async (
       return next(new AppError('Invalid status', 400));
     }
 
+    // Courier & tracking already on file means this order has shipped. Dropping it
+    // back to PACKED re-arms "Add Shipping Details" over a record that can never be
+    // re-submitted (order_id is unique), which is how orders got stuck there.
+    // Admins keep the override on PUT /orders/admin/:id/status.
+    if (status === 'PACKED' && (await ShippingDetails.exists({ order_id: id }))) {
+      return next(
+        new AppError(
+          'This order already has courier & tracking on file — it cannot be moved back to Packed.',
+          400
+        )
+      );
+    }
+
     order.status = status;
     if (trackingNumber) {
       if (!order.courier) order.courier = {};
@@ -580,6 +594,16 @@ export const addShippingDetails = async (
     // ── Check if shipping details already exist for this order ──────────────
     const existing = await ShippingDetails.findOne({ order_id: id });
     if (existing) {
+      // Already on file but the order never left PACKED — finish that transition
+      // rather than leaving the vendor stuck on a button that can only 409.
+      if (await reconcileStuckShipping(order, existing, { from: 'PACKED', to: 'READY_TO_SHIP' })) {
+        logger.info(`[PrimeVendor] Order ${id} already had shipping details — advanced to READY_TO_SHIP`);
+        return res.status(200).json({
+          success: true,
+          message: 'Shipping details were already on file. Order marked as Ready to Ship.',
+          data: { order },
+        });
+      }
       return next(new AppError('Shipping details already submitted for this order', 409));
     }
 

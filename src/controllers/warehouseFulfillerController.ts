@@ -9,6 +9,7 @@ import { sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
 import { applyVendorPriceAdjustments } from '../utils/applyVendorPriceAdjustments';
+import { reconcileStuckShipping } from '../utils/shippingDetails';
 import {
   sendOrderAcceptedEmail,
   sendShippingTrackingEmail,
@@ -530,6 +531,16 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
     // ── Prevent duplicate shipping details for this order ──────────────────────
     const existing = await ShippingDetails.findOne({ order_id: orderId });
     if (existing) {
+      // Already on file but the order never left PACKED — finish that transition
+      // rather than leaving the fulfiller stuck on a button that can only 409.
+      if (await reconcileStuckShipping(order, existing, { from: 'PACKED', to: 'READY_TO_SHIP' })) {
+        logger.info(`[addShippingDetails] Order ${orderId} already had shipping details — advanced to READY_TO_SHIP`);
+        return res.status(200).json({
+          success: true,
+          message: 'Shipping details were already on file. Order marked as Ready to Ship.',
+          data: { order },
+        });
+      }
       return next(new AppError('Shipping details already submitted for this order', 409));
     }
 
@@ -636,6 +647,18 @@ export const markPickedUp = async (req: AuthRequest, res: Response, next: NextFu
 
     if (order.assignedVendorId?.toString() !== fulfiller._id.toString()) {
       return next(new AppError('This order is not assigned to you', 403));
+    }
+
+    // A shipped order can be sitting at PACKED — its status was pushed back, or the
+    // save that should have advanced it failed after the shipping record was
+    // written. Courier & tracking are already on file, so bring it up to
+    // READY_TO_SHIP here rather than 400ing on a state the fulfiller cannot clear.
+    if (order.status === 'PACKED') {
+      const existing = await ShippingDetails.findOne({ order_id: orderId });
+      if (existing) {
+        await reconcileStuckShipping(order, existing, { from: 'PACKED', to: 'READY_TO_SHIP' });
+        logger.info(`[markPickedUp] Order ${orderId} was stuck at PACKED with shipping details — advanced to READY_TO_SHIP`);
+      }
     }
 
     if (order.status !== 'READY_TO_SHIP') {

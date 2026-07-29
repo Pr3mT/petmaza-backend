@@ -22,6 +22,7 @@ import {
   sendShippingTrackingEmail,
 } from '../services/emailer';
 import ShippingDetails from '../models/ShippingDetails';
+import { reconcileStuckShipping } from '../utils/shippingDetails';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
 
@@ -983,6 +984,16 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
 
     const existing = await ShippingDetails.findOne({ order_id: orderId });
     if (existing) {
+      // Already on file but the order never left PACKED — finish that transition
+      // rather than leaving the shop stuck on a button that can only 409.
+      if (await reconcileStuckShipping(order, existing, { from: 'PACKED', to: 'PICKED_UP' })) {
+        logger.info(`[QuickShop] Order ${orderId} already had shipping details — advanced to PICKED_UP`);
+        return res.status(200).json({
+          success: true,
+          message: 'Shipping details were already on file. Order marked as out for delivery.',
+          data: { order },
+        });
+      }
       return next(new AppError('Shipping details already submitted for this order', 409));
     }
 
