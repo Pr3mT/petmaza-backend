@@ -1288,6 +1288,14 @@ export const adminAddShippingDetails = async (
     if (delivery_type && !['inter_state', 'out_of_state'].includes(delivery_type)) {
       return next(new AppError('Delivery type must be inter_state or out_of_state', 400));
     }
+    // Who booked the courier decides whether the vendor is reimbursed for it.
+    // Defaults to PLATFORM because an admin is filing this, but the panel can
+    // override when the admin is entering it on a vendor's behalf and the
+    // vendor actually paid the courier.
+    const arrangedBy = String(req.body.shipping_arranged_by || 'PLATFORM').toUpperCase();
+    if (!['VENDOR', 'PLATFORM'].includes(arrangedBy)) {
+      return next(new AppError('Shipping arranged by must be VENDOR or PLATFORM', 400));
+    }
 
     const existing = await ShippingDetails.findOne({ order_id: orderId });
     if (existing) {
@@ -1331,11 +1339,11 @@ export const adminAddShippingDetails = async (
     await ShippingDetails.create({
       order_id: orderId,
       vendor_id: attributedVendorId,
-      // Admin filed this, so Petmaza booked and paid the courier. The vendor is
-      // paid product price only for this order — no courier reimbursement. This
-      // also makes the historical mis-attribution of `vendor_id` on multi-vendor
-      // orders harmless for billing: PLATFORM shipments reimburse nobody.
-      shipping_arranged_by: 'PLATFORM',
+      // PLATFORM (the default when an admin files it) means Petmaza booked and
+      // paid the courier, so the vendor is paid product price only — no courier
+      // reimbursement. That also makes the historical mis-attribution of
+      // `vendor_id` on multi-vendor orders harmless: PLATFORM reimburses nobody.
+      shipping_arranged_by: arrangedBy,
       arranged_by_user_id: req.user._id,
       shipping_company: courierName,
       ...(uploadResult
@@ -1478,6 +1486,23 @@ export const adminUpdateShippingDetails = async (
 
     if (delivery_type) set.delivery_type = delivery_type;
     else unset.delivery_type = '';
+
+    // Correcting who booked the courier changes what the vendor is owed, so it
+    // is only touched when the panel explicitly sends a value. Omitting the
+    // field leaves the original attribution intact — editing a vendor's record
+    // to fix a typo must never silently reassign who paid for the shipment.
+    if (req.body.shipping_arranged_by !== undefined && String(req.body.shipping_arranged_by).trim() !== '') {
+      const arrangedBy = String(req.body.shipping_arranged_by).toUpperCase();
+      if (!['VENDOR', 'PLATFORM'].includes(arrangedBy)) {
+        return next(new AppError('Shipping arranged by must be VENDOR or PLATFORM', 400));
+      }
+      if (arrangedBy !== (existing.shipping_arranged_by || 'VENDOR')) {
+        logger.info(
+          `[adminUpdateShippingDetails] Order ${orderId} shipping attribution ${existing.shipping_arranged_by || 'VENDOR'} → ${arrangedBy} by admin ${req.user._id}`
+        );
+      }
+      set.shipping_arranged_by = arrangedBy;
+    }
 
     // ── Replace the receipt on Cloudinary only when a new file is uploaded ──
     if (req.file) {
