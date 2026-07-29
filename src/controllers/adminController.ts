@@ -8,11 +8,19 @@ import Transaction from '../models/Transaction';
 import ShippingSettings from '../models/ShippingSettings';
 import ShippingDetails from '../models/ShippingDetails';
 import Settlement from '../models/Settlement';
+import VendorPayout from '../models/VendorPayout';
 import CategoryFulfillerMapping from '../models/CategoryFulfillerMapping';
 // Registers the PrimeProduct schema so `.populate('items.primeProduct_id')` in
 // getVendorBilling works. The model file self-registers on import; without this
 // the populate throws MissingSchemaError and the endpoint 500s.
 import '../models/PrimeProduct';
+import {
+  PAYABLE_STATUSES,
+  computeOrderPayouts,
+  computeVendorPayoutForOrder,
+  payableDateOf,
+  ShippingDetailsLike,
+} from '../services/VendorPayoutService';
 import { VendorProductPricingService } from '../services/VendorProductPricingService';
 import { ShippingService } from '../services/ShippingService';
 import { parseStoreLocationUpdate } from '../services/QuickServiceabilityService';
@@ -1093,133 +1101,163 @@ export const getVendorWeeklyBilling = async (req: AuthRequest, res: Response, ne
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     };
 
-    // Settlement is per completed work: only DELIVERED orders are billed to a vendor.
+    // An order is payable to its vendors from the moment it ships, and each
+    // vendor is billed only for THEIR line items — see VendorPayoutService.
     const orderFilter: any = {
-      assignedVendorId: { $exists: true, $ne: null },
-      status: 'DELIVERED',
+      status: { $in: PAYABLE_STATUSES },
+      payment_status: { $nin: ['Failed', 'Refunded'] },
     };
-    if (vendorId) orderFilter.assignedVendorId = vendorId;
 
     const orders = await Order.find(orderFilter)
       .populate('assignedVendorId', 'name email phone vendorType')
+      .populate('items.vendor_id', 'name email phone vendorType')
       .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images')
       .populate('items.primeProduct_id', 'name images')
       .sort({ createdAt: -1 })
       .lean();
 
-    // The vendor's order screens count their submitted courier cost
-    // (ShippingDetails.shipping_cost) as part of earnings, so the weekly
-    // payout must reimburse it too: payout = purchase prices + delivery charge.
+    // Courier cost is reimbursed only when the VENDOR booked the courier. When
+    // an admin arranged shipping, Petmaza paid it directly and the vendor is
+    // owed the product price alone.
     const shippingDocs = await ShippingDetails.find({ order_id: { $in: orders.map((o) => o._id) } })
-      .select('order_id shipping_cost')
+      .select('order_id vendor_id shipping_cost shipping_arranged_by created_at')
       .lean();
-    const deliveryChargeByOrder: Record<string, number> = {};
-    for (const sd of shippingDocs) {
-      deliveryChargeByOrder[sd.order_id.toString()] = Number(sd.shipping_cost) || 0;
+    const shippingByOrder = new Map<string, ShippingDetailsLike>(
+      shippingDocs.map((sd) => [sd.order_id.toString(), sd as unknown as ShippingDetailsLike])
+    );
+
+    // Already-settled payouts (paid from either the daily or the weekly screen).
+    const paidPayouts = await VendorPayout.find({ order_id: { $in: orders.map((o) => o._id) } })
+      .lean();
+    const paidByOrderVendor = new Map<string, any>(
+      paidPayouts.map((p) => [`${p.order_id.toString()}_${p.vendor_id.toString()}`, p])
+    );
+
+    // Vendor display info, per-item first then the order-level assignment.
+    const vendorInfo = new Map<string, any>();
+    for (const order of orders) {
+      const assigned = order.assignedVendorId as any;
+      if (assigned?._id) vendorInfo.set(assigned._id.toString(), assigned);
+      for (const item of (order as any).items || []) {
+        const v = item.vendor_id;
+        if (v?._id) vendorInfo.set(v._id.toString(), v);
+      }
     }
 
     // Group by vendor + week key
     const groupMap: Record<string, any> = {};
 
     for (const order of orders) {
-      const vendor = order.assignedVendorId as any;
-      if (!vendor) continue;
-
-      // Group by the week the order was DELIVERED (what you pay for this week),
-      // not when it was created. Fulfiller deliveries don't set deliveredAt, so
-      // fall back to updatedAt (the delivery status change), then createdAt.
-      const billingDate = new Date(
-        (order as any).deliveredAt || (order as any).updatedAt || order.createdAt
-      );
+      const shippingDoc = shippingByOrder.get(order._id.toString()) || null;
+      // Group by the week the order became payable (shipped), falling back to
+      // delivery/last-update for legacy orders with no courier record.
+      const billingDate = payableDateOf(order, shippingDoc);
       const weekInfo = getWeekRange(billingDate);
-      const weekKey = `${vendor._id.toString()}_${weekInfo.start.toISOString().slice(0, 10)}`;
 
-      if (!groupMap[weekKey]) {
-        // Map vendor type to display label
-        const typeLabel =
-          vendor.vendorType === 'PRIME'
-            ? 'Prime Vendor'
-            : vendor.vendorType === 'MY_SHOP'
-            ? 'My Shop'
-            : vendor.vendorType === 'WAREHOUSE_FULFILLER'
-            ? 'Fulfiller'
-            : vendor.vendorType;
+      for (const payout of computeOrderPayouts(order, shippingDoc)) {
+        if (vendorId && payout.vendorId !== String(vendorId)) continue;
 
-        groupMap[weekKey] = {
-          id: weekKey,
-          weekStart: weekInfo.start.toISOString(),
-          weekEnd: weekInfo.end.toISOString(),
-          weekLabel: weekInfo.label,
-          vendorId: vendor._id,
-          vendorName: vendor.name,
-          vendorEmail: vendor.email,
-          vendorPhone: vendor.phone || null,
-          vendorType: typeLabel,
-          totalAmount: 0,
-          paidAt: null,
-          status: 'Pending', // default; update logic can change to 'Paid'
-          orders: [],
-        };
-      }
+        const weekKey = `${payout.vendorId}_${weekInfo.start.toISOString().slice(0, 10)}`;
+        const settled = paidByOrderVendor.get(`${order._id.toString()}_${payout.vendorId}`);
 
-      // What we OWE the vendor for this order = sum of the accepted purchase
-      // prices (purchaseSubtotal), NOT the customer's selling total — plus the
-      // courier cost the vendor paid out of pocket (shipping details).
-      const itemsPayout = (order.items || []).reduce(
-        (s: number, it: any) => s + (Number(it.purchaseSubtotal) || 0),
-        0
-      );
-      // Only the courier cost the vendor submitted counts toward their payout.
-      // The customer's delivery charge is platform revenue — never the vendor's.
-      const deliveryCharge = deliveryChargeByOrder[order._id.toString()] || 0;
-      const orderPayout = itemsPayout + deliveryCharge;
+        if (!groupMap[weekKey]) {
+          const vendor = vendorInfo.get(payout.vendorId);
+          const typeLabel =
+            vendor?.vendorType === 'PRIME'
+              ? 'Prime Vendor'
+              : vendor?.vendorType === 'MY_SHOP'
+              ? 'My Shop'
+              : vendor?.vendorType === 'WAREHOUSE_FULFILLER'
+              ? 'Fulfiller'
+              : vendor?.vendorType === 'QUICK'
+              ? 'Quick Shop'
+              : vendor?.vendorType || 'Vendor';
 
-      const entry = groupMap[weekKey];
-      entry.totalAmount += orderPayout;
-      entry.orders.push({
-        orderId: (order as any).order_id || order._id,
-        orderDate: order.createdAt,
-        deliveredAt: (order as any).deliveredAt || (order as any).updatedAt || null,
-        orderStatus: order.status,
-        deliveryCharge,
-        items: (order.items || []).map((item: any) => {
-          const product = item.product_id || item.primeProduct_id;
-          const qty = item.quantity || 1;
-          // Vendor's accepted unit purchase price (what we pay them).
-          const unitPrice = item.purchasePrice ?? 0;
-          const lineTotal = item.purchaseSubtotal ?? (qty * unitPrice);
-          return {
-            productId: product?._id ? String(product._id) : 'N/A',
-            productName: product?.name || 'Unknown Product',
-            quantity: qty,
-            price: unitPrice,
-            total: lineTotal,
-            priceAdjusted: !!item.priceAdjusted,
-            quotedPrice: item.quotedPurchasePrice ?? null,
+          groupMap[weekKey] = {
+            id: weekKey,
+            weekStart: weekInfo.start.toISOString(),
+            weekEnd: weekInfo.end.toISOString(),
+            weekLabel: weekInfo.label,
+            vendorId: payout.vendorId,
+            vendorName: vendor?.name || 'Unknown Vendor',
+            vendorEmail: vendor?.email || null,
+            vendorPhone: vendor?.phone || null,
+            vendorType: typeLabel,
+            totalAmount: 0,
+            pendingAmount: 0,
+            paidAmount: 0,
+            paidAt: null,
+            status: 'Pending', // recomputed below from per-order settlement
+            orders: [],
           };
-        }),
-        grandTotal: orderPayout,
-      });
+        }
+
+        // A settled payout reports its frozen figures, not a recomputation.
+        const orderPayout = settled ? settled.totalAmount : payout.totalAmount;
+        const reimbursement = settled ? settled.shippingReimbursement : payout.shippingReimbursement;
+
+        const entry = groupMap[weekKey];
+        entry.totalAmount += orderPayout;
+        if (settled) {
+          entry.paidAmount += orderPayout;
+          if (!entry.paidAt) entry.paidAt = settled.paidAt ? new Date(settled.paidAt).toISOString() : null;
+        } else {
+          entry.pendingAmount += orderPayout;
+        }
+
+        entry.orders.push({
+          orderId: order._id.toString(),
+          orderDate: order.createdAt,
+          shippedAt: shippingDoc?.created_at || null,
+          deliveredAt: (order as any).deliveredAt || null,
+          orderStatus: order.status,
+          paymentStatus: (order as any).payment_status || 'Pending',
+          // Kept as `deliveryCharge` for the existing web table column, but it
+          // is now the reimbursable amount only — ₹0 on admin-arranged shipping.
+          deliveryCharge: reimbursement,
+          shippingArrangedBy: payout.shippingArrangedBy,
+          shippingCost: payout.shippingCost,
+          items: payout.items.map((i) => ({
+            productId: i.productId,
+            productName: i.productName,
+            quantity: i.quantity,
+            price: i.purchasePrice,
+            total: i.purchaseSubtotal,
+            priceAdjusted: i.priceAdjusted,
+            quotedPrice: i.quotedPrice,
+          })),
+          grandTotal: orderPayout,
+          status: settled ? 'Paid' : 'Pending',
+          paidAt: settled?.paidAt || null,
+        });
+      }
     }
 
     let invoices = Object.values(groupMap);
 
-    // Load all settlement records for the vendors in this result set
+    // A week is Paid only when every order in it has been settled — so an order
+    // already paid on the daily screen can never be paid again from here.
+    for (const inv of invoices) {
+      const paidCount = inv.orders.filter((o: any) => o.status === 'Paid').length;
+      inv.status =
+        paidCount === 0 ? 'Pending' : paidCount === inv.orders.length ? 'Paid' : 'Partially Paid';
+    }
+
+    // Legacy Settlement records predate per-order payouts: honour them as a
+    // fallback so weeks settled before this change still read as Paid.
     const vendorIds = [...new Set(invoices.map((inv) => inv.vendorId.toString()))];
     const settlements = await Settlement.find({ vendorId: { $in: vendorIds } }).lean();
-    logger.info(`[getVendorWeeklyBilling] Found ${settlements.length} settlement(s) for ${vendorIds.length} vendor(s)`);
+    logger.info(`[getVendorWeeklyBilling] Found ${settlements.length} legacy settlement(s) for ${vendorIds.length} vendor(s)`);
 
-    // Build lookup map: "vendorId_mondayOfWeek(YYYY-MM-DD)" -> settlement.
-    // Prefer a 'paid' record if duplicates exist for the same vendor + week.
     const settlementMap: Record<string, any> = {};
     for (const s of settlements) {
       const key = `${s.vendorId.toString()}_${weekKeyDate(new Date(s.weekStart))}`;
       if (!settlementMap[key] || s.status === 'paid') settlementMap[key] = s;
     }
 
-    // Merge settlement status into each invoice group
     for (const inv of invoices) {
+      if (inv.status === 'Paid') continue;
       const key = `${inv.vendorId.toString()}_${weekKeyDate(new Date(inv.weekStart))}`;
       const settlement = settlementMap[key];
       if (settlement && settlement.status === 'paid') {
@@ -1299,17 +1337,76 @@ export const markWeeklyInvoicePaid = async (req: AuthRequest, res: Response, nex
 
     logger.info(`[markWeeklyInvoicePaid] Saved: vendorId=${vendorId} weekStart=${weekStartDate.toISOString()}`);
 
-    // Clear the vendor's wallet so their balance shows ₹0 after payout
-    try {
-      const { WalletService } = await import('../services/WalletService');
-      await WalletService.resetWallet(vendorId);
-      logger.info(`[markWeeklyInvoicePaid] Wallet cleared for vendorId=${vendorId}`);
-    } catch (walletError: any) {
-      // Non-blocking — don't fail the invoice marking if wallet reset fails
-      logger.error('[markWeeklyInvoicePaid] Wallet reset failed:', walletError.message);
+    // Also write a per-order VendorPayout snapshot for every order in the week.
+    // This is what stops the same order being paid twice from the daily screen:
+    // (order_id, vendor_id) is unique, so whichever screen settles it first wins
+    // and the other reports it as already paid.
+    let payoutsWritten = 0;
+    let actuallyPaid = 0;
+    if (settledOrders.length) {
+      const orders = await Order.find({ _id: { $in: settledOrders } })
+        .populate('items.product_id', 'name')
+        .populate('items.primeProduct_id', 'name');
+      const shippingDocs = await ShippingDetails.find({ order_id: { $in: settledOrders } })
+        .select('order_id vendor_id shipping_cost shipping_arranged_by created_at')
+        .lean();
+      const shippingByOrder = new Map<string, ShippingDetailsLike>(
+        shippingDocs.map((sd) => [sd.order_id.toString(), sd as unknown as ShippingDetailsLike])
+      );
+
+      for (const order of orders) {
+        const shippingDoc = shippingByOrder.get(order._id.toString()) || null;
+        const payout = computeVendorPayoutForOrder(order, String(vendorId), shippingDoc);
+        if (!payout) continue;
+        try {
+          await VendorPayout.create({
+            order_id: order._id,
+            vendor_id: vendorId,
+            items: payout.items.map((i) => ({
+              product_id: /^[a-f\d]{24}$/i.test(i.productId) ? i.productId : undefined,
+              productName: i.productName,
+              quantity: i.quantity,
+              purchasePrice: i.purchasePrice,
+              purchaseSubtotal: i.purchaseSubtotal,
+            })),
+            productAmount: payout.productAmount,
+            shippingArrangedBy: payout.shippingArrangedBy,
+            shippingCost: payout.shippingCost,
+            shippingReimbursement: payout.shippingReimbursement,
+            totalAmount: payout.totalAmount,
+            payableDate: payableDateOf(order, shippingDoc),
+            status: 'paid',
+            paidAt,
+            paidBy: req.user._id,
+            paymentMethod: 'weekly-invoice',
+          });
+          payoutsWritten += 1;
+          actuallyPaid += payout.totalAmount;
+        } catch (err: any) {
+          // 11000 = already settled for this vendor; nothing more to do.
+          if (err?.code !== 11000) throw err;
+        }
+      }
     }
 
-    res.status(200).json({ success: true, message: 'Invoice marked as paid', paidAt });
+    // Refresh the cached wallet. The balance is derived from unpaid payouts, so
+    // the records just written drop out of it — no more blanket reset to ₹0,
+    // which used to wipe anything still owed from other weeks.
+    try {
+      const { WalletService } = await import('../services/WalletService');
+      const wallet = await WalletService.resetWallet(vendorId);
+      logger.info(`[markWeeklyInvoicePaid] Paid ₹${actuallyPaid}, ₹${wallet.balance} still outstanding for vendorId=${vendorId}`);
+    } catch (walletError: any) {
+      // Non-blocking — don't fail the invoice marking if the wallet update fails
+      logger.error('[markWeeklyInvoicePaid] Wallet update failed:', walletError.message);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Invoice marked as paid',
+      paidAt,
+      data: { payoutsWritten, totalPaid: actuallyPaid },
+    });
   } catch (error: any) {
     logger.error('[markWeeklyInvoicePaid] Error:', error.message);
     next(error);

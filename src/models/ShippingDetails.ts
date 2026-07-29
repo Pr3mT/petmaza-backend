@@ -1,5 +1,10 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
 
+// Who actually booked and paid the courier. Drives vendor billing: a VENDOR
+// shipment is reimbursed on top of the product price, a PLATFORM shipment is
+// Petmaza's own cost and the vendor is paid product price only.
+export type ShippingArrangedBy = 'VENDOR' | 'PLATFORM';
+
 export interface IShippingDetails extends Document {
   order_id: Types.ObjectId;
   vendor_id: Types.ObjectId;
@@ -9,6 +14,8 @@ export interface IShippingDetails extends Document {
   tracking_id: string;
   tracking_link?: string;
   shipping_cost?: number;
+  shipping_arranged_by: ShippingArrangedBy;
+  arranged_by_user_id?: Types.ObjectId;
   total_weight?: number;
   weight_unit?: 'kg' | 'g';
   delivery_type?: 'inter_state' | 'out_of_state';
@@ -51,6 +58,20 @@ const shippingDetailsSchema = new Schema<IShippingDetails>(
     shipping_cost: {
       type: Number,
       min: 0,
+    },
+    // Stamped from the panel that filed the record — vendor/fulfiller/shop
+    // endpoints write VENDOR, the admin endpoint writes PLATFORM. Records
+    // created before vendor-side shipping billing existed default to VENDOR,
+    // which is what they were: the vendor's own courier.
+    shipping_arranged_by: {
+      type: String,
+      enum: ['VENDOR', 'PLATFORM'],
+      default: 'VENDOR',
+      required: true,
+    },
+    arranged_by_user_id: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
     },
     total_weight: {
       type: Number,

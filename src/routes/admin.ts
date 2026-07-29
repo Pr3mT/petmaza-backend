@@ -31,6 +31,11 @@ import {
   syncCategoryMappings,
 } from '../controllers/adminController';
 import {
+  getVendorDailyPayouts,
+  markDailyPayoutPaid,
+  getVendorPayoutHistory,
+} from '../controllers/vendorPayoutController';
+import {
   getAnalytics,
   getOrderReport,
   getSummary,
@@ -93,8 +98,16 @@ router.delete('/fulfillers/:id', deleteFulfiller);
 // Vendor billing routes — admin only (billing/finance)
 router.get('/vendor-billing', checkRole('admin'), getVendorBilling);
 router.get('/quick-billing', checkRole('admin'), getQuickBilling);
+// Legacy weekly view — kept live for the web panel until it is retired. It now
+// reads the same product-wise math and the same VendorPayout records as the
+// daily screen, so the two can never pay the same order twice.
 router.get('/vendor-weekly-billing', checkRole('admin'), getVendorWeeklyBilling);
 router.post('/vendor-weekly-billing/mark-paid', checkRole('admin'), markWeeklyInvoicePaid);
+
+// Daily, order-based vendor payouts — the current settlement process.
+router.get('/vendor-daily-payouts', checkRole('admin'), getVendorDailyPayouts);
+router.get('/vendor-daily-payouts/history', checkRole('admin'), getVendorPayoutHistory);
+router.post('/vendor-daily-payouts/mark-paid', checkRole('admin'), markDailyPayoutPaid);
 
 // Category → Fulfiller mapping routes
 router.get('/category-mappings', getCategoryMappings);

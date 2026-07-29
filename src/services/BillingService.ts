@@ -3,7 +3,18 @@ import Wallet from '../models/Wallet';
 import Order from '../models/Order';
 import ShippingDetails from '../models/ShippingDetails';
 import { AppError } from '../middlewares/errorHandler';
+import {
+  PAYABLE_STATUSES,
+  computeVendorPayoutForOrder,
+  ShippingDetailsLike,
+} from './VendorPayoutService';
 
+/**
+ * Legacy weekly billing. Vendors are now settled daily per order through
+ * VendorPayoutService / vendorPayoutController — this is kept only so the old
+ * /api/billing routes keep working. It shares the same payout math so the two
+ * can never report different numbers.
+ */
 export class BillingService {
   // Generate weekly bill for vendor
   static async generateWeeklyBill(
@@ -23,42 +34,42 @@ export class BillingService {
       throw new AppError('Bill already exists for this week', 400);
     }
 
-    // Get all delivered orders in this week
+    // Everything that shipped in this week — an order is payable to its vendors
+    // from the moment it is handed to a courier, not on delivery.
     const orders = await Order.find({
       $or: [
+        { 'items.vendor_id': vendor_id },
         { assignedVendorId: vendor_id },
         { assignedVendors: vendor_id },
       ],
-      status: 'DELIVERED',
+      status: { $in: PAYABLE_STATUSES },
+      payment_status: { $nin: ['Failed', 'Refunded'] },
       updatedAt: {
         $gte: weekStart,
         $lte: weekEnd,
       },
     });
 
-    // Bill = purchase prices + the courier cost the vendor submitted per order
-    // (what the platform actually owes them). The customer's delivery charge is
-    // platform revenue and is never billed to the vendor's account.
+    // Bill = the purchase price of THIS vendor's line items, plus the courier
+    // cost only when the vendor arranged the courier themselves. Admin-arranged
+    // shipping is Petmaza's own cost and is not reimbursed. The customer's
+    // delivery charge is platform revenue and is never billed to the vendor.
     const shippingDocs = await ShippingDetails.find({
       order_id: { $in: orders.map((o) => o._id) },
-      vendor_id,
     })
-      .select('order_id shipping_cost')
+      .select('order_id vendor_id shipping_cost shipping_arranged_by created_at')
       .lean();
-    const shippingByOrder: Record<string, number> = {};
-    shippingDocs.forEach((sd) => {
-      shippingByOrder[sd.order_id.toString()] = Number(sd.shipping_cost) || 0;
-    });
+    const shippingByOrder = new Map<string, ShippingDetailsLike>(
+      shippingDocs.map((sd) => [sd.order_id.toString(), sd as unknown as ShippingDetailsLike])
+    );
 
     const totalAmount = orders.reduce((sum, order) => {
-      const vendorItems = order.items.filter(
-        (item) => item.vendor_id?.toString() === vendor_id
+      const payout = computeVendorPayoutForOrder(
+        order,
+        vendor_id,
+        shippingByOrder.get(order._id.toString()) || null
       );
-      return (
-        sum +
-        vendorItems.reduce((s, item) => s + item.purchaseSubtotal, 0) +
-        (shippingByOrder[order._id.toString()] || 0)
-      );
+      return sum + (payout?.totalAmount || 0);
     }, 0);
 
     // Create bill

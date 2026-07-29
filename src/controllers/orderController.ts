@@ -12,6 +12,7 @@ import { AuthRequest, isAdminRole } from '../middlewares/auth';
 import logger from '../config/logger';
 import { sanitizeOrdersForVendor } from '../utils/vendorOrderSanitizer';
 import { reconcileStuckShipping } from '../utils/shippingDetails';
+import { isPayableStatus } from '../services/VendorPayoutService';
 import {
   sendOrderConfirmationEmail,
   sendOrderStatusUpdateEmail,
@@ -705,28 +706,38 @@ export const getVendorOrders = async (req: AuthRequest, res: Response, next: Nex
 
     logger.info(`[getVendorOrders] Found ${orders.length} orders for vendor ${vendorId}`);
 
-    // Vendor earnings include the shipping cost they entered on the shipping
-    // details form, so surface it on each order for the list cards.
+    // Vendor earnings include the courier cost they entered on the shipping
+    // details form — but ONLY when they arranged the courier. When an admin
+    // arranged it, Petmaza paid the courier directly and the vendor is owed the
+    // product price alone, so we must not show them a reimbursement they will
+    // not receive.
     const shippingDocs = await ShippingDetails.find({
       order_id: { $in: orders.map(o => o._id) },
     })
-      .select('order_id shipping_cost')
+      .select('order_id shipping_cost shipping_arranged_by')
       .lean();
-    const shippingCostByOrder = new Map(
-      shippingDocs.map(d => [d.order_id.toString(), d.shipping_cost || 0])
+    const shippingByOrder = new Map(
+      shippingDocs.map(d => [d.order_id.toString(), d])
     );
 
     res.status(200).json({
       success: true,
       data: {
         orders: sanitizeOrdersForVendor(
-          orders.map(o => ({
-            ...o.toObject(),
-            // Vendor payout = purchase price + the courier cost THEY submitted on
-            // the shipping-details form. The delivery charge the customer paid is
-            // platform revenue, never part of the vendor's cut.
-            shippingCost: shippingCostByOrder.get(o._id.toString()) || 0,
-          }))
+          orders.map(o => {
+            const sd = shippingByOrder.get(o._id.toString());
+            // Records written before shipping billing existed have no flag;
+            // they were the vendor's own courier.
+            const arrangedBy = sd ? sd.shipping_arranged_by || 'VENDOR' : null;
+            return {
+              ...o.toObject(),
+              // Vendor payout = purchase price + the courier cost THEY paid.
+              // The delivery charge the customer paid is platform revenue,
+              // never part of the vendor's cut.
+              shippingCost: arrangedBy === 'VENDOR' ? sd?.shipping_cost || 0 : 0,
+              shippingArrangedBy: arrangedBy,
+            };
+          })
         ),
       },
     });
@@ -867,33 +878,19 @@ export const updateOrderStatus = async (
     order.status = status as any;
     await order.save();
 
-    // When order is delivered, credit vendor's wallet with their earnings
-    // (purchase price total + the courier cost they submitted in shipping details)
-    if (status === 'DELIVERED') {
+    // Vendors are settled daily per order and become payable once the parcel
+    // ships, so refresh the cached wallet whenever the status crosses into (or
+    // out of) a payable state. The balance itself is derived by WalletService
+    // from unpaid payouts — product price for their own line items, plus the
+    // courier cost only when the vendor arranged the courier themselves.
+    if (isPayableStatus(status) || status === 'CANCELLED' || status === 'REFUNDED') {
       try {
         const { WalletService } = await import('../services/WalletService');
-        const { default: ShippingDetails } = await import('../models/ShippingDetails');
-        // Sum up purchaseSubtotal for items belonging to this vendor
-        const vendorItems = order.items.filter(
-          (item: any) => item.vendor_id?.toString() === vendorId
-        );
-        const shippingDoc = await ShippingDetails.findOne({ order_id: order._id, vendor_id: vendorId })
-          .select('shipping_cost')
-          .lean();
-        // Only the courier cost the vendor submitted counts toward their payout.
-        // The customer's delivery charge is platform revenue — never the vendor's.
-        const deliveryCharge = Number(shippingDoc?.shipping_cost) || 0;
-        const vendorEarning = vendorItems.reduce(
-          (sum: number, item: any) => sum + (item.purchaseSubtotal || 0),
-          0
-        ) + deliveryCharge;
-        if (vendorEarning > 0) {
-          await WalletService.addEarnings(vendorId, orderId, vendorEarning);
-          logger.info(`[updateOrderStatus] Wallet credited ₹${vendorEarning} for vendor ${vendorId}`);
-        }
+        const wallet = await WalletService.getWalletBalance(vendorId);
+        logger.info(`[updateOrderStatus] Wallet refreshed for vendor ${vendorId} → ₹${wallet.balance} outstanding`);
       } catch (walletError: any) {
-        // Non-blocking — don't fail the status update if wallet credit fails
-        logger.error('[updateOrderStatus] Wallet credit failed:', walletError.message);
+        // Non-blocking — don't fail the status update if the refresh fails
+        logger.error('[updateOrderStatus] Wallet refresh failed:', walletError.message);
       }
     }
 
@@ -1179,9 +1176,23 @@ export const getVendorOrderShippingDetails = async (
       }
     }
 
+    // Tell the vendor plainly whether this courier cost comes back to them. It
+    // does only when THEY booked the courier; on an admin-arranged shipment
+    // Petmaza paid the courier directly and the payout is product price only.
+    // Records predating this flag were the vendor's own courier.
+    const arrangedBy = shippingDetails ? shippingDetails.shipping_arranged_by || 'VENDOR' : null;
+
     res.status(200).json({
       success: true,
-      data: { shippingDetails: shippingDetails || null },
+      data: {
+        shippingDetails: shippingDetails
+          ? {
+              ...shippingDetails,
+              shipping_arranged_by: arrangedBy,
+              reimbursableToVendor: arrangedBy === 'VENDOR',
+            }
+          : null,
+      },
     });
   } catch (error: any) {
     logger.error('[getVendorOrderShippingDetails] Error:', error);
@@ -1320,6 +1331,12 @@ export const adminAddShippingDetails = async (
     await ShippingDetails.create({
       order_id: orderId,
       vendor_id: attributedVendorId,
+      // Admin filed this, so Petmaza booked and paid the courier. The vendor is
+      // paid product price only for this order — no courier reimbursement. This
+      // also makes the historical mis-attribution of `vendor_id` on multi-vendor
+      // orders harmless for billing: PLATFORM shipments reimburse nobody.
+      shipping_arranged_by: 'PLATFORM',
+      arranged_by_user_id: req.user._id,
       shipping_company: courierName,
       ...(uploadResult
         ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }

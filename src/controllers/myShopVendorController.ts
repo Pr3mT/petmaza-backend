@@ -511,6 +511,9 @@ export const markInTransit = async (req: AuthRequest, res: Response, next: NextF
     await ShippingDetails.create({
       order_id: orderId,
       vendor_id: vendor._id,
+      // Shop booked the courier themselves — reimbursable on their payout.
+      shipping_arranged_by: 'VENDOR',
+      arranged_by_user_id: vendor._id,
       shipping_company: courierName,
       ...(uploadResult
         ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }

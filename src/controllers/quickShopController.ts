@@ -1020,6 +1020,9 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
     const shippingDetails = await ShippingDetails.create({
       order_id: orderId,
       vendor_id,
+      // Quick shop booked the courier themselves — reimbursable on payout.
+      shipping_arranged_by: 'VENDOR',
+      arranged_by_user_id: vendor_id,
       shipping_company: String(shipping_company).trim(),
       ...(uploadResult
         ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }
