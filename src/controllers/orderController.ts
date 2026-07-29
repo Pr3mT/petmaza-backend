@@ -984,6 +984,23 @@ export const adminUpdateOrderStatus = async (
       if (Object.keys(dims).length) order.packageDimensions = dims as any;
     }
 
+    // Accepting on a vendor's behalf may carry the vendor's revised purchase
+    // prices — the same `priceUpdates` contract the vendor accept endpoints use.
+    // Vendor payouts are derived from `purchaseSubtotal`, so recording the
+    // agreed price here is what stops it being corrected by hand later.
+    if (status === 'ACCEPTED' && Array.isArray(req.body?.priceUpdates) && req.body.priceUpdates.length) {
+      const { applyVendorPriceAdjustments } = await import('../utils/applyVendorPriceAdjustments');
+      const adj = applyVendorPriceAdjustments(order.items as any, req.body.priceUpdates);
+      if (adj.changed) {
+        order.totalPurchasePrice = adj.totalPurchasePrice;
+        order.totalProfit = adj.totalProfit;
+        order.markModified('items');
+        logger.info(
+          `[adminUpdateOrderStatus] Order ${orderId} purchase prices adjusted by admin ${req.user._id} → totalPurchasePrice ₹${adj.totalPurchasePrice}`
+        );
+      }
+    }
+
     order.status = status as any;
     await order.save();
 
