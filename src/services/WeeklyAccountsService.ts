@@ -29,11 +29,12 @@ import VendorPayout from '../models/VendorPayout';
 import VendorDetails from '../models/VendorDetails';
 import { computeOrderPayouts, ShippingDetailsLike } from './VendorPayoutService';
 
+import Product from '../models/Product';
+
 // Populate targets. Imported for their side effect (model registration) so this
 // service also works from a standalone script, where nothing else has loaded
 // them and .populate() would throw MissingSchemaError.
 import '../models/User';
-import '../models/Product';
 import '../models/PrimeProduct';
 
 // Razorpay's cut on every captured payment: a percentage of the amount, plus
@@ -42,8 +43,16 @@ import '../models/PrimeProduct';
 export const GATEWAY_FEE_PERCENT = Number(process.env.RAZORPAY_FEE_PERCENT ?? 2);
 export const GATEWAY_FEE_GST_PERCENT = Number(process.env.RAZORPAY_FEE_GST_PERCENT ?? 18);
 
-/** Orders at or under this value are ₹1 test/promo checkouts — listed, never totalled. */
+/** Orders at or under this value are ₹1 test checkouts — listed, never totalled. */
 const TEST_ORDER_MAX = 1;
+
+/**
+ * Statuses where the order died before anything was fulfilled. Nothing is owed
+ * to the vendor on these, however the line items are priced — same list as
+ * PROMO_CLAIM_DEAD_STATUSES in orderController and a subset of
+ * NON_PAYABLE_STATUSES in VendorPayoutService.
+ */
+const DEAD_STATUSES = ['CANCELLED', 'REJECTED', 'NOT_AVAILABLE', 'REFUNDED', 'REFUND_INITIATED'];
 
 /**
  * Payment ids that never went through the gateway (legacy admin-marked-paid
@@ -192,7 +201,14 @@ export interface WeeklyAccountRow {
   profitRatio: number | null;
 
   countedInTotals: boolean;
-  testOrder: boolean;
+  /** Giveaway or ₹1 test checkout — shown in the list, kept out of every total. */
+  excluded: boolean;
+  /**
+   * Customer paid, then the order died and was never refunded. We are holding
+   * this money but owe it back, so it is a liability, not revenue — reported on
+   * its own line instead of inflating the week's profit.
+   */
+  moneyHeldOnDeadOrder: number;
   notes: string;
 }
 
@@ -207,7 +223,7 @@ export interface WeeklySummary {
   failedOrders: number;
   refundedOrders: number;
   cancelledOrders: number;
-  testOrders: number;
+  excludedOrders: number;
 
   goodsAmount: number;
   discount: number;
@@ -234,6 +250,11 @@ export interface WeeklySummary {
 
   /** Shipped orders with no courier cost on record — real profit is lower by these. */
   missingCourierCost: number;
+
+  /** Cancelled/rejected orders the customer paid for and was never refunded. */
+  unresolvedOrders: number;
+  /** Their value — money we hold and owe back. A liability, never counted as profit. */
+  moneyHeldOnDeadOrders: number;
 }
 
 // ── Core builder ────────────────────────────────────────────────────────────
@@ -278,6 +299,21 @@ export const buildRows = async (from: Date, to: Date, withDetail = true): Promis
     VendorPayout.find({ order_id: { $in: orderIds } }).lean(),
   ]);
 
+  // Which of these products are giveaways. The order doesn't snapshot the flag,
+  // so it has to be read off the product — a ₹1-total heuristic alone misses a
+  // two-item giveaway and catches genuine ₹1 trade.
+  const productIds = new Set<string>();
+  for (const o of orders as any[]) {
+    for (const it of o.items || []) {
+      const pid = it.product_id?._id || it.product_id;
+      if (pid) productIds.add(String(pid));
+    }
+  }
+  const promoDocs = productIds.size
+    ? await Product.find({ _id: { $in: [...productIds] }, isPromotional: true }).select('_id').lean()
+    : [];
+  const promoProductIds = new Set(promoDocs.map((p: any) => String(p._id)));
+
   const shippingByOrder = new Map<string, any>(
     shippingDocs.map((s: any) => [String(s.order_id), s])
   );
@@ -311,6 +347,11 @@ export const buildRows = async (from: Date, to: Date, withDetail = true): Promis
     const settled = payoutsByOrder.get(orderId) || [];
     const settledByVendor = new Map<string, any>(settled.map((p: any) => [String(p.vendor_id), p]));
     const notes: string[] = [];
+
+    // An order that never made it to fulfilment owes the vendor nothing, no
+    // matter what its line items are priced at. Only an actual VendorPayout
+    // record overrides this — if we really did hand money over, it stands.
+    const dead = DEAD_STATUSES.includes(String(order.status));
 
     // ── Vendor identity (usually one; joined when an order spans vendors) ────
     const vendorUsers = new Map<string, any>();
@@ -407,7 +448,10 @@ export const buildRows = async (from: Date, to: Date, withDetail = true): Promis
       ? ((shippingDoc.shipping_arranged_by || 'VENDOR') as 'VENDOR' | 'PLATFORM')
       : 'NOT FILED';
     const courierReimbursedToVendor = round2(
-      breakdowns.reduce((s, b) => s + b.shippingReimbursement, 0)
+      breakdowns.reduce(
+        (s, b) => s + (dead && !settledByVendor.has(b.vendorId) ? 0 : b.shippingReimbursement),
+        0
+      )
     );
     // A courier an admin booked is Petmaza's own bill, not a vendor reimbursement.
     const courierCostOnPetmaza = courierArrangedBy === 'PLATFORM' ? courierCost : 0;
@@ -424,21 +468,30 @@ export const buildRows = async (from: Date, to: Date, withDetail = true): Promis
     let vendorTotalPayout = 0;
     for (const b of breakdowns) {
       const paid = settledByVendor.get(b.vendorId);
-      vendorProductPayout += paid ? num(paid.productAmount) : b.productAmount;
-      vendorTotalPayout += paid ? num(paid.totalAmount) : b.totalAmount;
+      if (paid) {
+        vendorProductPayout += num(paid.productAmount);
+        vendorTotalPayout += num(paid.totalAmount);
+      } else if (!dead) {
+        vendorProductPayout += b.productAmount;
+        vendorTotalPayout += b.totalAmount;
+      }
+      // dead + never settled → nothing owed, nothing added.
     }
     vendorProductPayout = round2(vendorProductPayout);
     vendorTotalPayout = round2(vendorTotalPayout);
 
     const paidCount = breakdowns.filter((b) => settledByVendor.has(b.vendorId)).length;
     const vendorPayoutStatus: WeeklyAccountRow['vendorPayoutStatus'] =
-      breakdowns.length === 0
+      breakdowns.length === 0 || (dead && paidCount === 0)
         ? 'Nothing payable'
         : paidCount === 0
         ? 'Pending'
         : paidCount === breakdowns.length
         ? 'Paid'
         : 'Partially Paid';
+    if (dead && breakdowns.length > 0 && paidCount === 0) {
+      notes.push(`order ${order.status} — nothing owed to the vendor`);
+    }
     const vendorPaidOn = settled.map((p: any) => istDate(p.paidAt)).filter(Boolean).join(' | ');
     const vendorPaymentRef = settled
       .map((p: any) => [p.paymentMethod, p.paymentReference].filter(Boolean).join(' '))
@@ -446,12 +499,30 @@ export const buildRows = async (from: Date, to: Date, withDetail = true): Promis
       .join(' | ');
 
     // ── Bottom line ─────────────────────────────────────────────────────────
+    // A giveaway is an order where EVERY item is promotional — the same test
+    // createOrder uses to waive the delivery charge and platform fee. A mixed
+    // cart pays normal charges and is real trade, so it stays counted.
+    const orderItems = order.items || [];
+    const promoOrder =
+      orderItems.length > 0 &&
+      orderItems.every((it: any) =>
+        promoProductIds.has(String(it.product_id?._id || it.product_id || ''))
+      );
     const testOrder = orderTotal <= TEST_ORDER_MAX;
-    if (testOrder) notes.push('₹1 test/promo checkout — excluded from totals');
+    const excluded = promoOrder || testOrder;
+    if (promoOrder) notes.push('promotional giveaway — excluded from totals');
+    else if (testOrder) notes.push('₹1 test checkout — excluded from totals');
     if (paymentStatus === 'Refunded') notes.push('refunded — gateway fee is not returned to us');
+    if (String(order.status) === 'CANCELLED' && paymentReceived) {
+      notes.push('cancelled but the payment was never refunded — we still hold this money');
+    }
 
     const netProfit = round2(netReceived - vendorTotalPayout - courierCostOnPetmaza);
-    const countedInTotals = paymentReceived && !testOrder;
+    // A dead order is never revenue, even when the customer's money is still
+    // sitting with us: cancelled means we owe a refund, and booking it as
+    // profit (cost already zeroed above) would flatter the week badly.
+    const countedInTotals = paymentReceived && !excluded && !dead;
+    const moneyHeldOnDeadOrder = paymentReceived && dead && paymentStatus !== 'Refunded' ? orderTotal : 0;
 
     const weekStart = weekStartOf(order.createdAt);
 
@@ -521,7 +592,8 @@ export const buildRows = async (from: Date, to: Date, withDetail = true): Promis
       profitRatio: orderTotal > 0 ? round2((netProfit / orderTotal) * 100) : null,
 
       countedInTotals,
-      testOrder,
+      excluded,
+      moneyHeldOnDeadOrder,
       notes: notes.join('; '),
     });
   }
@@ -553,7 +625,7 @@ export const summarize = (weekStart: Date, rows: WeeklyAccountRow[]): WeeklySumm
     failedOrders: rows.filter((r) => r.paymentStatus === 'Failed').length,
     refundedOrders: rows.filter((r) => r.paymentStatus === 'Refunded').length,
     cancelledOrders: rows.filter((r) => r.orderStatus === 'CANCELLED').length,
-    testOrders: rows.filter((r) => r.testOrder).length,
+    excludedOrders: rows.filter((r) => r.excluded).length,
 
     goodsAmount: sum(counted, (r) => r.goodsAmount),
     discount: sum(counted, (r) => r.discount),
@@ -582,6 +654,9 @@ export const summarize = (weekStart: Date, rows: WeeklyAccountRow[]): WeeklySumm
     profitRatio: customerPaid > 0 ? round2((netProfit / customerPaid) * 100) : null,
 
     missingCourierCost: counted.filter((r) => r.shipped && r.courierCost === 0).length,
+
+    unresolvedOrders: rows.filter((r) => r.moneyHeldOnDeadOrder > 0).length,
+    moneyHeldOnDeadOrders: sum(rows, (r) => r.moneyHeldOnDeadOrder),
   };
 };
 
@@ -693,7 +768,8 @@ const CSV_COLUMNS: { header: string; pick: (r: WeeklyAccountRow) => any }[] = [
   { header: 'NET PROFIT', pick: (r) => r.netProfit },
   { header: 'Profit Ratio %', pick: (r) => (r.profitRatio == null ? '' : r.profitRatio) },
   { header: 'Counted In Totals', pick: (r) => r.countedInTotals },
-  { header: 'Test Order', pick: (r) => r.testOrder },
+  { header: 'Giveaway / Test Order', pick: (r) => r.excluded },
+  { header: 'Money Held On Dead Order', pick: (r) => r.moneyHeldOnDeadOrder },
   { header: 'Notes', pick: (r) => r.notes },
 ];
 
@@ -712,8 +788,8 @@ export const toCsv = (rows: WeeklyAccountRow[], summary: WeeklySummary): string 
     ['WEEK', s.weekLabel],
     ['Orders placed', s.orders],
     ['Paid orders (counted below)', s.paidOrders],
-    ['Unpaid / Failed / Refunded / Cancelled', `${s.unpaidOrders} / ${s.failedOrders} / ${s.refundedOrders} / ${s.cancelledOrders}`],
-    ['₹1 test orders excluded', s.testOrders],
+    ['Unpaid / Failed / Refunded / Cancelled (all excluded)', `${s.unpaidOrders} / ${s.failedOrders} / ${s.refundedOrders} / ${s.cancelledOrders}`],
+    ['Giveaway / ₹1 test orders excluded', s.excludedOrders],
     ['', ''],
     ['MONEY IN (paid orders)', ''],
     ['Goods sold', s.goodsAmount],
@@ -739,6 +815,9 @@ export const toCsv = (rows: WeeklyAccountRow[], summary: WeeklySummary): string 
     ['Delivery margin (collected − couriers)', s.deliveryMargin],
     ['NET PROFIT', s.netProfit],
     ['PROFIT RATIO %', s.profitRatio == null ? '' : s.profitRatio],
+    ['', ''],
+    ['UNRESOLVED — cancelled but never refunded', s.unresolvedOrders],
+    ['Money we hold and owe back (NOT profit)', s.moneyHeldOnDeadOrders],
     ['', ''],
     ['Shipped orders missing a courier cost', s.missingCourierCost],
     ['Note', s.missingCourierCost > 0 ? 'Real profit is LOWER by whatever those shipments cost.' : 'All shipped orders have a courier cost on record.'],
