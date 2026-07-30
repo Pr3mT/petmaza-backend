@@ -81,7 +81,9 @@ const corsOptions = {
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Authorization'],
+  // Content-Disposition: file downloads (e.g. the weekly accounts CSV) carry
+  // their filename here, and the browser hides it from JS unless it's exposed.
+  exposedHeaders: ['Authorization', 'Content-Disposition'],
 };
 
 app.use(cors(corsOptions));

@@ -41,6 +41,11 @@ import {
   getSummary,
 } from '../controllers/analyticsController';
 import {
+  getAccountWeeks,
+  getWeeklyAccountReport,
+  downloadWeeklyAccountCsv,
+} from '../controllers/accountsReportController';
+import {
   getShippingSettings,
   updateShippingSettings,
 } from '../controllers/shippingController';
@@ -103,6 +108,12 @@ router.get('/quick-billing', checkRole('admin'), getQuickBilling);
 // daily screen, so the two can never pay the same order twice.
 router.get('/vendor-weekly-billing', checkRole('admin'), getVendorWeeklyBilling);
 router.post('/vendor-weekly-billing/mark-paid', checkRole('admin'), markWeeklyInvoicePaid);
+
+// Weekly accounts report (Sun–Sat IST) — the real P&L per order: gateway cut,
+// vendor payout, courier, profit ratio. Admin only, like every Accounts route.
+router.get('/accounts/weeks', checkRole('admin'), getAccountWeeks);
+router.get('/accounts/weekly', checkRole('admin'), getWeeklyAccountReport);
+router.get('/accounts/weekly.csv', checkRole('admin'), downloadWeeklyAccountCsv);
 
 // Daily, order-based vendor payouts — the current settlement process.
 router.get('/vendor-daily-payouts', checkRole('admin'), getVendorDailyPayouts);
