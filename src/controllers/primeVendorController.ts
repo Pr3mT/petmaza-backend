@@ -549,6 +549,10 @@ export const addShippingDetails = async (
       delivery_type,
     } = req.body;
 
+    // Optional, so normalise once — an absent field must persist as '' and not
+    // as the string "undefined".
+    const trackingLink = String(tracking_link || '').trim();
+
     // ── Validate required text fields ─────────────────────────────────────────
     if (!shipping_company || !String(shipping_company).trim()) {
       return next(new AppError('Shipping company name is required', 400));
@@ -556,10 +560,8 @@ export const addShippingDetails = async (
     if (!tracking_id || !String(tracking_id).trim()) {
       return next(new AppError('Tracking ID is required', 400));
     }
-    if (!tracking_link || !String(tracking_link).trim()) {
-      return next(new AppError('Tracking link is required', 400));
-    }
-    if (!/^https?:\/\/\S+$/i.test(String(tracking_link).trim())) {
+    // Tracking link is optional; validate the format only when one is provided.
+    if (trackingLink && !/^https?:\/\/\S+$/i.test(trackingLink)) {
       return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
     }
     // ── Optional fields — validate only when provided ─────────────────────────
@@ -639,7 +641,7 @@ export const addShippingDetails = async (
         ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }
         : {}),
       tracking_id: String(tracking_id).trim(),
-      tracking_link: String(tracking_link).trim(),
+      tracking_link: trackingLink,
       ...(shipping_cost !== undefined && String(shipping_cost).trim() !== ''
         ? { shipping_cost: Number(shipping_cost) }
         : {}),
@@ -651,7 +653,7 @@ export const addShippingDetails = async (
     order.status = 'READY_TO_SHIP';
     if (!order.courier) order.courier = {};
     order.courier.tracking_id = String(tracking_id).trim();
-    order.courier.tracking_link = String(tracking_link).trim();
+    order.courier.tracking_link = trackingLink;
     order.courier.name = String(shipping_company).trim();
     await order.save();
 
