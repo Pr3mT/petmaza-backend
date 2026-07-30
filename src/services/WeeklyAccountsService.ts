@@ -122,6 +122,34 @@ export const weekLabelOf = (weekStart: Date): string =>
 const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 const num = (n: any) => Number(n) || 0;
 
+/**
+ * The three sales channels, reported separately because they ARE separate
+ * businesses: Petmaza Quick runs dark stores on a geo-radius with its own
+ * delivery/platform-fee settings (ShippingService.calculateQuickCharges), and
+ * Prime is a different vendor arrangement with its own surcharge. Mixing their
+ * P&L hides which one actually makes money. Same keys as the Analytics channel
+ * filter and GET /admin/orders.
+ */
+export type ReportChannel = 'NORMAL' | 'PRIME' | 'QUICK';
+export const REPORT_CHANNELS: ReportChannel[] = ['NORMAL', 'PRIME', 'QUICK'];
+
+export const CHANNEL_LABEL: Record<ReportChannel | 'ALL', string> = {
+  NORMAL: 'Normal',
+  PRIME: 'Prime',
+  QUICK: 'Petmaza Quick',
+  ALL: 'All channels',
+};
+
+/** Read + validate the channel scope. Absent or 'ALL' = every channel combined. */
+export const resolveChannel = (input?: string | null): ReportChannel | 'ALL' => {
+  const value = String(input || '').toUpperCase();
+  if (!value || value === 'ALL') return 'ALL';
+  if (!REPORT_CHANNELS.includes(value as ReportChannel)) {
+    throw new Error('Invalid channel — expected NORMAL, PRIME, QUICK or ALL');
+  }
+  return value as ReportChannel;
+};
+
 const VENDOR_TYPE_LABEL: Record<string, string> = {
   PRIME: 'Prime Vendor',
   MY_SHOP: 'My Shop',
@@ -138,10 +166,11 @@ export interface WeeklyAccountRow {
   orderDate: string;
   orderId: string;
   orderRef: string;
-  channel: 'NORMAL' | 'PRIME' | 'QUICK';
+  channel: ReportChannel;
   orderStatus: string;
   splitShipment: boolean;
   razorpayOrderId: string;
+  channelLabel: string;
 
   customerName: string;
   customerPhone: string;
@@ -217,6 +246,9 @@ export interface WeeklySummary {
   weekLabel: string;
   weekStart: string;
   weekEnd: string;
+  /** Which sales channel these totals cover. */
+  channel: ReportChannel | 'ALL';
+  channelLabel: string;
   orders: number;
   paidOrders: number;
   unpaidOrders: number;
@@ -526,16 +558,22 @@ export const buildRows = async (from: Date, to: Date, withDetail = true): Promis
 
     const weekStart = weekStartOf(order.createdAt);
 
+    // Quick is flagged on the order channel; everything else is Prime or plain
+    // Normal. Same precedence as AnalyticsService.applyOrderType.
+    const channel: ReportChannel =
+      order.orderChannel === 'QUICK' ? 'QUICK' : order.isPrime ? 'PRIME' : 'NORMAL';
+
     rows.push({
       weekKey: weekKeyOf(weekStart),
       weekLabel: weekLabelOf(weekStart),
       orderDate: istDateTime(order.createdAt),
       orderId,
       orderRef: orderId.slice(-8).toUpperCase(),
-      channel: order.orderChannel === 'QUICK' ? 'QUICK' : order.isPrime ? 'PRIME' : 'NORMAL',
+      channel,
       orderStatus: String(order.status || ''),
       splitShipment: !!order.isSplitShipment,
       razorpayOrderId: order.razorpay_order_id || '',
+      channelLabel: CHANNEL_LABEL[channel],
 
       customerName: order.customer_id?.name || 'Unknown',
       customerPhone: order.customerAddress?.phone || order.customer_id?.phone || '',
@@ -605,7 +643,11 @@ export const buildRows = async (from: Date, to: Date, withDetail = true): Promis
  * Totals for one week. Only paid, non-test orders contribute money; everything
  * else is still counted in the order tallies so nothing goes missing.
  */
-export const summarize = (weekStart: Date, rows: WeeklyAccountRow[]): WeeklySummary => {
+export const summarize = (
+  weekStart: Date,
+  rows: WeeklyAccountRow[],
+  channel: ReportChannel | 'ALL' = 'ALL'
+): WeeklySummary => {
   const counted = rows.filter((r) => r.countedInTotals);
   const sum = (arr: WeeklyAccountRow[], pick: (r: WeeklyAccountRow) => number) =>
     round2(arr.reduce((s, r) => s + pick(r), 0));
@@ -618,6 +660,8 @@ export const summarize = (weekStart: Date, rows: WeeklyAccountRow[]): WeeklySumm
     weekLabel: weekLabelOf(weekStart),
     weekStart: weekStart.toISOString(),
     weekEnd: weekEndOf(weekStart).toISOString(),
+    channel,
+    channelLabel: CHANNEL_LABEL[channel],
 
     orders: rows.length,
     paidOrders: counted.length,
@@ -660,20 +704,36 @@ export const summarize = (weekStart: Date, rows: WeeklyAccountRow[]): WeeklySumm
   };
 };
 
-/** One week: its rows and its totals. */
-export const buildWeeklyReport = async (weekStartInput?: string | Date | null) => {
+/** One week for one channel: its rows and its totals. */
+export const buildWeeklyReport = async (
+  weekStartInput?: string | Date | null,
+  channelInput?: string | null
+) => {
   const weekStart = resolveWeekStart(weekStartInput);
   const weekEnd = weekEndOf(weekStart);
-  const rows = await buildRows(weekStart, weekEnd);
-  return { weekStart, weekEnd, rows, summary: summarize(weekStart, rows) };
+  const channel = resolveChannel(channelInput);
+  const all = await buildRows(weekStart, weekEnd);
+  const rows = channel === 'ALL' ? all : all.filter((r) => r.channel === channel);
+  return { weekStart, weekEnd, channel, rows, summary: summarize(weekStart, rows, channel) };
 };
+
+export interface WeekIndexEntry {
+  weekKey: string;
+  weekLabel: string;
+  weekStart: string;
+  weekEnd: string;
+  /** Every channel, always all three, so an idle channel reads as idle not missing. */
+  channels: WeeklySummary[];
+  /** All channels together — the week's bottom line across the whole business. */
+  combined: WeeklySummary;
+}
 
 /**
  * Every week from `weeks` weeks ago to today, newest first — the index the
- * report screen lists, one downloadable CSV per entry. Weeks with no orders are
- * included so a blank week is visibly blank rather than missing.
+ * report screen lists, one downloadable CSV per channel per entry. Weeks with
+ * no orders are included so a blank week is visibly blank rather than missing.
  */
-export const buildWeekIndex = async (weeks = 26): Promise<WeeklySummary[]> => {
+export const buildWeekIndex = async (weeks = 26): Promise<WeekIndexEntry[]> => {
   const currentWeekStart = weekStartOf(new Date());
   const span = Math.max(1, Math.min(Math.trunc(weeks) || 26, 104));
   const firstWeekStart = new Date(currentWeekStart.getTime() - (span - 1) * WEEK_MS);
@@ -687,10 +747,20 @@ export const buildWeekIndex = async (weeks = 26): Promise<WeeklySummary[]> => {
     else byWeek.set(r.weekKey, [r]);
   }
 
-  const out: WeeklySummary[] = [];
+  const out: WeekIndexEntry[] = [];
   for (let i = 0; i < span; i++) {
     const weekStart = new Date(currentWeekStart.getTime() - i * WEEK_MS);
-    out.push(summarize(weekStart, byWeek.get(weekKeyOf(weekStart)) || []));
+    const weekRows = byWeek.get(weekKeyOf(weekStart)) || [];
+    out.push({
+      weekKey: weekKeyOf(weekStart),
+      weekLabel: weekLabelOf(weekStart),
+      weekStart: weekStart.toISOString(),
+      weekEnd: weekEndOf(weekStart).toISOString(),
+      channels: REPORT_CHANNELS.map((c) =>
+        summarize(weekStart, weekRows.filter((r) => r.channel === c), c)
+      ),
+      combined: summarize(weekStart, weekRows, 'ALL'),
+    });
   }
   return out;
 };
@@ -786,6 +856,7 @@ export const toCsv = (rows: WeeklyAccountRow[], summary: WeeklySummary): string 
   const s = summary;
   const block: [string, any][] = [
     ['WEEK', s.weekLabel],
+    ['CHANNEL', s.channelLabel],
     ['Orders placed', s.orders],
     ['Paid orders (counted below)', s.paidOrders],
     ['Unpaid / Failed / Refunded / Cancelled (all excluded)', `${s.unpaidOrders} / ${s.failedOrders} / ${s.refundedOrders} / ${s.cancelledOrders}`],
@@ -830,8 +901,9 @@ export const toCsv = (rows: WeeklyAccountRow[], summary: WeeklySummary): string 
   return '﻿' + lines.join('\r\n');
 };
 
-/** petmaza-accounts-2026-07-19-to-2026-07-25.csv */
-export const csvFileName = (weekStart: Date): string => {
+/** petmaza-accounts-quick-2026-07-19-to-2026-07-25.csv */
+export const csvFileName = (weekStart: Date, channel: ReportChannel | 'ALL' = 'ALL'): string => {
   const end = istWall(weekEndOf(weekStart)).toISOString().slice(0, 10);
-  return `petmaza-accounts-${weekKeyOf(weekStart)}-to-${end}.csv`;
+  const slug = channel === 'ALL' ? 'all-channels' : channel.toLowerCase();
+  return `petmaza-accounts-${slug}-${weekKeyOf(weekStart)}-to-${end}.csv`;
 };
