@@ -355,6 +355,7 @@ export async function sendOrderConfirmationEmail(
         isSplit ? 'Each item is processed by its assigned warehouse' : 'Order will be assigned to the nearest vendor',
         "You'll receive email updates for each shipment",
         ...(isSplit ? ['Track each shipment separately in your order history'] : []),
+        'Estimated Delivery: 7-10 days',
       ])}
     `,
     `Order confirmed — #${orderId}`
@@ -646,7 +647,7 @@ export async function sendPaymentSuccessEmail(
         'Your order will be assigned to the nearest vendor',
         'Vendor will confirm product availability',
         "You'll receive shipping updates via email",
-        'Expected delivery: 2-5 business days',
+        'Estimated Delivery: 7-10 days',
       ])}
 
       ${emailButton('Track Your Order', `${FRONTEND_URL}/orders`, '#2563eb')}
