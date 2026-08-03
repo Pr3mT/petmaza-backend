@@ -37,6 +37,8 @@ router.delete('/vendor/my-products/:productId', quickShopController.deleteOwnPro
 router.get('/vendor/wallet/stats', quickShopController.getQuickWalletStats);
 
 router.get('/vendor/orders', quickShopController.getQuickShopOrders);
+// Confirm (or move) the delivery window the customer booked at checkout.
+router.post('/vendor/orders/:orderId/book-slot', quickShopController.bookDeliverySlot);
 router.post('/vendor/orders/:orderId/accept', quickShopController.acceptOrder);
 router.post('/vendor/orders/:orderId/reject', quickShopController.rejectOrder);
 router.post('/vendor/orders/:orderId/packed', quickShopController.markPacked);

@@ -1071,6 +1071,53 @@ export async function sendOrderAcceptedEmail(
 }
 
 /**
+ * Petmaza Quick — the shop admin has locked in the delivery window. Sent
+ * whenever they book or move it, since a moved window is exactly the thing a
+ * customer needs to hear about before they miss the door.
+ */
+export async function sendQuickSlotBookedEmail(
+  customerEmail: string,
+  customerName: string,
+  orderId: string,
+  slot: string,
+  opts?: { shopName?: string; movedFrom?: string; note?: string }
+) {
+  const moved = !!opts?.movedFrom && opts.movedFrom !== slot;
+
+  const html = emailShell(
+    `
+      ${emailHero('🕒', moved ? 'Delivery Slot Updated' : 'Delivery Slot Confirmed', slot, EMAIL_THEME.success)}
+
+      <p style="margin:0 0 12px 0;">Hi ${customerName},</p>
+      <p style="margin:0 0 4px 0;">${
+        moved
+          ? `Your Petmaza Quick order has been booked for a different delivery window than the one you picked. Please keep someone available at the new time below.`
+          : `Your Petmaza Quick order is booked for delivery in the window below. Please keep someone available to receive it.`
+      }</p>
+
+      ${emailCard(
+        detailRows([
+          ['Order ID', `#${orderId}`],
+          ['Delivery Slot', `<strong>${slot}</strong>`],
+          ...(moved ? [['You Requested', opts!.movedFrom!] as [string, string]] : []),
+          ...(opts?.shopName ? [['Fulfilled By', opts.shopName] as [string, string]] : []),
+          ...(opts?.note ? [['Note From Store', opts.note] as [string, string]] : []),
+        ])
+      )}
+    `,
+    `Delivery slot for order #${orderId}: ${slot}`
+  );
+
+  return sendEmail({
+    to: customerEmail,
+    subject: `${moved ? 'Delivery Slot Updated' : 'Delivery Slot Confirmed'} - #${orderId} 🕒`,
+    html,
+    trigger: 'quick_slot_booked',
+    orderId,
+  });
+}
+
+/**
  * Send order rejected notification to customer
  */
 export async function sendOrderRejectedEmail(

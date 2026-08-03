@@ -1,5 +1,6 @@
 import mongoose, { Schema } from 'mongoose';
 import { IOrder, OrderStatus, PaymentStatus } from '../types';
+import { QUICK_SLOT_KEYS } from '../constants/quickSlots';
 
 const orderItemSchema = new Schema(
   {
@@ -136,9 +137,41 @@ const orderSchema = new Schema<IOrder>(
       enum: ['NORMAL', 'QUICK'],
       default: 'NORMAL',
     },
+    // Legacy Quick speed picker (30 min / 1 day). Quick now books fixed slots
+    // instead; kept so orders placed before the switch still render.
     quickDeliveryMode: {
       type: String,
       enum: ['HALF_HOUR', 'ONE_DAY'],
+    },
+    // The slot the customer booked at checkout, and the IST instant that slot
+    // starts on. Both are what the customer *asked* for.
+    quickDeliverySlot: {
+      type: String,
+      enum: QUICK_SLOT_KEYS as unknown as string[],
+    },
+    quickSlotDate: {
+      type: Date,
+    },
+    // What the shop admin actually committed to. Usually the same as the
+    // requested slot, but they can move it to a window they can hit — the
+    // customer is shown this one once it is set.
+    quickBookedSlot: {
+      type: String,
+      enum: QUICK_SLOT_KEYS as unknown as string[],
+    },
+    quickBookedDate: {
+      type: Date,
+    },
+    quickSlotBookedAt: {
+      type: Date,
+    },
+    quickSlotBookedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    quickSlotNote: {
+      type: String,
+      trim: true,
     },
     isSplitShipment: {
       type: Boolean,

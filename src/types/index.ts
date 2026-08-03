@@ -1,4 +1,5 @@
 import { Document, Types } from 'mongoose';
+import type { QuickSlotKey } from '../constants/quickSlots';
 
 export interface IUser extends Document {
   name: string;
@@ -176,7 +177,16 @@ export interface IOrder extends Document {
   status: OrderStatus;
   isPrime: boolean; // True if order contains only prime products
   orderChannel: 'NORMAL' | 'QUICK'; // 'QUICK' = placed via Petmaza Quick
-  quickDeliveryMode?: 'HALF_HOUR' | 'ONE_DAY'; // Only set when orderChannel === 'QUICK'
+  quickDeliveryMode?: 'HALF_HOUR' | 'ONE_DAY'; // Legacy Quick speed picker, retired in favour of slots
+  // Quick slot booking — the customer books a window at checkout, the shop
+  // admin confirms (or moves) it. Only set when orderChannel === 'QUICK'.
+  quickDeliverySlot?: QuickSlotKey;
+  quickSlotDate?: Date;
+  quickBookedSlot?: QuickSlotKey;
+  quickBookedDate?: Date;
+  quickSlotBookedAt?: Date;
+  quickSlotBookedBy?: Types.ObjectId | string;
+  quickSlotNote?: string;
   isSplitShipment: boolean; // True if order is split across vendors
   parentOrderId?: Types.ObjectId | string; // For split shipments, link to parent order
   childOrderIds?: (Types.ObjectId | string)[]; // For parent orders, list of child orders

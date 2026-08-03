@@ -20,11 +20,28 @@ import {
   sendDeliveryCompletedEmail,
   sendRefundInitiatedEmail,
   sendShippingTrackingEmail,
+  sendQuickSlotBookedEmail,
 } from '../services/emailer';
 import ShippingDetails from '../models/ShippingDetails';
 import { reconcileStuckShipping } from '../utils/shippingDetails';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
+import {
+  isQuickSlot,
+  resolveQuickSlotDate,
+  formatQuickSlot,
+  quickSlotStart,
+  QuickSlotKey,
+} from '../constants/quickSlots';
+
+// What the customer has actually been promised: the shop admin's booked window
+// once they've confirmed one, otherwise the window the customer requested.
+// Orders placed before Quick moved to slots still carry the old speed picker.
+const quickPromise = (order: any): string => {
+  if (order.quickBookedSlot) return formatQuickSlot(order.quickBookedSlot, order.quickBookedDate);
+  if (order.quickDeliverySlot) return formatQuickSlot(order.quickDeliverySlot, order.quickSlotDate);
+  return order.quickDeliveryMode === 'HALF_HOUR' ? 'Within 30 minutes' : 'Within 1 day';
+};
 
 // ==================== CUSTOMER-FACING ====================
 
@@ -293,7 +310,7 @@ export const reverseGeocode = async (req: Request, res: Response, next: NextFunc
 // creates one order per shop.
 export const createQuickOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { items, customerPincode, customerAddress, deliveryMode } = req.body;
+    const { items, customerPincode, customerAddress, deliverySlot } = req.body;
 
     if (!items || items.length === 0) {
       return next(new AppError('Order must have at least one item', 400));
@@ -301,9 +318,13 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
     if (!customerPincode || !customerAddress) {
       return next(new AppError('Pincode and address are required', 400));
     }
-    if (!['HALF_HOUR', 'ONE_DAY'].includes(deliveryMode)) {
-      return next(new AppError('deliveryMode must be HALF_HOUR or ONE_DAY', 400));
+    if (!isQuickSlot(deliverySlot)) {
+      return next(new AppError('Please choose a delivery slot', 400));
     }
+    // Which day the booked window falls on is decided here, not by the client —
+    // a phone with a wrong clock must not be able to book a window that has
+    // already passed.
+    const slotDate = resolveQuickSlotDate(deliverySlot);
 
     // The delivery point is what serviceability is judged on. It may ride on the
     // address (the saved-address coords) or be sent alongside it (a fresh GPS fix).
@@ -353,7 +374,8 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
       items,
       customerPincode,
       customerAddress,
-      deliveryMode,
+      deliverySlot,
+      slotDate,
       servingShops,
     });
 
@@ -377,12 +399,14 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
     const totalAmount = orders.reduce((sum, o) => sum + (o.total || 0), 0);
     const isSplitShipment = orders.length > 1;
 
-    logger.info(`[createQuickOrder] ${orders.length} Quick order(s) created (${deliveryMode})`);
+    logger.info(
+      `[createQuickOrder] ${orders.length} Quick order(s) created (${formatQuickSlot(deliverySlot, slotDate)})`
+    );
 
     res.status(201).json({
       success: true,
       message: 'Quick order created successfully',
-      data: { orders, isSplitShipment, totalAmount },
+      data: { orders, isSplitShipment, totalAmount, deliverySlot, slotDate },
     });
 
     orderQueue.emit('order:created', {
@@ -794,6 +818,78 @@ async function findOwnQuickOrder(vendor: any, orderId: string) {
   return order;
 }
 
+// The shop admin books the delivery window for an incoming Quick order. They
+// normally confirm the window the customer asked for, but can move it to one
+// they can actually hit — moving it emails the customer, because a silently
+// changed window is a missed delivery.
+//
+// `forTomorrow` exists because a shop taking a late order may only be able to
+// serve the requested window the next day.
+export const bookDeliverySlot = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { orderId } = req.params;
+    const { slot, forTomorrow, note } = req.body || {};
+    const order = await findOwnQuickOrder(req.user, orderId);
+
+    // Once it's left the shop the window is a promise already in flight — the
+    // shop should be updating the courier, not re-booking the slot.
+    if (['REJECTED', 'CANCELLED', 'REFUND_INITIATED', 'REFUNDED', 'DELIVERED'].includes(order.status)) {
+      return next(new AppError(`Cannot book a delivery slot for an order that is ${order.status}`, 400));
+    }
+    if (['PICKED_UP', 'IN_TRANSIT'].includes(order.status)) {
+      return next(new AppError('This order is already out for delivery — its slot can no longer be changed', 400));
+    }
+
+    // No slot sent means "confirm what the customer picked".
+    const chosen: QuickSlotKey = isQuickSlot(slot)
+      ? slot
+      : (order.quickDeliverySlot as QuickSlotKey) || (null as any);
+    if (!isQuickSlot(chosen)) {
+      return next(new AppError('Please choose a delivery slot to book', 400));
+    }
+
+    const previous = order.quickBookedSlot
+      ? formatQuickSlot(order.quickBookedSlot, order.quickBookedDate)
+      : formatQuickSlot(order.quickDeliverySlot, order.quickSlotDate);
+
+    const bookedDate = forTomorrow ? quickSlotStart(chosen, new Date(), 1) : resolveQuickSlotDate(chosen);
+
+    order.quickBookedSlot = chosen;
+    order.quickBookedDate = bookedDate;
+    order.quickSlotBookedAt = new Date();
+    order.quickSlotBookedBy = req.user._id;
+    if (note !== undefined) order.quickSlotNote = String(note).trim().slice(0, 300);
+    await order.save();
+
+    const booked = formatQuickSlot(chosen, bookedDate);
+    logger.info(`[quickShop:bookDeliverySlot] Order ${orderId} booked for ${booked} by shop ${req.user._id}`);
+
+    try {
+      const populated = await order.populate('customer_id', 'name email');
+      const customer = populated.customer_id as any;
+      if (customer?.email) {
+        await sendQuickSlotBookedEmail(
+          customer.email,
+          customer.name || 'Customer',
+          `#${order._id.toString().slice(-8)}`,
+          booked,
+          { shopName: req.user.name, movedFrom: previous, note: order.quickSlotNote }
+        );
+      }
+    } catch (emailError: any) {
+      logger.error('[quickShop:bookDeliverySlot] Failed to send email:', emailError.message);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Delivery slot booked for ${booked}`,
+      data: { order, bookedSlot: booked },
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
 export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const { orderId } = req.params;
@@ -826,7 +922,7 @@ export const acceptOrder = async (req: AuthRequest, res: Response, next: NextFun
           customer.name || 'Customer',
           `#${order._id.toString().slice(-8)}`,
           req.user.name || 'Shop Admin',
-          order.quickDeliveryMode === 'HALF_HOUR' ? '30 minutes' : '1 day'
+          quickPromise(order)
         );
       }
     } catch (emailError: any) {
@@ -1060,7 +1156,7 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
             deliveryType: shippingDetails.delivery_type,
             totalWeight: shippingDetails.total_weight,
             weightUnit: shippingDetails.weight_unit,
-            estimatedDelivery: order.quickDeliveryMode === 'HALF_HOUR' ? 'Within 30 minutes' : 'Within 1 day',
+            estimatedDelivery: quickPromise(order),
           }
         );
       }

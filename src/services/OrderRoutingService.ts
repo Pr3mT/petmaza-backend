@@ -6,6 +6,7 @@ import { AppError } from '../middlewares/errorHandler';
 import QuickServiceabilityService, { ServingShop } from './QuickServiceabilityService';
 import { IOrderItem } from '../types';
 import { VendorNotificationData, SalesRecordData } from './OrderQueue';
+import { QuickSlotKey, formatQuickSlot } from '../constants/quickSlots';
 import logger from '../config/logger';
 
 export interface RouteOrderResult {
@@ -570,10 +571,13 @@ export class OrderRoutingService {
       phone?: string;
       location?: { lat: number; lng: number };
     };
-    deliveryMode: 'HALF_HOUR' | 'ONE_DAY';
+    // The delivery window the customer booked at checkout, and the IST instant
+    // that window starts on (today or tomorrow, resolved by the caller).
+    deliverySlot: QuickSlotKey;
+    slotDate: Date;
     servingShops?: ServingShop[];
   }): Promise<{ orders: any[]; notifications: VendorNotificationData[] }> {
-    const { customer_id, items, customerPincode, customerAddress, deliveryMode } = data;
+    const { customer_id, items, customerPincode, customerAddress, deliverySlot, slotDate } = data;
 
     const servingShops =
       data.servingShops ??
@@ -677,13 +681,16 @@ export class OrderRoutingService {
         status: 'PENDING',
         isPrime: false,
         orderChannel: 'QUICK',
-        quickDeliveryMode: deliveryMode,
+        quickDeliverySlot: deliverySlot,
+        quickSlotDate: slotDate,
         isSplitShipment,
         customerPincode,
         customerAddress,
       });
 
-      logger.info(`[routeQuickOrder] ✅ Quick order ${order._id} created for shop ${shopId} (${deliveryMode})`);
+      logger.info(
+        `[routeQuickOrder] ✅ Quick order ${order._id} created for shop ${shopId} (${formatQuickSlot(deliverySlot, slotDate)})`
+      );
 
       orders.push(order);
       notifications.push({

@@ -1785,7 +1785,13 @@ export const getQuickBilling = async (req: AuthRequest, res: Response, next: Nex
       const vendorId = vendor._id.toString();
       const orderTotal = order.total || 0;
       const orderStatus = order.status;
-      const deliveryMode = (order as any).quickDeliveryMode || 'UNSPECIFIED';
+      // Quick now books fixed slots; group by the booked (or requested) window,
+      // falling back to the retired speed picker for pre-slot orders.
+      const deliveryMode =
+        (order as any).quickBookedSlot ||
+        (order as any).quickDeliverySlot ||
+        (order as any).quickDeliveryMode ||
+        'UNSPECIFIED';
 
       // Platform keeps the platform fee; the shop is owed the item subtotal.
       const platformProfit = (order as any).platformFee || 0;
