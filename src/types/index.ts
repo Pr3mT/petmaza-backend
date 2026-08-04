@@ -67,6 +67,15 @@ export interface IProduct extends Document {
   discount?: number; // auto-calculated: ((MRP - sellingPrice) / MRP) * 100
   purchasePercentage?: number; // e.g., 60 means 60% of MRP (your cost)
   purchasePrice?: number; // auto-calculated: MRP * (purchasePercentage / 100)
+  // Petmaza Quick pricing — set by PETMAZA, not by the dark store. The shop
+  // only declares whether it holds the product and how many (QuickProductListing
+  // .stock); it does not price it. quickPurchasePrice is what the shop bills us
+  // and is paid out; quickSellingPrice is what the Quick customer pays. Kept
+  // apart from the main-store prices because Quick's cost base and instant
+  // delivery justify a different rate. Unset = fall back to the shop's legacy
+  // listing price, which yields zero margin (the pre-2026-08 behaviour).
+  quickSellingPrice?: number;
+  quickPurchasePrice?: number;
   isPrime: boolean; // Prime products: Buy Now only, no cart
   isPromotional?: boolean; // Promo/giveaway product: free delivery + no platform fee when the whole order is promotional items
   primeVendor_id?: Types.ObjectId | string; // Prime vendor who handles this product
@@ -263,8 +272,12 @@ export interface IVendorProductPricing extends Document {
   updatedAt: Date;
 }
 
-// Shop Admin (QUICK_SHOP vendor)'s self-service listing of an existing catalog
-// product for Petmaza Quick — their own price + stock for that product.
+// Shop Admin (QUICK_SHOP vendor)'s declaration that they hold a catalog product
+// for Petmaza Quick, and how many. PETMAZA prices Quick (Product
+// .quickSellingPrice / .quickPurchasePrice) — the shop no longer sets a price.
+// `sellingPrice` here is the pre-2026-08 shop-set price, kept because the schema
+// requires it and because it is the fallback for products Petmaza has not
+// priced for Quick yet.
 export interface IQuickProductListing extends Document {
   vendor_id: Types.ObjectId | string;
   product_id: Types.ObjectId | string;

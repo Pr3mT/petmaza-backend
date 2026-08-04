@@ -20,6 +20,7 @@
     "convert:variants": "ts-node-dev --transpile-only src/scripts/convertVariantsToProducts.ts",
     "revert:variants": "ts-node-dev --transpile-only src/scripts/revertToVariantSystem.ts",
     "verify:products": "ts-node-dev --transpile-only src/scripts/verifyProducts.ts",
+    "migrate:quick-pricing": "ts-node --transpile-only src/scripts/seedQuickPricing.ts",
     "debug:orders": "ts-node-dev --transpile-only src/scripts/debugPendingOrders.ts",
     "test:pending": "ts-node-dev --transpile-only src/scripts/testPendingOrders.ts",
     "fix:vendor-billing": "ts-node --transpile-only fix-vendor-billing.ts",

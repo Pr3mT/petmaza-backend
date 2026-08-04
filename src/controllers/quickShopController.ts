@@ -140,9 +140,14 @@ export const getQuickProducts = async (req: Request, res: Response, next: NextFu
       .filter((l: any) => l.product_id)
       .map((l: any) => ({
         ...l.product_id,
-        // Override shared catalog pricing/stock with this shop's own Quick listing.
-        sellingPrice: l.sellingPrice,
-        mrp: l.product_id.mrp ?? l.sellingPrice,
+        // Petmaza sets the Quick price; the shop's listing only supplies stock.
+        // Products not yet priced for Quick fall back to the shop's legacy
+        // listing price so the storefront never shows a blank or ₹0 price
+        // mid-migration. Must match the resolution in
+        // OrderRoutingService.routeQuickOrder, or the cart would quote one
+        // price and the order would be placed at another.
+        sellingPrice: Number(l.product_id.quickSellingPrice) || l.sellingPrice,
+        mrp: l.product_id.mrp ?? (Number(l.product_id.quickSellingPrice) || l.sellingPrice),
         stock: l.stock,
         inStock: l.stock > 0,
         quickListingId: l._id,
@@ -455,7 +460,11 @@ export const getMyListings = async (req: AuthRequest, res: Response, next: NextF
     const listings = await QuickProductListing.find({ vendor_id: req.user._id })
       .populate({
         path: 'product_id',
-        select: 'name images mrp brand_id description mainCategory subCategory quickOwnerVendorId',
+        // quickSellingPrice/quickPurchasePrice so the shop sees the price
+        // Petmaza actually sells at and the rate they are billed at, rather
+        // than the legacy price they used to set themselves.
+        select:
+          'name images mrp brand_id description mainCategory subCategory quickOwnerVendorId quickSellingPrice quickPurchasePrice',
         populate: { path: 'brand_id', select: 'name' },
       })
       .sort({ createdAt: -1 });
@@ -467,15 +476,21 @@ export const getMyListings = async (req: AuthRequest, res: Response, next: NextF
 
 export const upsertListing = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { product_id, sellingPrice, stock, isActive } = req.body;
-    if (!product_id || sellingPrice === undefined) {
-      return next(new AppError('product_id and sellingPrice are required', 400));
+    // Petmaza prices Quick, so a shop declares availability only. Any
+    // sellingPrice in the body is ignored rather than rejected — an older app
+    // build still sends one, and failing those requests would take every
+    // un-updated shop's stock control offline.
+    const { product_id, stock, isActive } = req.body;
+    if (!product_id) {
+      return next(new AppError('product_id is required', 400));
     }
-    if (Number(sellingPrice) < 0 || (stock !== undefined && Number(stock) < 0)) {
-      return next(new AppError('sellingPrice and stock must be non-negative', 400));
+    if (stock !== undefined && (isNaN(Number(stock)) || Number(stock) < 0)) {
+      return next(new AppError('stock must be a non-negative number', 400));
     }
 
-    const product = await Product.findById(product_id).select('_id quickOwnerVendorId');
+    const product = await Product.findById(product_id).select(
+      '_id quickOwnerVendorId sellingPrice quickSellingPrice'
+    );
     if (!product) {
       return next(new AppError('Product not found', 404));
     }
@@ -488,9 +503,16 @@ export const upsertListing = async (req: AuthRequest, res: Response, next: NextF
       { vendor_id: req.user._id, product_id },
       {
         $set: {
-          sellingPrice: Number(sellingPrice),
           ...(stock !== undefined ? { stock: Number(stock) } : {}),
           ...(isActive !== undefined ? { isActive: !!isActive } : {}),
+        },
+        // sellingPrice is required by the schema and survives as the pre-Quick
+        // -pricing fallback, so a NEW listing is seeded from the catalogue
+        // rather than left at 0. $setOnInsert, not $set: an existing listing
+        // keeps the historical price it was created with.
+        $setOnInsert: {
+          sellingPrice:
+            Number(product.quickSellingPrice) || Number(product.sellingPrice) || 0,
         },
       },
       { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
