@@ -25,6 +25,11 @@ import {
   dayKeyOf,
   ShippingDetailsLike,
 } from '../services/VendorPayoutService';
+import {
+  channelOfOrder,
+  resolveChannel,
+  CHANNEL_LABEL,
+} from '../services/WeeklyAccountsService';
 
 const DEFAULT_WINDOW_DAYS = 30;
 
@@ -64,10 +69,16 @@ const endOfDay = (d: Date) => {
  * GET /admin/vendor-daily-payouts
  *
  * Query: from, to (YYYY-MM-DD), date (single day shorthand), vendorId,
- *        status (Pending | Paid | Partially Paid)
+ *        status (Pending | Paid | Partially Paid),
+ *        channel (NORMAL | PRIME | QUICK | ALL — absent = ALL)
  *
  * Returns one group per vendor per day, each holding the orders payable that
  * day with a product-wise breakdown.
+ *
+ * Channel is scoped server-side rather than in the screen because a vendor-day
+ * group can hold orders from more than one book: filtering client-side would
+ * have to rebuild every group's totals to stay honest. Scoping here regroups
+ * and re-sums from only the selected channel's orders.
  */
 export const getVendorDailyPayouts = async (
   req: AuthRequest,
@@ -75,7 +86,16 @@ export const getVendorDailyPayouts = async (
   next: NextFunction
 ) => {
   try {
-    const { from, to, date, vendorId, status } = req.query as Record<string, string>;
+    const { from, to, date, vendorId, status, channel } = req.query as Record<string, string>;
+
+    // Throws on anything that isn't a known book, so a typo'd channel reports
+    // an error rather than silently reporting the whole business.
+    let scope: ReturnType<typeof resolveChannel>;
+    try {
+      scope = resolveChannel(channel);
+    } catch (e: any) {
+      return next(new AppError(e?.message || 'Invalid channel', 400));
+    }
 
     // Resolve the reporting window. `date` is shorthand for a single day.
     let rangeStart: Date;
@@ -148,6 +168,9 @@ export const getVendorDailyPayouts = async (
       const payableAt = payableDateOf(order, shippingDoc);
       if (payableAt < rangeStart || payableAt > rangeEnd) continue;
 
+      const orderChannel = channelOfOrder(order as any);
+      if (scope !== 'ALL' && orderChannel !== scope) continue;
+
       const breakdowns = computeOrderPayouts(order, shippingDoc);
 
       for (const payout of breakdowns) {
@@ -196,6 +219,10 @@ export const getVendorDailyPayouts = async (
           orderDate: order.createdAt,
           shippedAt: shippingDoc?.created_at || null,
           payableDate: dayKey,
+          // Which book this order settles under — lets the screen label rows
+          // when no single channel is selected.
+          channel: orderChannel,
+          channelLabel: CHANNEL_LABEL[orderChannel],
           orderStatus: order.status,
           paymentStatus: (order as any).payment_status || 'Pending',
           customerName: (order.customer_id as any)?.name || null,
@@ -245,6 +272,8 @@ export const getVendorDailyPayouts = async (
       success: true,
       data: result,
       summary,
+      channel: scope,
+      channelLabel: CHANNEL_LABEL[scope],
       range: { from: rangeStart.toISOString(), to: rangeEnd.toISOString() },
     });
   } catch (error: any) {
