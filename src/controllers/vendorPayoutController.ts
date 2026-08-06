@@ -1,13 +1,13 @@
-/**
+﻿/**
  * vendorPayoutController
  *
- * Daily, order-based vendor settlement — replaces the Mon–Sun weekly invoice.
+ * Daily, order-based vendor settlement â€” replaces the Monâ€“Sun weekly invoice.
  *
  * Pending payouts are never stored: they are derived live from orders through
  * VendorPayoutService, so a price correction or a courier cost entered late is
  * always reflected. Paying writes a VendorPayout snapshot, which freezes the
  * amount and (via the unique order+vendor index) makes a second payment for the
- * same order impossible — including from the legacy weekly screen.
+ * same order impossible â€” including from the legacy weekly screen.
  */
 
 import { Response, NextFunction } from 'express';
@@ -70,7 +70,7 @@ const endOfDay = (d: Date) => {
  *
  * Query: from, to (YYYY-MM-DD), date (single day shorthand), vendorId,
  *        status (Pending | Paid | Partially Paid),
- *        channel (NORMAL | PRIME | QUICK | ALL — absent = ALL)
+ *        channel (NORMAL | PRIME | QUICK | ALL â€” absent = ALL)
  *
  * Returns one group per vendor per day, each holding the orders payable that
  * day with a product-wise breakdown.
@@ -133,7 +133,7 @@ export const getVendorDailyPayouts = async (
     const shippingDocs = await ShippingDetails.find({
       order_id: { $in: orders.map((o) => o._id) },
     })
-      .select('order_id vendor_id shipping_cost shipping_arranged_by created_at')
+      .select('order_id vendor_id shipping_cost shipping_arranged_by created_at receipt_file_url')
       .lean();
     const shippingByOrder = new Map<string, ShippingDetailsLike>(
       shippingDocs.map((sd) => [sd.order_id.toString(), sd as unknown as ShippingDetailsLike])
@@ -219,7 +219,7 @@ export const getVendorDailyPayouts = async (
           orderDate: order.createdAt,
           shippedAt: shippingDoc?.created_at || null,
           payableDate: dayKey,
-          // Which book this order settles under — lets the screen label rows
+          // Which book this order settles under â€” lets the screen label rows
           // when no single channel is selected.
           channel: orderChannel,
           channelLabel: CHANNEL_LABEL[orderChannel],
@@ -228,11 +228,15 @@ export const getVendorDailyPayouts = async (
           customerName: (order.customer_id as any)?.name || null,
           items: payout.items,
           productAmount,
-          // Null until courier details are filed — the admin sees "not shipped
-          // details yet" rather than a misleading ₹0 vendor cost.
+          // Null until courier details are filed â€” the admin sees "not shipped
+          // details yet" rather than a misleading â‚¹0 vendor cost.
           shippingArrangedBy: payout.shippingArrangedBy,
           shippingCost: payout.shippingCost,
           shippingReimbursement: reimbursement,
+          // Proof of what the vendor paid the delivery partner, so the
+          // reimbursement can be checked against the receipt on this screen
+          // rather than by leaving to hunt the order down in Admin → Orders.
+          shippingReceiptUrl: shippingDoc?.receipt_file_url || null,
           totalAmount: amount,
           status: settled ? 'Paid' : 'Pending',
           paidAt: settled?.paidAt || null,
@@ -316,7 +320,7 @@ export const markDailyPayoutPaid = async (
     }
 
     const shippingDocs = await ShippingDetails.find({ order_id: { $in: ids } })
-      .select('order_id vendor_id shipping_cost shipping_arranged_by created_at')
+      .select('order_id vendor_id shipping_cost shipping_arranged_by created_at receipt_file_url')
       .lean();
     const shippingByOrder = new Map<string, ShippingDetailsLike>(
       shippingDocs.map((sd) => [sd.order_id.toString(), sd as unknown as ShippingDetailsLike])
@@ -330,7 +334,7 @@ export const markDailyPayoutPaid = async (
       const orderId = order._id.toString();
 
       if (!PAYABLE_STATUSES.includes(order.status as any)) {
-        skipped.push({ orderId, reason: `Order is ${order.status} — not payable` });
+        skipped.push({ orderId, reason: `Order is ${order.status} â€” not payable` });
         continue;
       }
 
@@ -367,7 +371,7 @@ export const markDailyPayoutPaid = async (
         });
         created.push(doc);
       } catch (err: any) {
-        // Unique (order_id, vendor_id) — already settled elsewhere.
+        // Unique (order_id, vendor_id) â€” already settled elsewhere.
         if (err?.code === 11000) {
           skipped.push({ orderId, reason: 'Already paid' });
           continue;
@@ -378,7 +382,7 @@ export const markDailyPayoutPaid = async (
 
     const totalPaid = created.reduce((sum, p) => sum + p.totalAmount, 0);
 
-    // Refresh the cached wallet — the balance is derived from unpaid payouts,
+    // Refresh the cached wallet â€” the balance is derived from unpaid payouts,
     // so the records just written drop out of it automatically.
     if (created.length) {
       try {
@@ -391,7 +395,7 @@ export const markDailyPayoutPaid = async (
     }
 
     logger.info(
-      `[markDailyPayoutPaid] vendor=${vendorId} paid=${created.length} skipped=${skipped.length} total=₹${totalPaid} by ${req.user._id}`
+      `[markDailyPayoutPaid] vendor=${vendorId} paid=${created.length} skipped=${skipped.length} total=â‚¹${totalPaid} by ${req.user._id}`
     );
 
     res.status(200).json({
@@ -409,7 +413,7 @@ export const markDailyPayoutPaid = async (
 
 /**
  * GET /admin/vendor-daily-payouts/history
- * Settled payouts, newest first — the audit trail of what was actually paid.
+ * Settled payouts, newest first â€” the audit trail of what was actually paid.
  */
 export const getVendorPayoutHistory = async (
   req: AuthRequest,

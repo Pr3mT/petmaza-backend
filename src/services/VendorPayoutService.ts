@@ -88,6 +88,13 @@ export interface ShippingDetailsLike {
   shipping_cost?: number | null;
   shipping_arranged_by?: 'VENDOR' | 'PLATFORM' | null;
   created_at?: Date | null;
+  /**
+   * Proof of what the vendor paid the delivery partner. Not used in the payout
+   * maths — carried so the daily payout screen can show the receipt next to the
+   * reimbursement it is about to settle, rather than making an admin leave and
+   * hunt for the order.
+   */
+  receipt_file_url?: string | null;
 }
 
 const idOf = (value: any): string | null => {

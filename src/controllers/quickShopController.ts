@@ -1074,6 +1074,17 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
     if (isNaN(Number(shipping_cost)) || Number(shipping_cost) < 0) {
       return next(new AppError('Delivery cost must be a non-negative number', 400));
     }
+    // Whatever is entered here is reimbursed to the shop in full on the daily
+    // payout (this endpoint files the record as VENDOR-arranged), and nothing
+    // else caps or checks it. So a cost that claims money must come with the
+    // proof of payment — the Porter receipt — which admin opens on the payout
+    // screen before settling. A ₹0 drop the shop made itself claims nothing and
+    // needs no receipt.
+    if (Number(shipping_cost) > 0 && !req.file) {
+      return next(
+        new AppError('Attach the delivery receipt — a delivery cost can only be claimed with proof of payment', 400)
+      );
+    }
     // ── Everything else is optional — a local rider has no tracking number ────
     const trackingId = tracking_id ? String(tracking_id).trim() : '';
     const trackingLink = tracking_link ? String(tracking_link).trim() : '';
