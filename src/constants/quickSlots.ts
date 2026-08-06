@@ -57,6 +57,17 @@ export const quickSlotStart = (key: QuickSlotKey, now: Date = new Date(), dayOff
   return new Date(startWallMs - IST_OFFSET_MS);
 };
 
+// Midnight on the IST calendar day `dayOffset` days from `now`, as a UTC instant.
+export const istDayStart = (now: Date = new Date(), dayOffset = 0): Date => {
+  const wall = new Date(now.getTime() + IST_OFFSET_MS);
+  const startWallMs = Date.UTC(
+    wall.getUTCFullYear(),
+    wall.getUTCMonth(),
+    wall.getUTCDate() + dayOffset
+  );
+  return new Date(startWallMs - IST_OFFSET_MS);
+};
+
 // Earliest day this slot can still be honoured — today, else tomorrow.
 export const resolveQuickSlotDate = (key: QuickSlotKey, now: Date = new Date()): Date => {
   const today = quickSlotStart(key, now, 0);

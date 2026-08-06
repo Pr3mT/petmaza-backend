@@ -31,6 +31,7 @@ import {
   resolveQuickSlotDate,
   formatQuickSlot,
   quickSlotStart,
+  istDayStart,
   QuickSlotKey,
 } from '../constants/quickSlots';
 
@@ -703,10 +704,16 @@ export const deleteOwnProduct = async (req: AuthRequest, res: Response, next: Ne
 export const getQuickShopOrders = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendor = req.user;
+    // Quick is a same-day channel, so the shop admin only works today's and
+    // yesterday's orders — anything older is history and stays in the admin
+    // panel, which is unfiltered. The window is IST wall-clock midnight so it
+    // flips over at the shop's day, not the server's UTC day.
+    const since = istDayStart(new Date(), -1);
     const orders = await Order.find({
       payment_status: 'Paid',
       assignedVendorId: vendor._id,
       orderChannel: 'QUICK',
+      createdAt: { $gte: since },
     })
       .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images')
