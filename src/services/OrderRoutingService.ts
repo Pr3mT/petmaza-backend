@@ -600,7 +600,10 @@ export class OrderRoutingService {
       vendor_id: { $in: Array.from(servingShopIds) },
       product_id: { $in: productIds },
       isActive: true,
-    }).populate('product_id', 'name images');
+      // quickSellingPrice/quickPurchasePrice MUST be selected here — populate
+      // with an explicit projection, so anything omitted arrives undefined and
+      // would silently drop the order back to the zero-margin fallback.
+    }).populate('product_id', 'name images quickSellingPrice quickPurchasePrice');
 
     // `${shopId}:${productId}` -> listing, plus productId -> all serving shops' listings
     const listingByShopProduct = new Map<string, any>();
@@ -635,8 +638,20 @@ export class OrderRoutingService {
       }
 
       const shopId = listing.vendor_id.toString();
-      const sellingPrice = listing.sellingPrice;
-      const purchasePrice = sellingPrice; // Shop admin sets their own price; no separate platform cost tracked.
+
+      // Petmaza prices Quick, not the shop: quickPurchasePrice is what the shop
+      // bills us (and is paid out on), quickSellingPrice is what the customer
+      // pays, and the gap is Petmaza's margin. The shop's listing only says
+      // whether it holds stock.
+      //
+      // Products Petmaza has not priced for Quick yet fall back to the shop's
+      // legacy listing price for BOTH sides — that is the old behaviour, margin
+      // zero, and is deliberately no worse than before rather than selling at a
+      // price nobody set.
+      const quickSell = Number((listing.product_id as any)?.quickSellingPrice) || 0;
+      const quickBuy = Number((listing.product_id as any)?.quickPurchasePrice) || 0;
+      const sellingPrice = quickSell > 0 ? quickSell : listing.sellingPrice;
+      const purchasePrice = quickBuy > 0 ? quickBuy : sellingPrice;
       const subtotal = sellingPrice * item.quantity;
       const purchaseSubtotal = purchasePrice * item.quantity;
       const profit = subtotal - purchaseSubtotal;

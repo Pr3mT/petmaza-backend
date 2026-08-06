@@ -114,6 +114,18 @@ const productSchema = new Schema<IProduct>(
       min: 0,
       default: 0,
     },
+    // Petmaza Quick prices, set by Petmaza rather than the dark store. No
+    // default: "unset" has to stay distinguishable from "priced at 0", because
+    // unset is what makes the order router fall back to the shop's legacy
+    // listing price instead of selling for nothing.
+    quickSellingPrice: {
+      type: Number,
+      min: 0,
+    },
+    quickPurchasePrice: {
+      type: Number,
+      min: 0,
+    },
     isPrime: {
       type: Boolean,
       default: false,

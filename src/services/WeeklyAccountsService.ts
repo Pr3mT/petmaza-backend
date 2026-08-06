@@ -140,6 +140,20 @@ export const CHANNEL_LABEL: Record<ReportChannel | 'ALL', string> = {
   ALL: 'All channels',
 };
 
+/**
+ * Which book an order belongs to. Quick is flagged on the order channel;
+ * everything else is Prime or plain Normal. Same precedence as
+ * AnalyticsService.applyOrderType.
+ *
+ * The one definition of this rule — the daily payout report scopes by channel
+ * through it too, so the two screens can never disagree about which book an
+ * order sits in.
+ */
+export const channelOfOrder = (
+  order: { orderChannel?: string | null; isPrime?: boolean | null }
+): ReportChannel =>
+  order.orderChannel === 'QUICK' ? 'QUICK' : order.isPrime ? 'PRIME' : 'NORMAL';
+
 /** Read + validate the channel scope. Absent or 'ALL' = every channel combined. */
 export const resolveChannel = (input?: string | null): ReportChannel | 'ALL' => {
   const value = String(input || '').toUpperCase();
@@ -558,10 +572,7 @@ export const buildRows = async (from: Date, to: Date, withDetail = true): Promis
 
     const weekStart = weekStartOf(order.createdAt);
 
-    // Quick is flagged on the order channel; everything else is Prime or plain
-    // Normal. Same precedence as AnalyticsService.applyOrderType.
-    const channel: ReportChannel =
-      order.orderChannel === 'QUICK' ? 'QUICK' : order.isPrime ? 'PRIME' : 'NORMAL';
+    const channel: ReportChannel = channelOfOrder(order);
 
     rows.push({
       weekKey: weekKeyOf(weekStart),
