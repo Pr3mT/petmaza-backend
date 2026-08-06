@@ -985,50 +985,16 @@ export const rejectOrder = async (req: AuthRequest, res: Response, next: NextFun
   }
 };
 
-export const markPacked = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const order = await findOwnQuickOrder(req.user, req.params.orderId);
-    if (order.status !== 'ACCEPTED') {
-      return next(new AppError(`Cannot pack order that is ${order.status}`, 400));
-    }
-    // ── Optional package dimensions (cm), entered in the Mark Packed popup ─────
-    const dims: any = {};
-    for (const key of ['length_cm', 'width_cm', 'height_cm'] as const) {
-      const raw = req.body[key];
-      if (raw !== undefined && String(raw).trim() !== '') {
-        const n = Number(raw);
-        if (isNaN(n) || n <= 0) {
-          return next(new AppError('Package dimensions must be positive numbers (in cm)', 400));
-        }
-        dims[key] = n;
-      }
-    }
-    if (Object.keys(dims).length) order.packageDimensions = dims;
-    order.status = 'PACKED';
-    await order.save();
-    res.status(200).json({ success: true, message: 'Order marked as packed', data: { order } });
-  } catch (error: any) {
-    next(error);
-  }
-};
+// ─── Delivery partner details (ACCEPTED → IN_TRANSIT, Quick Shop Admin) ──────
+// Petmaza Quick is a local same-day hand-off, not a courier shipment: the shop
+// gives the order to a delivery partner and it is on its way. There is no Packed
+// or Picked Up stage to sit in — naming the partner and what the drop costs is
+// what puts the order out for delivery, so this one form does that transition.
+//
+// PACKED is still accepted as a starting point so the handful of orders placed
+// under the older Packed → Picked Up flow can finish through the same form.
+const PARTNER_FORM_STATUSES = ['ACCEPTED', 'PACKED'];
 
-export const markPickedUp = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  try {
-    const order = await findOwnQuickOrder(req.user, req.params.orderId);
-    if (order.status !== 'PACKED') {
-      return next(new AppError(`Cannot mark as picked up from status ${order.status}`, 400));
-    }
-    order.status = 'PICKED_UP';
-    await order.save();
-    res.status(200).json({ success: true, message: 'Order picked up for delivery', data: { order } });
-  } catch (error: any) {
-    next(error);
-  }
-};
-
-// ─── Add Shipping Details (PACKED → PICKED_UP, Quick Shop Admin) ─────────────
-// Same form and validation as the Prime vendor's addShippingDetails; Quick has
-// no READY_TO_SHIP stage, so submitting moves the order straight to PICKED_UP.
 export const addShippingDetails = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendor_id = req.user._id;
@@ -1043,24 +1009,21 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
       delivery_type,
     } = req.body;
 
-    // ── Validate required text fields ─────────────────────────────────────────
+    // ── The two fields a Quick hand-off actually needs ────────────────────────
     if (!shipping_company || !String(shipping_company).trim()) {
-      return next(new AppError('Shipping company name is required', 400));
+      return next(new AppError('Delivery partner name is required', 400));
     }
-    if (!tracking_id || !String(tracking_id).trim()) {
-      return next(new AppError('Tracking ID is required', 400));
+    if (shipping_cost === undefined || String(shipping_cost).trim() === '') {
+      return next(new AppError('Delivery cost is required', 400));
     }
-    // Tracking link is optional for Quick (local riders rarely have one) —
-    // validated only when provided.
+    if (isNaN(Number(shipping_cost)) || Number(shipping_cost) < 0) {
+      return next(new AppError('Delivery cost must be a non-negative number', 400));
+    }
+    // ── Everything else is optional — a local rider has no tracking number ────
+    const trackingId = tracking_id ? String(tracking_id).trim() : '';
     const trackingLink = tracking_link ? String(tracking_link).trim() : '';
     if (trackingLink && !/^https?:\/\/\S+$/i.test(trackingLink)) {
       return next(new AppError('Tracking link must be a valid URL starting with http:// or https://', 400));
-    }
-    // ── Optional fields — validate only when provided ─────────────────────────
-    if (shipping_cost !== undefined && String(shipping_cost).trim() !== '') {
-      if (isNaN(Number(shipping_cost)) || Number(shipping_cost) < 0) {
-        return next(new AppError('Shipping cost must be a non-negative number', 400));
-      }
     }
     const hasWeight = total_weight !== undefined && String(total_weight).trim() !== '';
     if (hasWeight && (isNaN(Number(total_weight)) || Number(total_weight) <= 0)) {
@@ -1074,23 +1037,23 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
     }
 
     const order = await findOwnQuickOrder(req.user, orderId);
-    if (order.status !== 'PACKED') {
-      return next(new AppError(`Cannot add shipping details for an order that is ${order.status}`, 400));
+    if (!PARTNER_FORM_STATUSES.includes(order.status)) {
+      return next(new AppError(`Cannot add delivery partner details for an order that is ${order.status}`, 400));
     }
 
     const existing = await ShippingDetails.findOne({ order_id: orderId });
     if (existing) {
-      // Already on file but the order never left PACKED — finish that transition
+      // Already on file but the order never moved — finish that transition
       // rather than leaving the shop stuck on a button that can only 409.
-      if (await reconcileStuckShipping(order, existing, { from: 'PACKED', to: 'PICKED_UP' })) {
-        logger.info(`[QuickShop] Order ${orderId} already had shipping details — advanced to PICKED_UP`);
+      if (await reconcileStuckShipping(order, existing, { from: order.status, to: 'IN_TRANSIT' })) {
+        logger.info(`[QuickShop] Order ${orderId} already had delivery partner details — advanced to IN_TRANSIT`);
         return res.status(200).json({
           success: true,
-          message: 'Shipping details were already on file. Order marked as out for delivery.',
+          message: 'Delivery partner details were already on file. Order marked as out for delivery.',
           data: { order },
         });
       }
-      return next(new AppError('Shipping details already submitted for this order', 409));
+      return next(new AppError('Delivery partner details already submitted for this order', 409));
     }
 
     // ── Upload receipt to Cloudinary (optional) ──────────────────────────────
@@ -1123,23 +1086,21 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
       ...(uploadResult
         ? { receipt_file_url: uploadResult.secure_url, receipt_file_public_id: uploadResult.public_id }
         : {}),
-      tracking_id: String(tracking_id).trim(),
+      ...(trackingId ? { tracking_id: trackingId } : {}),
       ...(trackingLink ? { tracking_link: trackingLink } : {}),
-      ...(shipping_cost !== undefined && String(shipping_cost).trim() !== ''
-        ? { shipping_cost: Number(shipping_cost) }
-        : {}),
+      shipping_cost: Number(shipping_cost),
       ...(hasWeight ? { total_weight: Number(total_weight), weight_unit } : {}),
       ...(delivery_type ? { delivery_type } : {}),
     });
 
-    order.status = 'PICKED_UP';
+    order.status = 'IN_TRANSIT';
     if (!order.courier) order.courier = {};
     order.courier.name = String(shipping_company).trim();
-    order.courier.tracking_id = String(tracking_id).trim();
+    if (trackingId) order.courier.tracking_id = trackingId;
     if (trackingLink) order.courier.tracking_link = trackingLink;
     await order.save();
 
-    logger.info(`[quickShop] Shipping details added for order ${orderId} by shop ${vendor_id}`);
+    logger.info(`[quickShop] Delivery partner details added for order ${orderId} by shop ${vendor_id}`);
 
     try {
       const populatedOrder = await order.populate('customer_id');
@@ -1166,7 +1127,7 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
 
     res.status(201).json({
       success: true,
-      message: 'Shipping details saved. Order marked as Picked Up.',
+      message: 'Delivery partner saved. Order is out for delivery.',
       data: { shippingDetails },
     });
   } catch (error: any) {
@@ -1174,8 +1135,9 @@ export const addShippingDetails = async (req: AuthRequest, res: Response, next: 
   }
 };
 
-// Quick deliveries are local/fast — courier tracking is optional, unlike the
-// courier-mandatory flow used for standard shipped orders.
+// Legacy only. Filing the delivery partner is what sends a Quick order out now,
+// so nothing reaches PICKED_UP any more — this stays so orders already sitting
+// there from the old Packed → Picked Up flow can still be moved along.
 export const markInTransit = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const order = await findOwnQuickOrder(req.user, req.params.orderId);

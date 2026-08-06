@@ -41,9 +41,10 @@ router.get('/vendor/orders', quickShopController.getQuickShopOrders);
 router.post('/vendor/orders/:orderId/book-slot', quickShopController.bookDeliverySlot);
 router.post('/vendor/orders/:orderId/accept', quickShopController.acceptOrder);
 router.post('/vendor/orders/:orderId/reject', quickShopController.rejectOrder);
-router.post('/vendor/orders/:orderId/packed', quickShopController.markPacked);
+// Accepted → name the delivery partner → out for delivery. Quick has no Packed
+// or Picked Up stage, so this form is the whole hand-over.
 router.post('/vendor/orders/:orderId/shipping-details', uploadReceipt.single('receipt'), quickShopController.addShippingDetails);
-router.post('/vendor/orders/:orderId/picked-up', quickShopController.markPickedUp);
+// Legacy: only orders left at PICKED_UP by the retired flow still need this.
 router.post('/vendor/orders/:orderId/in-transit', quickShopController.markInTransit);
 router.post('/vendor/orders/:orderId/delivered', quickShopController.markDelivered);
 

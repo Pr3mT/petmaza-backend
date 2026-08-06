@@ -11,7 +11,7 @@ export interface IShippingDetails extends Document {
   shipping_company: string;
   receipt_file_url?: string;
   receipt_file_public_id?: string;
-  tracking_id: string;
+  tracking_id?: string;
   tracking_link?: string;
   shipping_cost?: number;
   shipping_arranged_by: ShippingArrangedBy;
@@ -46,9 +46,12 @@ const shippingDetailsSchema = new Schema<IShippingDetails>(
     receipt_file_public_id: {
       type: String,
     },
+    // Courier shipments always carry one and every courier-side controller
+    // rejects a submission without it. Petmaza Quick is a local hand-off to a
+    // delivery partner who has no tracking number at all, so the requirement
+    // lives in the controllers rather than here.
     tracking_id: {
       type: String,
-      required: true,
       trim: true,
     },
     tracking_link: {
