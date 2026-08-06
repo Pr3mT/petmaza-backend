@@ -698,22 +698,48 @@ export const deleteOwnProduct = async (req: AuthRequest, res: Response, next: Ne
 };
 
 // ==================== SHOP ADMIN — ORDERS ====================
-// Mirrors myShopVendorController's accept/reject/pack/pickup/deliver flow,
-// scoped to this vendor's QUICK-channel orders.
+// Mirrors myShopVendorController's accept/reject/deliver flow, scoped to this
+// vendor's QUICK-channel orders.
+
+/**
+ * Statuses where the shop has nothing left to do — delivered, refused, or
+ * refunded. Everything else is live work: still to accept, to hand to a
+ * delivery partner, or out for delivery and awaiting its delivered mark.
+ *
+ * Used both to age orders off the shop's list and to close slot booking, so
+ * "finished" means the same thing in both places.
+ */
+const SHOP_SETTLED_STATUSES = [
+  'DELIVERED',
+  'REJECTED',
+  'CANCELLED',
+  'NOT_AVAILABLE',
+  'REFUND_INITIATED',
+  'REFUNDED',
+];
 
 export const getQuickShopOrders = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const vendor = req.user;
-    // Quick is a same-day channel, so the shop admin only works today's and
-    // yesterday's orders — anything older is history and stays in the admin
-    // panel, which is unfiltered. The window is IST wall-clock midnight so it
-    // flips over at the shop's day, not the server's UTC day.
+    // Quick is a same-day channel, so the shop admin works today's and
+    // yesterday's orders — older FINISHED orders are history and stay in the
+    // admin panel, which is unfiltered. The window is IST wall-clock midnight so
+    // it flips over at the shop's day, not the server's UTC day.
+    //
+    // Age alone must NOT hide an order: a paid order the shop never accepted is
+    // outstanding work, not history, and nothing notifies the shop that it
+    // arrived — so an unhandled order ageing out would vanish silently with the
+    // customer already charged. Anything not settled stays on the list however
+    // old it is.
     const since = istDayStart(new Date(), -1);
     const orders = await Order.find({
       payment_status: 'Paid',
       assignedVendorId: vendor._id,
       orderChannel: 'QUICK',
-      createdAt: { $gte: since },
+      $or: [
+        { createdAt: { $gte: since } },
+        { status: { $nin: SHOP_SETTLED_STATUSES } },
+      ],
     })
       .populate('customer_id', 'name email phone')
       .populate('items.product_id', 'name images')
@@ -862,7 +888,7 @@ export const bookDeliverySlot = async (req: AuthRequest, res: Response, next: Ne
 
     // Once it's left the shop the window is a promise already in flight — the
     // shop should be updating the courier, not re-booking the slot.
-    if (['REJECTED', 'CANCELLED', 'REFUND_INITIATED', 'REFUNDED', 'DELIVERED'].includes(order.status)) {
+    if (SHOP_SETTLED_STATUSES.includes(order.status)) {
       return next(new AppError(`Cannot book a delivery slot for an order that is ${order.status}`, 400));
     }
     if (['PICKED_UP', 'IN_TRANSIT'].includes(order.status)) {
