@@ -13,6 +13,8 @@ const router = express.Router();
 // yet; see QuickServiceabilityService.
 router.get('/availability', quickShopController.getAvailability);
 router.get('/products', quickShopController.getQuickProducts);
+// Re-check a persisted cart against today's stock, before the customer pays.
+router.post('/stock-check', quickShopController.checkQuickStock);
 // Address → coordinates, for customers whose browser can't locate them
 // accurately (any desktop, effectively). Rate-limited harder than the rest
 // because it spends OpenStreetMap's budget, not ours.

@@ -2,13 +2,14 @@ import logger from '../config/logger';
 import { Request, Response, NextFunction } from 'express';
 import ProductNotification from '../models/ProductNotification';
 import Product from '../models/Product';
+import QuickProductListing from '../models/QuickProductListing';
 import { AppError } from '../middlewares/errorHandler';
 import { sendProductAvailableEmail } from '../services/emailer';
 
 export const registerForNotification = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { productId } = req.params;
-    const { email, phone, name } = req.body;
+    const { email, phone, name, shop_id } = req.body;
 
     if (!email) {
       return next(new AppError('Email is required', 400));
@@ -26,9 +27,25 @@ export const registerForNotification = async (req: Request, res: Response, next:
       return next(new AppError('Product not found', 404));
     }
 
-    // Product is in stock only if BOTH isActive and inStock are not false
-    // (admin marks products unavailable via isActive:false; inStock:false is set explicitly for stock-outs)
-    const productInStock = product.isActive !== false && product.inStock !== false;
+    // Petmaza Quick stocks per shop, so the shared catalog Product stays
+    // inStock:true even when the shop the customer is buying from has sold out —
+    // reading the Product here would answer "already in stock!" and silently drop
+    // the request. With a shop_id the shop's own listing is what decides.
+    let productInStock: boolean;
+    if (shop_id) {
+      const listing = await QuickProductListing.findOne({
+        vendor_id: shop_id,
+        product_id: productId,
+      })
+        .select('stock isActive')
+        .lean();
+      productInStock = !!listing && listing.isActive !== false && Number(listing.stock) > 0;
+    } else {
+      // Product is in stock only if BOTH isActive and inStock are not false
+      // (admin marks products unavailable via isActive:false; inStock:false is set explicitly for stock-outs)
+      productInStock = product.isActive !== false && product.inStock !== false;
+    }
+
     if (productInStock) {
       return res.status(200).json({
         success: true,

@@ -23,6 +23,7 @@ import {
   sendQuickSlotBookedEmail,
 } from '../services/emailer';
 import ShippingDetails from '../models/ShippingDetails';
+import { notifyWaitingCustomers } from './productNotificationController';
 import { reconcileStuckShipping } from '../utils/shippingDetails';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
@@ -125,10 +126,15 @@ export const getQuickProducts = async (req: Request, res: Response, next: NextFu
     const shopNameById = new Map(shops.map((s) => [s.vendorId, s.shopName]));
     const shopDistanceById = new Map(shops.map((s) => [s.vendorId, s.distanceKm]));
 
+    // Out-of-stock listings are deliberately NOT filtered out. A product that
+    // vanishes when a shop marks it out of stock reads as "Petmaza doesn't sell
+    // this", and the customer has no way to ask for it back — so it stays in the
+    // catalog carrying inStock:false, which the storefront renders as an
+    // "Out of stock" badge + Notify Me. `isActive` is still honoured: that is
+    // the shop REMOVING the product from Quick, which is a different thing.
     const listings = await QuickProductListing.find({
       vendor_id: { $in: shops.map((s) => s.vendorId) },
       isActive: true,
-      stock: { $gt: 0 },
     })
       .populate({
         path: 'product_id',
@@ -137,7 +143,7 @@ export const getQuickProducts = async (req: Request, res: Response, next: NextFu
       })
       .lean();
 
-    const products = listings
+    const listed = listings
       .filter((l: any) => l.product_id)
       .map((l: any) => ({
         ...l.product_id,
@@ -157,10 +163,86 @@ export const getQuickProducts = async (req: Request, res: Response, next: NextFu
         shopDistanceKm: shopDistanceById.get(l.vendor_id.toString()),
       }));
 
+    // Several dark stores can cover one address, so the same catalog product can
+    // arrive once per shop. Showing a sold-out card next to a buyable one for the
+    // same product is just noise: a product is only presented as out of stock
+    // when NO serving shop holds it, and then only once — from the nearest shop,
+    // which is where it would have been fulfilled from.
+    const byProduct = new Map<string, any[]>();
+    listed.forEach((p: any) => {
+      const key = String(p._id);
+      byProduct.set(key, [...(byProduct.get(key) || []), p]);
+    });
+
+    const products = Array.from(byProduct.values()).flatMap((group) => {
+      const available = group.filter((p) => p.inStock);
+      if (available.length) return available;
+      return [
+        [...group].sort(
+          (a, b) => (a.shopDistanceKm ?? Infinity) - (b.shopDistanceKm ?? Infinity)
+        )[0],
+      ];
+    });
+
     res.status(200).json({
       success: true,
       data: { ...shopsPayload(shops), products },
     });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+// Current stock for a set of cart lines, so a cart assembled minutes ago can be
+// re-checked before checkout. A Quick cart is persisted to storage and can sit
+// there for hours while the shop admin sells the last unit or marks the product
+// out of stock — without this, the customer keeps a Proceed button for something
+// that no longer exists and only finds out when the order is rejected.
+//
+// Keyed on shop, because the same product from two shops is two cart lines.
+export const checkQuickStock = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const items: any[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!items.length) {
+      return res.status(200).json({ success: true, data: { items: [] } });
+    }
+
+    const listings = await QuickProductListing.find({
+      product_id: { $in: items.map((i) => i.product_id).filter(Boolean) },
+    })
+      .select('vendor_id product_id stock isActive')
+      .lean();
+
+    const byShopProduct = new Map<string, any>();
+    const byProduct = new Map<string, any[]>();
+    listings.forEach((l: any) => {
+      const pid = l.product_id.toString();
+      byShopProduct.set(`${l.vendor_id.toString()}:${pid}`, l);
+      byProduct.set(pid, [...(byProduct.get(pid) || []), l]);
+    });
+
+    const result = items.map((i) => {
+      let listing: any = i.shop_id ? byShopProduct.get(`${i.shop_id}:${i.product_id}`) : null;
+      // Carts saved before lines carried their shop have no shop_id to match on.
+      // Answer from the best-stocked shop instead of reporting a false sold-out —
+      // which is also how routeQuickOrder resolves an unpinned line.
+      if (!listing && !i.shop_id) {
+        listing = (byProduct.get(String(i.product_id)) || [])
+          .filter((l) => l.isActive)
+          .sort((a, b) => Number(b.stock) - Number(a.stock))[0];
+      }
+      // A listing the shop has removed from Quick (isActive:false) is treated as
+      // out of stock rather than as an error — same dead end for the customer.
+      const stock = listing && listing.isActive ? Number(listing.stock) || 0 : 0;
+      return {
+        product_id: String(i.product_id || ''),
+        shop_id: String(i.shop_id || ''),
+        stock,
+        inStock: stock > 0,
+      };
+    });
+
+    res.status(200).json({ success: true, data: { items: result } });
   } catch (error: any) {
     next(error);
   }
@@ -436,6 +518,21 @@ export const createQuickOrder = async (req: AuthRequest, res: Response, next: Ne
 
 // ==================== SHOP ADMIN — CATALOG & LISTINGS ====================
 
+// Email everyone who tapped "Notify Me" while this listing was sold out, once a
+// shop puts stock back on it. Fire-and-forget: a mail failure must never fail
+// the shop admin's stock edit.
+const notifyQuickRestock = (before: any, after: any, product: any) => {
+  const wasOut = !before || !(Number(before.stock) > 0) || before.isActive === false;
+  const isBack = Number(after?.stock) > 0 && after?.isActive !== false;
+  if (!wasOut || !isBack) return;
+
+  notifyWaitingCustomers(
+    product._id.toString(),
+    product.name,
+    product.images?.[0]
+  ).catch((err) => logger.error('[Quick] Error notifying restock subscribers:', err));
+};
+
 // Browse the full existing product catalog to pick products from for Quick.
 export const getCatalog = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -490,7 +587,7 @@ export const upsertListing = async (req: AuthRequest, res: Response, next: NextF
     }
 
     const product = await Product.findById(product_id).select(
-      '_id quickOwnerVendorId sellingPrice quickSellingPrice'
+      '_id name images quickOwnerVendorId sellingPrice quickSellingPrice'
     );
     if (!product) {
       return next(new AppError('Product not found', 404));
@@ -499,6 +596,12 @@ export const upsertListing = async (req: AuthRequest, res: Response, next: NextF
     if (product.quickOwnerVendorId && product.quickOwnerVendorId.toString() !== req.user._id.toString()) {
       return next(new AppError('This product belongs to another shop', 403));
     }
+
+    // Read the pre-update stock so a 0 → n edit can email the customers who
+    // asked to be told when it came back.
+    const before = await QuickProductListing.findOne({ vendor_id: req.user._id, product_id })
+      .select('stock isActive')
+      .lean();
 
     const listing = await QuickProductListing.findOneAndUpdate(
       { vendor_id: req.user._id, product_id },
@@ -518,6 +621,8 @@ export const upsertListing = async (req: AuthRequest, res: Response, next: NextF
       },
       { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
     ).populate('product_id', 'name images mrp brand_id');
+
+    notifyQuickRestock(before, listing, product);
 
     res.status(200).json({ success: true, data: { listing } });
   } catch (error: any) {
@@ -660,6 +765,10 @@ export const updateOwnProduct = async (req: AuthRequest, res: Response, next: Ne
 
     await product.save();
 
+    const before = await QuickProductListing.findOne({ vendor_id: req.user._id, product_id: product._id })
+      .select('stock isActive')
+      .lean();
+
     const listing = await QuickProductListing.findOneAndUpdate(
       { vendor_id: req.user._id, product_id: product._id },
       {
@@ -671,6 +780,8 @@ export const updateOwnProduct = async (req: AuthRequest, res: Response, next: Ne
       },
       { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
     );
+
+    notifyQuickRestock(before, listing, product);
 
     res.status(200).json({ success: true, message: 'Product updated', data: { product, listing } });
   } catch (error: any) {
